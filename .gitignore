@@ -1,0 +1,125 @@
+# -----------------------------------------------------------------------------
+# Node / Next.js workspace ignore rules
+# -----------------------------------------------------------------------------
+
+# Dependency & build output
+node_modules/
+jspm_packages/
+.pnp/
+.pnp.js
+.yarn/
+.yarn/cache/
+.yarn/install-state.gz
+.npm/
+.pnpm-store/
+
+.next/
+.next/cache/
+.next/server/
+.next/static/
+.turbo/
+.swc/
+dist/
+build/
+out/
+coverage/
+public/static/
+public/assets/demo*/build/
+public/assets/plugins/**/node_modules/
+public/assets/plugins/**/dist/
+
+# Generated data / databases
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.sqlite
+*.sqlite
+*.db
+*.db-journal
+*.tgz
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+.envrc
+.envrc.local
+!.env.example
+
+# Logs & reports
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+pids
+*.pid
+*.seed
+*.pid.lock
+report.*.json
+playwright-report/
+test-results/
+
+# Cache / temporary
+.cache/
+tmp/
+temp/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.prettier-cache
+.vscode-test/
+.sass-cache/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Editor / OS junk
+.DS_Store
+**/.DS_Store
+Thumbs.db
+.Trashes
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trash-*
+.fseventsd
+.nfs*
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local preview / deployments
+.vercel/
+.now/
+.docker/
+Dockerfile.dev
+docker-compose.override.yml
+
+# Project specific (Metronic template)
+/src/_metronic/assets/demo*/
+/src/_metronic/layouts/demo*/
+/src/_metronic/generated/
+
+# Binary / archives
+*.zip
+*.tar
+*.gz
+*.bz2
+*.7z
+*.dmg
+*.exe
+*.bin
+*.lock-wscript
+.npm-cache
+/components
+
+# -----------------------------------------------------------------------------
+# Notes
+# -----------------------------------------------------------------------------
+# - Keep .env.example under version control; never commit real env files.
+# - If build artifacts must be committed for deployment, remove the relevant
+#   ignore entry locally before adding those paths.
