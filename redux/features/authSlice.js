@@ -1,8 +1,13 @@
 'use client';
 
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { loginRequest, logoutRequest, refreshAccessToken, getMe } from '@/lib/api-client';
+import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { signIn, signOut } from 'next-auth/react';
+import {
+  getMe,
+  loginRequest,
+  logoutRequest,
+  refreshAccessToken,
+} from '@/lib/api-client';
 
 const initialState = {
   user: null,
@@ -13,9 +18,18 @@ const initialState = {
 
 export const loginWithPassword = createAsyncThunk(
   'auth/loginWithPassword',
-  async ({ email, password, rememberme = true, device = 'web', deviceid }, { rejectWithValue }) => {
+  async (
+    { email, password, rememberme = true, device = 'web', deviceid },
+    { rejectWithValue },
+  ) => {
     try {
-      const resp = await loginRequest({ email, password, rememberme, device, deviceid });
+      const resp = await loginRequest({
+        email,
+        password,
+        rememberme,
+        device,
+        deviceid,
+      });
       const data = resp?.data ?? resp;
       const accessToken = data?.accessToken;
       const userid = data?.userid;
@@ -24,7 +38,6 @@ export const loginWithPassword = createAsyncThunk(
         return rejectWithValue({ message: 'accessToken missing from response' });
       }
 
-      // Sync NextAuth session (ExternalCredentials)
       await signIn('ExternalCredentials', {
         redirect: false,
         email,
@@ -33,7 +46,6 @@ export const loginWithPassword = createAsyncThunk(
         userid,
       });
 
-      // Optionally fetch profile from backend
       let profile = null;
       try {
         const meResp = await getMe(accessToken);
@@ -49,7 +61,10 @@ export const loginWithPassword = createAsyncThunk(
 
       return { accessToken, user };
     } catch (err) {
-      return rejectWithValue({ message: err?.message || 'Login failed', status: err?.status });
+      return rejectWithValue({
+        message: err?.message || 'Login failed',
+        status: err?.status,
+      });
     }
   },
 );
@@ -61,16 +76,26 @@ export const refreshSession = createAsyncThunk(
       const resp = await refreshAccessToken();
       const data = resp?.data ?? resp;
       const accessToken = data?.accessToken;
-      if (!accessToken) return rejectWithValue({ message: 'accessToken missing' });
+      if (!accessToken) {
+        return rejectWithValue({ message: 'accessToken missing' });
+      }
 
-      // Try to keep NextAuth in sync by re-signing in (validates token)
       const state = getState();
       const email = state?.auth?.user?.email;
-      await signIn('ExternalCredentials', { redirect: false, email, accessToken, name: state?.auth?.user?.name, userid: state?.auth?.user?.id });
+      await signIn('ExternalCredentials', {
+        redirect: false,
+        email,
+        accessToken,
+        name: state?.auth?.user?.name,
+        userid: state?.auth?.user?.id,
+      });
 
       return { accessToken };
     } catch (err) {
-      return rejectWithValue({ message: err?.message || 'Refresh failed', status: err?.status });
+      return rejectWithValue({
+        message: err?.message || 'Refresh failed',
+        status: err?.status,
+      });
     }
   },
 );
@@ -134,4 +159,3 @@ export const { clearAuth } = authSlice.actions;
 export default authSlice.reducer;
 
 export const selectAuth = (state) => state.auth;
-

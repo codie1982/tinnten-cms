@@ -25,4 +25,3 @@ const uiSlice = createSlice({
 
 export const { toggleSidebar, setSidebar, setTheme } = uiSlice.actions;
 export default uiSlice.reducer;
-

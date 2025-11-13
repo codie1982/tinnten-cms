@@ -1,8 +1,8 @@
 'use client';
 
 import { useSelector, useDispatch } from 'react-redux';
-import { selectUi } from '@/store/store';
-import { toggleSidebar } from '@/store/slices/uiSlice';
+import { selectUi } from '@/redux/store';
+import { toggleSidebar } from '@/redux/features/uiSlice';
 
 export default function ReduxDemo() {
   const { sidebarOpen } = useSelector(selectUi);
@@ -16,4 +16,3 @@ export default function ReduxDemo() {
     </div>
   );
 }
-

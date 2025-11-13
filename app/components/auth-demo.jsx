@@ -1,8 +1,8 @@
 'use client';
 
 import { useDispatch, useSelector } from 'react-redux';
-import { loginWithPassword, performLogout } from '@/store/slices/authSlice';
-import { selectAuth } from '@/store/store';
+import { loginWithPassword, performLogout } from '@/redux/features/authSlice';
+import { selectAuth } from '@/redux/store';
 import { useState } from 'react';
 
 export default function AuthDemo() {
@@ -33,4 +33,3 @@ export default function AuthDemo() {
     </div>
   );
 }
-
