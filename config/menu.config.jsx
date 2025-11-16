@@ -14,6 +14,7 @@ import {
   Code,
   Codepen,
   Coffee,
+  Crown,
   File as DocumentIcon,
   Euro,
   Eye,
@@ -49,341 +50,226 @@ import {
   UserCheck,
   UserCircle,
   Users,
+  Wallet,
   Briefcase as WorkIcon,
   Zap,
 } from 'lucide-react';
 
 export const MENU_SIDEBAR = [
+  { heading: 'GENERAL' },
   {
-    title: 'Dashboards',
+    id: 'dashboard',
+    title: 'Dashboard',
     icon: LayoutGrid,
-    children: [
-      { title: 'Light Sidebar', path: '/' },
-      { title: 'Dark Sidebar', path: '/dark-sidebar' },
-    ],
+    path: '/cms/dashboard',
   },
-  { heading: 'User' },
+  { heading: 'OPERATIONS' },
   {
-    title: 'Public Profile',
-    icon: UserCircle,
+    id: 'orders',
+    title: 'Sipariş Yönetimi',
+    icon: ShoppingCart,
+    path: '/cms/orders',
     children: [
+      { id: 'order-list', title: 'Tüm Siparişler', path: '/cms/orders/list' },
       {
-        title: 'Profiles',
-        children: [
-          { title: 'Default', path: '/public-profile/profiles/default' },
-          { title: 'Creator', path: '/public-profile/profiles/creator' },
-          { title: 'Company', path: '/public-profile/profiles/company' },
-          { title: 'NFT', path: '/public-profile/profiles/nft' },
-          { title: 'Blogger', path: '/public-profile/profiles/blogger' },
-          { title: 'CRM', path: '/public-profile/profiles/crm' },
-          {
-            title: 'More',
-            collapse: true,
-            collapseTitle: 'Show less',
-            expandTitle: 'Show 4 more',
-            children: [
-              { title: 'Gamer', path: '/public-profile/profiles/gamer' },
-              { title: 'Feeds', path: '/public-profile/profiles/feeds' },
-              { title: 'Plain', path: '/public-profile/profiles/plain' },
-              { title: 'Modal', path: '/public-profile/profiles/modal' },
-            ],
-          },
-        ],
+        id: 'order-returns',
+        title: 'İade / İptaller',
+        path: '/cms/orders/returns',
       },
       {
-        title: 'Projects',
-        children: [
-          { title: '3 Columns', path: '/public-profile/projects/3-columns' },
-          { title: '2 Columns', path: '/public-profile/projects/2-columns' },
-        ],
-      },
-      { title: 'Works', path: '/public-profile/works' },
-      { title: 'Teams', path: '/public-profile/teams' },
-      { title: 'Network', path: '/public-profile/network' },
-      { title: 'Activity', path: '/public-profile/activity' },
-      {
-        title: 'More',
-        collapse: true,
-        collapseTitle: 'Show less',
-        expandTitle: 'Show 3 more',
-        children: [
-          { title: 'Campaigns - Card', path: '/public-profile/campaigns/card' },
-          { title: 'Campaigns - List', path: '/public-profile/campaigns/list' },
-          { title: 'Empty', path: '/public-profile/empty' },
-        ],
+        id: 'order-shipments',
+        title: 'Kargo & Teslimatlar',
+        path: '/cms/orders/shipments',
       },
     ],
   },
   {
-    title: 'My Account',
-    icon: Settings,
+    id: 'requests-offers',
+    title: 'Talep / Teklif Yönetimi',
+    icon: MessageSquare,
+    path: '/cms/requests',
     children: [
       {
-        title: 'Account',
-        children: [
-          { title: 'Get Started', path: '/account/home/get-started' },
-          { title: 'User Profile', path: '/account/home/user-profile' },
-          { title: 'Company Profile', path: '/account/home/company-profile' },
-          {
-            title: 'Settings - With Sidebar',
-            path: '/account/home/settings-sidebar',
-          },
-          {
-            title: 'Settings - Enterprise',
-            path: '/account/home/settings-enterprise',
-          },
-          { title: 'Settings - Plain', path: '/account/home/settings-plain' },
-          { title: 'Settings - Modal', path: '/account/home/settings-modal' },
-        ],
+        id: 'requests-inbox',
+        title: 'Talep Kutusu',
+        path: '/cms/requests/inbox',
       },
       {
-        title: 'Billing',
-        children: [
-          { title: 'Billing - Basic', path: '/account/billing/basic' },
-          {
-            title: 'Billing - Enterprise',
-            path: '/account/billing/enterprise',
-          },
-          { title: 'Plans', path: '/account/billing/plans' },
-          { title: 'Billing History', path: '/account/billing/history' },
-        ],
+        id: 'offers-pipeline',
+        title: 'Teklif Pipeline',
+        path: '/cms/requests/offers',
       },
       {
-        title: 'Security',
-        children: [
-          { title: 'Get Started', path: '/account/security/get-started' },
-          { title: 'Security Overview', path: '/account/security/overview' },
-          {
-            title: 'Allowed IP Addresses',
-            path: '/account/security/allowed-ip-addresses',
-          },
-          {
-            title: 'Privacy Settings',
-            path: '/account/security/privacy-settings',
-          },
-          {
-            title: 'Device Management',
-            path: '/account/security/device-management',
-          },
-          {
-            title: 'Backup & Recovery',
-            path: '/account/security/backup-and-recovery',
-          },
-          {
-            title: 'Current Sessions',
-            path: '/account/security/current-sessions',
-          },
-          { title: 'Security Log', path: '/account/security/security-log' },
-        ],
+        id: 'requests-analytics',
+        title: 'Analiz & Raporlar',
+        path: '/cms/requests/analytics',
       },
+    ],
+  },
+  { heading: 'PARTNERS' },
+  {
+    id: 'companies',
+    title: 'Firma Yönetimi',
+    icon: Building,
+    path: '/cms/companies',
+    children: [
       {
-        title: 'Members & Roles',
-        children: [
-          { title: 'Teams Starter', path: '/account/members/team-starter' },
-          { title: 'Teams', path: '/account/members/teams' },
-          { title: 'Team Info', path: '/account/members/team-info' },
-          {
-            title: 'Members Starter',
-            path: '/account/members/members-starter',
-          },
-          { title: 'Team Members', path: '/account/members/team-members' },
-          { title: 'Import Members', path: '/account/members/import-members' },
-          { title: 'Roles', path: '/account/members/roles' },
-          {
-            title: 'Permissions - Toggler',
-            path: '/account/members/permissions-toggle',
-          },
-          {
-            title: 'Permissions - Check',
-            path: '/account/members/permissions-check',
-          },
-        ],
-      },
-      { title: 'Integrations', path: '/account/integrations' },
-      { title: 'Notifications', path: '/account/notifications' },
-      { title: 'API Keys', path: '/account/api-keys' },
-      {
-        title: 'More',
-        collapse: true,
-        collapseTitle: 'Show less',
-        expandTitle: 'Show 3 more',
-        children: [
-          { title: 'Appearance', path: '/account/appearance' },
-          { title: 'Invite a Friend', path: '/account/invite-a-friend' },
-          { title: 'Activity', path: '/account/activity' },
-        ],
+        id: 'company-list',
+        title: 'Tüm Firmalar',
+        path: '/cms/companies/list',
       },
     ],
   },
   {
-    title: 'Network',
-    icon: Users,
-    children: [
-      { title: 'Get Started', path: '/network/get-started' },
-      {
-        title: 'User Cards',
-        children: [
-          { title: 'Mini Cards', path: '/network/user-cards/mini-cards' },
-          { title: 'Team Crew', path: '/network/user-cards/team-crew' },
-          { title: 'Author', path: '/network/user-cards/author' },
-          { title: 'NFT', path: '/network/user-cards/nft' },
-          { title: 'Social', path: '/network/user-cards/social' },
-        ],
-      },
-      {
-        title: 'User Table',
-        children: [
-          { title: 'Team Crew', path: '/network/user-table/team-crew' },
-          { title: 'App Roster', path: '/network/user-table/app-roster' },
-          {
-            title: 'Market Authors',
-            path: '/network/user-table/market-authors',
-          },
-          { title: 'SaaS Users', path: '/network/user-table/saas-users' },
-          { title: 'Store Clients', path: '/network/user-table/store-clients' },
-          { title: 'Visitors', path: '/network/user-table/visitors' },
-        ],
-      },
-      { title: 'Cooperations', path: '/network/cooperations', disabled: true },
-      { title: 'Leads', path: '/network/leads', disabled: true },
-      { title: 'Donators', path: '/network/donators', disabled: true },
-    ],
-  },
-  {
-    title: 'Authentication',
+    id: 'company-approvals',
+    title: 'Firma Onayları',
     icon: Shield,
+    path: '/cms/company-approvals',
     children: [
       {
-        title: 'Sign In',
-        path: '/signin',
+        id: 'seller-applications',
+        title: 'Satıcı Başvuruları',
+        path: '/cms/company-approvals/applications',
       },
       {
-        title: 'Check Email',
-        path: '/signup',
+        id: 'kyc-review',
+        title: 'KYC / Evrak Kontrolü',
+        path: '/cms/company-approvals/kyc',
       },
-      {
-        title: 'Reset Password',
-        path: '/reset-password',
-      },
-      {
-        title: '2FA',
-        path: '/2fa',
-      },
-      { title: 'Welcome Message', path: '/auth/welcome-message' },
-      { title: 'Account Deactivated', path: '/auth/account-deactivated' },
-      { title: 'Error 404', path: '/error/404' },
-      { title: 'Error 500', path: '/error/500' },
     ],
   },
-  { heading: 'Apps' },
   {
-    title: 'User Management',
+    id: 'sales-management',
+    title: 'Satış Yönetimi',
+    icon: TrendingUp,
+    path: '/cms/sales',
+    children: [
+      {
+        id: 'sales-overview',
+        title: 'Satış Özeti',
+        path: '/cms/sales/overview',
+      },
+      {
+        id: 'seller-performance',
+        title: 'Satıcı Performansı',
+        path: '/cms/sales/sellers',
+      },
+      {
+        id: 'channels',
+        title: 'Kanal Bazlı Satışlar',
+        path: '/cms/sales/channels',
+      },
+    ],
+  },
+  { heading: 'FINANCE' },
+  {
+    id: 'escrow',
+    title: 'Escrow Yönetimi',
     icon: ShieldUser,
+    path: '/cms/escrow',
     children: [
       {
-        title: 'Users',
-        path: '/user-management/users',
+        id: 'escrow-balances',
+        title: 'Bakiye & Blokeler',
+        path: '/cms/escrow/balances',
       },
       {
-        title: 'Roles',
-        path: '/user-management/roles',
+        id: 'escrow-releases',
+        title: 'Ödeme Serbest Bırakma',
+        path: '/cms/escrow/releases',
       },
       {
-        title: 'Permissions',
-        path: '/user-management/permissions',
-      },
-      {
-        title: 'Account',
-        path: '/user-management/account',
-      },
-      {
-        title: 'Logs',
-        path: '/user-management/logs',
-      },
-      {
-        title: 'Settings',
-        path: '/user-management/settings',
+        id: 'escrow-disputes',
+        title: 'İhtilaflar',
+        path: '/cms/escrow/disputes',
       },
     ],
   },
   {
-    title: 'Store - Client',
+    id: 'purchases',
+    title: 'Satın Almalar',
+    icon: Wallet,
+    path: '/cms/purchases',
+    children: [
+      {
+        id: 'platform-purchases',
+        title: 'Platform Satın Almaları',
+        path: '/cms/purchases/platform',
+      },
+      {
+        id: 'marketing-spend',
+        title: 'Reklam / Pazarlama Harcamaları',
+        path: '/cms/purchases/marketing',
+      },
+    ],
+  },
+  {
+    id: 'subscriptions',
+    title: 'Üyelikler',
+    icon: Crown,
+    path: '/cms/subscriptions',
+    children: [
+      {
+        id: 'subscription-plans',
+        title: 'Paketler',
+        path: '/cms/subscriptions/plans',
+      },
+      {
+        id: 'company-subscriptions',
+        title: 'Firma Üyelikleri',
+        path: '/cms/subscriptions/companies',
+      },
+      {
+        id: 'usage-limits',
+        title: 'Kullanım & Limitler',
+        path: '/cms/subscriptions/usage',
+      },
+    ],
+  },
+  { heading: 'ACCESS & SYSTEM' },
+  {
+    id: 'users',
+    title: 'Kullanıcı Yönetimi',
     icon: Users,
+    path: '/cms/users',
     children: [
-      { title: 'Home', path: '/store-client/home' },
       {
-        title: 'Search Results - Grid',
-        path: '/store-client/search-results-grid',
+        id: 'user-list',
+        title: 'Tüm Kullanıcılar',
+        path: '/cms/users/list',
       },
       {
-        title: 'Search Results - List',
-        path: '/store-client/search-results-list',
+        id: 'user-sessions',
+        title: 'Oturumlar & Güvenlik',
+        path: '/cms/users/sessions',
       },
-      { title: 'Product Details', path: '/store-client/product-details' },
-      { title: 'Wishlist', path: '/store-client/wishlist' },
-      {
-        title: 'Checkout',
-        children: [
-          {
-            title: 'Order Summary',
-            path: '/store-client/checkout/order-summary',
-          },
-          {
-            title: 'Shipping Info',
-            path: '/store-client/checkout/shipping-info',
-          },
-          {
-            title: 'Payment Method',
-            path: '/store-client/checkout/payment-method',
-          },
-          {
-            title: 'Order Placed',
-            path: '/store-client/checkout/order-placed',
-          },
-        ],
-      },
-      { title: 'My Orders', path: '/store-client/my-orders' },
-      { title: 'Order Receipt', path: '/store-client/order-receipt' },
     ],
   },
   {
-    title: 'Store - Admin',
-    icon: Bolt,
-    disabled: true,
+    id: 'roles-permissions',
+    title: 'Rol & Yetkiler',
+    icon: Key,
+    path: '/cms/access-control',
+  },
+  {
+    id: 'system-settings',
+    title: 'Sistem Ayarları',
+    icon: Settings,
+    path: '/cms/settings',
     children: [
-      { title: 'Dashboard', path: '/store-admin/dashboard' },
       {
-        title: 'Inventory',
-        children: [
-          {
-            title: 'All Products',
-            path: '/store-admin/inventory/all-products',
-          },
-          {
-            title: 'Current Stock',
-            path: '/store-admin/inventory/current-stock',
-          },
-          {
-            title: 'Inbound Stock',
-            path: '/store-admin/inventory/inbound-stock',
-          },
-          {
-            title: 'Outbound Stock',
-            path: '/store-admin/inventory/outbound-stock',
-          },
-          {
-            title: 'Stock Planner',
-            path: '/store-admin/inventory/stock-planner',
-          },
-          { title: 'Track Shipping', path: '/' },
-          { title: 'Create Shipping Label', path: '/' },
-        ],
+        id: 'payment-providers',
+        title: 'Ödeme Sağlayıcıları',
+        path: '/cms/settings/payments',
       },
+      {
+        id: 'shipping-integrations',
+        title: 'Kargo Entegrasyonları',
+        path: '/cms/settings/shipping',
+      },
+      { id: 'logs', title: 'Log & Denetim', path: '/cms/settings/logs' },
     ],
   },
-  { title: 'Store - Services', icon: Codepen, disabled: true },
-  { title: 'AI Promt', icon: Theater, disabled: true },
-  { title: 'Invoice Generator', icon: ScrollText, disabled: true },
 ];
 
 export const MENU_SIDEBAR_CUSTOM = [

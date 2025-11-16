@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiErrorWarningFill } from '@remixicon/react';
 import { AlertCircle, Eye, EyeOff, LoaderCircleIcon } from 'lucide-react';
-import { getProviders, signIn } from 'next-auth/react';
+import { signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
+import { useDispatch, useSelector } from 'react-redux';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -22,13 +23,16 @@ import {
 import { Input } from '@/components/ui/input';
 import { Icons } from '@/components/common/icons';
 import { getSigninSchema } from '../forms/signin-schema';
+import { loginWithPassword } from '@/redux/features/authSlice';
+import { selectAuth } from '@/redux/store';
 
 export default function Page() {
   const router = useRouter();
+  const dispatch = useDispatch();
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState(null);
-  const [authProviderId, setAuthProviderId] = useState('credentials');
+  const [formError, setFormError] = useState(null);
+  const { status, error } = useSelector(selectAuth);
+  const isProcessing = status === 'loading';
 
   const form = useForm({
     resolver: zodResolver(getSigninSchema()),
@@ -39,76 +43,29 @@ export default function Page() {
     },
   });
 
-  useEffect(() => {
-    let active = true;
-    getProviders()
-      .then((providers) => {
-        if (!active || !providers) return;
-        if (providers.ExternalCredentials) {
-          setAuthProviderId('ExternalCredentials');
-        } else if (providers.credentials) {
-          setAuthProviderId('credentials');
-        }
-      })
-      .catch(() => {
-        setAuthProviderId('credentials');
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const extractErrorMessage = (rawError) => {
-    if (!rawError) return 'Authentication failed. Please try again.';
-    if (typeof rawError === 'string') {
-      try {
-        const parsed = JSON.parse(rawError);
-        if (!parsed) return 'Authentication failed. Please try again.';
-        if (typeof parsed === 'string') return parsed;
-        return parsed?.message || 'Authentication failed. Please try again.';
-      } catch {
-        if (rawError === 'CredentialsSignin') {
-          return 'Invalid email or password.';
-        }
-        return rawError;
-      }
-    }
-    if (rawError instanceof Error) return rawError.message;
-    return 'Authentication failed. Please try again.';
-  };
-
   async function onSubmit(values) {
-    setIsProcessing(true);
-    setError(null);
+    setFormError(null);
 
-    try {
-      const providerCredentials = {
-        redirect: false,
+    dispatch(
+      loginWithPassword({
         email: values.email,
         password: values.password,
-        rememberMe: values.rememberMe,
-      };
-
-      if (authProviderId === 'ExternalCredentials') {
-        providerCredentials.device = 'web';
-      }
-
-      const response = await signIn(authProviderId, providerCredentials);
-      if (response?.error) {
-        setError(extractErrorMessage(response.error));
-      } else {
+        rememberme: values.rememberMe,
+        device: 'web',
+      }),
+    )
+      .unwrap()
+      .then(() => {
         router.push('/');
-      }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'An unexpected error occurred. Please try again.',
-      );
-    } finally {
-      setIsProcessing(false);
-    }
+      })
+      .catch((err) => {
+        setFormError(
+          err?.message || 'Authentication failed. Please try again later.',
+        );
+      });
   }
+
+  const combinedError = formError || error;
 
   return (
     <Form {...form}>
@@ -154,12 +111,12 @@ export default function Page() {
           </div>
         </div>
 
-        {error && (
+        {combinedError && (
           <Alert variant="destructive">
             <AlertIcon>
               <AlertCircle />
             </AlertIcon>
-            <AlertTitle>{error}</AlertTitle>
+            <AlertTitle>{combinedError}</AlertTitle>
           </Alert>
         )}
 
