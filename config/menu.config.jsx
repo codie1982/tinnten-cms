@@ -161,6 +161,73 @@ export const MENU_SIDEBAR = [
       },
     ],
   },
+  { heading: 'İÇERİK' },
+  {
+    id: 'content-pages',
+    title: 'Sayfa İçerikleri',
+    icon: Book,
+    children: [
+      {
+        id: 'homepage-content',
+        title: 'Ana Sayfa İçeriği',
+        path: '/cms/content/homepage',
+      },
+      {
+        id: 'faq',
+        title: 'SSS',
+        path: '/cms/content/faq',
+      },
+      {
+        id: 'seller-academy',
+        title: 'Satıcı Akademisi',
+        path: '/cms/content/seller-academy',
+      },
+    ],
+  },
+  {
+    id: 'contracts',
+    title: 'Sözleşmeler',
+    icon: FileText,
+    children: [
+      {
+        id: 'seller-contracts',
+        title: 'Satıcı Sözleşmeleri',
+        path: '/cms/contracts/seller',
+      },
+      {
+        id: 'user-contracts',
+        title: 'Kullanıcı Sözleşmeleri',
+        path: '/cms/contracts/user',
+      },
+      {
+        id: 'privacy-policy',
+        title: 'Gizlilik Politikası',
+        path: '/cms/contracts/privacy-policy',
+      },
+      {
+        id: 'terms-of-service',
+        title: 'Hizmet Şartları',
+        path: '/cms/contracts/terms-of-service',
+      },
+    ],
+  },
+  {
+    id: 'packages',
+    title: 'Paketler',
+    icon: Gift,
+    children: [
+      {
+        id: 'membership-packages',
+        title: 'Üyelik Paketleri',
+        path: '/cms/packages/memberships',
+      },
+      {
+        id: 'seller-packages',
+        title: 'Satıcı Paketleri',
+        path: '/cms/packages/sellers',
+      },
+    ],
+  },
   { heading: 'FINANCE' },
   {
     id: 'escrow',
