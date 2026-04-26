@@ -1,0 +1,16 @@
+.git/
+.gitignore
+.DS_Store
+node_modules/
+npm-debug.log
+.next/
+.turbo/
+.env*
+.npm-cache/
+coverage/
+.turbopack/
+README.md
+.vscode/
+.idea/
+*.swp
+*.swo
