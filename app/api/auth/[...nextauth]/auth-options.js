@@ -290,6 +290,20 @@ const authOptions = {
   providers: USE_EXTERNAL_AUTH ? externalAuthProviders : prismaAuthProviders,
   session: { strategy: 'jwt', maxAge: 24 * 60 * 60 },
   callbacks: {
+    async signIn({ user, account, profile, email, credentials }) {
+      if (account?.provider === 'google') {
+        return true;
+      }
+      if (credentials) {
+        return !!user;
+      }
+      return false;
+    },
+    redirect({ url, baseUrl }) {
+      if (url.startsWith('/')) return `${baseUrl}${url}`;
+      else if (new URL(url).origin === baseUrl) return url;
+      return baseUrl;
+    },
     async jwt({ token, user, session, trigger }) {
       if (trigger === 'update' && session?.user) {
         token = { ...token, ...session.user };
