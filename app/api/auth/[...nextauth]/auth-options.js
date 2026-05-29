@@ -134,6 +134,21 @@ const authOptions = {
           );
         }
 
+        // cms:access izni kontrolü
+        const cmsCheckRes = await fetch(`${BACKEND_URL}/auth/login/cms`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${loginData.accessToken}` },
+        }).catch(() => null);
+
+        if (!cmsCheckRes || !cmsCheckRes.ok) {
+          throw new Error(
+            JSON.stringify({
+              code: 403,
+              message: 'CMS erişim izniniz bulunmuyor.',
+            }),
+          );
+        }
+
         const profile = loginData.info || {};
         const fullName =
           profile.name ||
