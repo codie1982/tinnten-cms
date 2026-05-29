@@ -3,9 +3,7 @@ import { Inter } from 'next/font/google';
 import { cn } from '@/lib/utils';
 import { SettingsProvider } from '@/providers/settings-provider';
 import { TooltipsProvider } from '@/providers/tooltips-provider';
-import { Toaster } from '@/components/ui/sonner';
 import '@/css/styles.css';
-import '@/components/keenicons/assets/styles.css';
 import { AuthProvider } from '@/providers/auth-provider';
 import { I18nProvider } from '@/providers/i18n-provider';
 import { ModulesProvider } from '@/providers/modules-provider';
@@ -40,7 +38,6 @@ export default async function RootLayout({ children }) {
                   <TooltipsProvider>
                     <ModulesProvider>
                       <Suspense>{children}</Suspense>
-                      <Toaster />
                     </ModulesProvider>
                   </TooltipsProvider>
                 </I18nProvider>

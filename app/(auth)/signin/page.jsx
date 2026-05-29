@@ -1,225 +1,121 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { RiErrorWarningFill } from '@remixicon/react';
-import { AlertCircle, Eye, EyeOff, LoaderCircleIcon } from 'lucide-react';
 import { signIn } from 'next-auth/react';
-import { useForm } from 'react-hook-form';
-import { useDispatch, useSelector } from 'react-redux';
-import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Icons } from '@/components/common/icons';
-import { getSigninSchema } from '../forms/signin-schema';
-import { loginWithPassword } from '@/redux/features/authSlice';
-import { selectAuth } from '@/redux/store';
 
-export default function Page() {
+export default function SignIn() {
   const router = useRouter();
-  const dispatch = useDispatch();
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [formError, setFormError] = useState(null);
-  const { status, error } = useSelector(selectAuth);
-  const isProcessing = status === 'loading';
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const form = useForm({
-    resolver: zodResolver(getSigninSchema()),
-    defaultValues: {
-      email: 'demo@kt.com',
-      password: 'demo123',
-      rememberMe: false,
-    },
-  });
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
 
-  async function onSubmit(values) {
-    setFormError(null);
+    const result = await signIn('ExternalCredentials', {
+      email,
+      password,
+      redirect: false,
+    });
 
-    dispatch(
-      loginWithPassword({
-        email: values.email,
-        password: values.password,
-        rememberme: values.rememberMe,
-        device: 'web',
-      }),
-    )
-      .unwrap()
-      .then(() => {
-        router.push('/');
-      })
-      .catch((err) => {
-        setFormError(
-          err?.message || 'Authentication failed. Please try again later.',
-        );
-      });
-  }
+    setLoading(false);
 
-  const combinedError = formError || error;
+    if (result?.error) {
+      try {
+        const parsed = JSON.parse(result.error);
+        setError(parsed.message || 'Giriş başarısız.');
+      } catch {
+        setError('Giriş başarısız.');
+      }
+    } else {
+      router.push('/');
+    }
+  };
 
   return (
-    <Form {...form}>
-      <form
-        onSubmit={form.handleSubmit(onSubmit)}
-        className="block w-full space-y-5"
-      >
-        <div className="space-y-1.5 pb-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-center">
-            Sign in to Metronic
-          </h1>
-        </div>
-
-        <Alert size="sm" close={false}>
-          <AlertIcon>
-            <RiErrorWarningFill className="text-primary" />
-          </AlertIcon>
-          <AlertTitle className="text-accent-foreground">
-            Use <span className="text-mono font-semibold">demo@kt.com</span>{' '}
-            username and{' '}
-            <span className="text-mono font-semibold">demo123</span> for demo
-            access.
-          </AlertTitle>
-        </Alert>
-
-        <div className="flex flex-col gap-3.5">
-          <Button
-            variant="outline"
-            type="button"
-            onClick={() => signIn('google', { callbackUrl: '/' })}
-          >
-            <Icons.googleColorful className="size-5! opacity-100!" /> Sign in
-            with Google
-          </Button>
-        </div>
-
-        <div className="relative py-1.5">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t" />
+    <div style={styles.container}>
+      <div style={styles.card}>
+        <h1 style={styles.title}>tinnten CMS</h1>
+        <form onSubmit={handleSubmit} style={styles.form}>
+          <div style={styles.field}>
+            <label style={styles.label}>E-posta</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              style={styles.input}
+              placeholder="ornek@tinten.ai"
+            />
           </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">or</span>
+          <div style={styles.field}>
+            <label style={styles.label}>Şifre</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              style={styles.input}
+              placeholder="••••••••"
+            />
           </div>
-        </div>
-
-        {combinedError && (
-          <Alert variant="destructive">
-            <AlertIcon>
-              <AlertCircle />
-            </AlertIcon>
-            <AlertTitle>{combinedError}</AlertTitle>
-          </Alert>
-        )}
-
-        <FormField
-          control={form.control}
-          name="email"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Email</FormLabel>
-              <FormControl>
-                <Input placeholder="Your email" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="password"
-          render={({ field }) => (
-            <FormItem>
-              <div className="flex justify-between items-center gap-2.5">
-                <FormLabel>Password</FormLabel>
-                <Link
-                  href="/reset-password"
-                  className="text-sm font-semibold text-foreground hover:text-primary"
-                >
-                  Forgot Password?
-                </Link>
-              </div>
-              <div className="relative">
-                <Input
-                  placeholder="Your password"
-                  type={passwordVisible ? 'text' : 'password'} // Toggle input type
-                  {...field}
-                />
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  mode="icon"
-                  size="sm"
-                  onClick={() => setPasswordVisible(!passwordVisible)} // Toggle visibility
-                  className="absolute end-0 top-1/2 -translate-y-1/2 h-7 w-7 me-1.5 bg-transparent!"
-                  aria-label={
-                    passwordVisible ? 'Hide password' : 'Show password'
-                  }
-                >
-                  {passwordVisible ? (
-                    <EyeOff className="text-muted-foreground" />
-                  ) : (
-                    <Eye className="text-muted-foreground" />
-                  )}
-                </Button>
-              </div>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <div className="flex items-center space-x-2">
-          <FormField
-            control={form.control}
-            name="rememberMe"
-            render={({ field }) => (
-              <>
-                <Checkbox
-                  id="remember-me"
-                  checked={field.value}
-                  onCheckedChange={(checked) => field.onChange(!!checked)}
-                />
-
-                <label
-                  htmlFor="remember-me"
-                  className="text-sm leading-none text-muted-foreground"
-                >
-                  Remember me
-                </label>
-              </>
-            )}
-          />
-        </div>
-
-        <div className="flex flex-col gap-2.5">
-          <Button type="submit" disabled={isProcessing}>
-            {isProcessing ? (
-              <LoaderCircleIcon className="size-4 animate-spin" />
-            ) : null}
-            Continue
-          </Button>
-        </div>
-
-        <p className="text-sm text-muted-foreground text-center">
-          Don&apos;t have an account?{' '}
-          <Link
-            href="/signup"
-            className="text-sm font-semibold text-foreground hover:text-primary"
-          >
-            Sign Up
-          </Link>
-        </p>
-      </form>
-    </Form>
+          {error && <p style={styles.error}>{error}</p>}
+          <button type="submit" disabled={loading} style={styles.button}>
+            {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
+
+const styles = {
+  container: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#f5f5f5',
+  },
+  card: {
+    background: '#fff',
+    borderRadius: '8px',
+    padding: '2.5rem',
+    width: '100%',
+    maxWidth: '400px',
+    boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
+  },
+  title: {
+    fontSize: '1.5rem',
+    fontWeight: '700',
+    marginBottom: '1.5rem',
+    textAlign: 'center',
+    color: '#1a1a1a',
+  },
+  form: { display: 'flex', flexDirection: 'column', gap: '1rem' },
+  field: { display: 'flex', flexDirection: 'column', gap: '0.25rem' },
+  label: { fontSize: '0.875rem', fontWeight: '500', color: '#374151' },
+  input: {
+    padding: '0.5rem 0.75rem',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    fontSize: '0.875rem',
+    outline: 'none',
+  },
+  error: { color: '#dc2626', fontSize: '0.875rem', margin: 0 },
+  button: {
+    padding: '0.625rem',
+    background: '#2563eb',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    fontSize: '0.875rem',
+    fontWeight: '500',
+    cursor: 'pointer',
+    marginTop: '0.5rem',
+  },
+};
