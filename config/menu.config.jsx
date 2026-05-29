@@ -660,7 +660,7 @@ export const MENU_SIDEBAR_COMPACT = [
     children: [
       {
         title: 'Sign In',
-        path: '/signin',
+        path: '/login',
       },
       {
         title: 'Check Email',

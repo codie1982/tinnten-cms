@@ -3,8 +3,8 @@
   "version": "9.2.3",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "dev:stable": "next dev",
+    "dev": "NODE_OPTIONS=--no-experimental-webstorage next dev --turbopack",
+    "dev:stable": "NODE_OPTIONS=--no-experimental-webstorage next dev",
     "clean": "rimraf .next || rm -rf .next",
     "build": "next build",
     "start": "next start",
@@ -27,6 +27,7 @@
     "@tanstack/react-query-devtools": "^5.81.2",
     "@tanstack/react-table": "^8.21.3",
     "apexcharts": "4.7.0",
+    "axios": "^1.16.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

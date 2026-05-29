@@ -9,7 +9,7 @@
   --card-foreground: oklch(27.4% 0.006 286.033); /* --color-zinc-800 */
   --popover: oklch(1 0 0); /* --color-white */
   --popover-foreground: oklch(27.4% 0.006 286.033); /* --color-zinc-800 */
-  --primary: #1379f0; /* custom color  */
+  --primary: #6366F1; /* indigo/violet — Tinnten CMS accent */
   --primary-foreground: oklch(1 0 0); /* --color-white */
   --secondary: oklch(96.7% 0.003 264.542); /* --color-zinc-100 */
   --secondary-foreground: oklch(44.6% 0.03 256.802); /* --color-zinc-600 */
@@ -39,7 +39,7 @@
   --card-foreground: oklch(98.5% 0 0); /* --color-zinc-50 */
   --popover: oklch(14.1% 0.005 285.823); /* --color-zinc-950 */
   --popover-foreground: oklch(98.5% 0 0); /* --color-zinc-50 */
-  --primary: #1379f0; /* custom color  */
+  --primary: #6366F1; /* indigo/violet — Tinnten CMS accent */
   --primary-foreground: oklch(1 0 0); /* --color-white */
   --secondary: oklch(27.4% 0.006 286.033); /* --color-zinc-800 */
   --secondary-foreground: oklch(70.5% 0.015 286.067); /* --color-zinc-400 */
@@ -149,11 +149,34 @@
   }
 }
 
-/** Custom Font Size **/
+/** Custom Font Sizes **/
 @theme {
   --text-2sm: 0.8125rem;
   --text-2sm--line-height: calc(1.075 / 0.8125);
 
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: calc(0.825 / 0.6875);
+}
+
+/** Extended Spacing & Sizing Tokens **/
+@theme {
+  /* Sub-pixel spacings used by Metronic components */
+  --spacing-0\.25: 0.0625rem;   /* 1px  */
+  --spacing-2\.25: 0.5625rem;   /* 9px  */
+  --spacing-2\.5: 0.625rem;     /* 10px — already in Tailwind default */
+  --spacing-3\.25: 0.8125rem;   /* 13px */
+  --spacing-4\.5: 1.125rem;     /* 18px */
+  --spacing-5\.5: 1.375rem;     /* 22px */
+  --spacing-8\.5: 2.125rem;     /* 34px */
+
+  /* Extra border-radius */
+  --radius-xs: calc(var(--radius) - 6px); /* 2px  */
+}
+
+/** Sidebar Layout Tokens **/
+@theme inline {
+  --sidebar-width: 280px;
+  --sidebar-width-collapse: 80px;
+  --sidebar-default-width: 280px;
+  --header-height: 64px;
 }

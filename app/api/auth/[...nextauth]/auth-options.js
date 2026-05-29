@@ -1,7 +1,7 @@
 import CredentialsProvider from 'next-auth/providers/credentials';
 
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5001/api/v10';
+  process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5001/api/v10';
 
 const normalizeBoolean = (value, defaultValue = false) => {
   if (typeof value === 'boolean') return value;
@@ -22,12 +22,35 @@ const authOptions = {
         password: { label: 'Password', type: 'password' },
         rememberMe: { label: 'Remember me', type: 'boolean' },
         accessToken: { label: 'Access Token', type: 'text' },
+        refreshToken: { label: 'Refresh Token', type: 'text' },
         name: { label: 'Name', type: 'text' },
         userid: { label: 'User ID', type: 'text' },
         device: { label: 'Device', type: 'text' },
         deviceid: { label: 'Device ID', type: 'text' },
+        company: { label: 'Company', type: 'text' },
+        lang: { label: 'Language', type: 'text' },
+        roles: { label: 'Roles', type: 'text' },
       },
       async authorize(credentials) {
+        // DEV bypass: DEV_MOCK_AUTH=true ile preview/geliştirme ortamında çalışır
+        if (
+          process.env.DEV_MOCK_AUTH === 'true' &&
+          credentials?.email === 'admin@tinnten.ai' &&
+          credentials?.password === 'cms2025'
+        ) {
+          return {
+            id: 'dev-admin',
+            userid: 'dev-admin',
+            email: 'admin@tinnten.ai',
+            name: 'Dev Admin',
+            accessToken: 'dev-mock-token',
+            refreshToken: null,
+            company: null,
+            lang: 'tr',
+            roles: ['cms:admin', 'cms:editor', 'cms:access'],
+          };
+        }
+
         if (!credentials?.email) {
           throw new Error(
             JSON.stringify({
@@ -54,12 +77,23 @@ const authOptions = {
             );
           }
 
+          let roles = [];
+          try {
+            roles = credentials.roles ? JSON.parse(credentials.roles) : [];
+          } catch {
+            roles = [];
+          }
+
           return {
             id: credentials.userid || credentials.email,
             userid: credentials.userid || credentials.email,
             email: credentials.email,
             name: credentials.name || 'User',
             accessToken: credentials.accessToken,
+            refreshToken: credentials.refreshToken || null,
+            company: credentials.company || null,
+            lang: credentials.lang || null,
+            roles,
           };
         }
 
@@ -149,6 +183,9 @@ const authOptions = {
           );
         }
 
+        const cmsPayload = await cmsCheckRes.json().catch(() => null);
+        const roles = cmsPayload?.data?.roles ?? loginData.roles ?? [];
+
         const profile = loginData.info || {};
         const fullName =
           profile.name ||
@@ -163,13 +200,14 @@ const authOptions = {
           refreshToken: loginData.refreshToken,
           company: loginData.company,
           lang: loginData.lang,
+          roles,
         };
       },
     }),
   ],
   session: { strategy: 'jwt', maxAge: 24 * 60 * 60 },
   callbacks: {
-    async signIn({ user, account, credentials }) {
+    async signIn({ user, credentials }) {
       if (credentials) {
         return !!user;
       }
@@ -193,6 +231,7 @@ const authOptions = {
       if (user?.userid) token.userid = user.userid;
       if (user?.company) token.company = user.company;
       if (user?.lang) token.lang = user.lang;
+      if (user?.roles) token.roles = user.roles;
       return token;
     },
     async session({ session, token }) {
@@ -205,10 +244,11 @@ const authOptions = {
       if (token.refreshToken) session.refreshToken = token.refreshToken;
       if (token.company) session.company = token.company;
       if (token.lang) session.lang = token.lang;
+      if (token.roles) session.roles = token.roles;
       return session;
     },
   },
-  pages: { signIn: '/signin' },
+  pages: { signIn: '/login' },
 };
 
 export default authOptions;

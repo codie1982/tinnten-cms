@@ -8,14 +8,14 @@
   }
 
   .kt-image-input-remove {
-    @apply bg-background border-border absolute end-0.25 top-0.25 z-[1] flex size-5 cursor-pointer items-center justify-center rounded-full border shadow-sm;
+    @apply bg-background border-border absolute end-0.5 top-0.5 z-[1] flex size-5 cursor-pointer items-center justify-center rounded-full border shadow-sm;
 
     i {
       @apply text-muted-foreground text-[11px];
     }
 
     svg {
-      @apply text-muted-foreground size-3.25;
+      @apply text-muted-foreground size-3;
     }
 
     &:hover {

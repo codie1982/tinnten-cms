@@ -50,7 +50,7 @@ export const loginWithPassword = createAsyncThunk(
       try {
         const meResp = await getMe(accessToken);
         profile = meResp?.data ?? meResp;
-      } catch (_) {}
+      } catch {}
 
       const user = profile?.profile || {
         id: userid,

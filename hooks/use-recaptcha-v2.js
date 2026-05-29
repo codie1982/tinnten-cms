@@ -90,14 +90,11 @@ export function useRecaptchaV2(siteKey) {
   };
 
   useEffect(() => {
-    let isMounted = true;
-
     if (containerRef.current) {
       initializeRecaptcha();
     }
 
     return () => {
-      isMounted = false;
       if (widgetId.current !== null) {
         const grecaptcha = window.grecaptcha;
         if (grecaptcha) {

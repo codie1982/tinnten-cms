@@ -1,5 +1,4 @@
 'use client';
-'use client';
 
 import * as React from 'react';
 import { ThemeProvider as NextThemesProvider } from 'next-themes';
@@ -8,9 +7,10 @@ export function ThemeProvider({ children }) {
   return (
     <NextThemesProvider
       attribute="class"
-      defaultTheme="system"
+      defaultTheme="light"
       storageKey="nextjs-theme"
-      enableSystem
+      enableSystem={false}
+      forcedTheme="light"
       disableTransitionOnChange
       enableColorScheme
     >

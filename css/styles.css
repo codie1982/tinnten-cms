@@ -1,6 +1,13 @@
 /* Tailwind Core */
 @import 'tailwindcss';
 
+/* Explicit sources — components/ .gitignore'da olsa bile her zaman taransın.
+   Tailwind v4 auto-detection .gitignore'a uyduğundan layout class'larının
+   (lg:static, lg:hidden, lg:p-7 vb.) üretilmesini garanti eder. */
+@source "../components";
+@source "../app";
+@source "../config";
+
 /* ReUI Configs */
 @import './config.reui.css';
 
@@ -11,7 +18,7 @@
   }
 
   *:focus-visible {
-    @apply outline-ring rounded-xs shadow-none outline-2 outline-offset-3 transition-none!;
+    @apply outline-2 outline-offset-2 outline-(--color-ring) rounded-sm shadow-none transition-none!;
   }
 }
 
@@ -20,7 +27,6 @@
 @import './components/apexcharts.css';
 @import './components/leaflet.css';
 @import './components/rating.css';
-@import './components/image-input.css';
 @import './components/scrollable.css';
 
 /* Demos */
