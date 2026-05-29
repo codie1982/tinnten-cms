@@ -1,4 +1,4 @@
-FROM node:18
+FROM node:18-alpine
 
 WORKDIR /app
 
@@ -6,13 +6,13 @@ ENV NODE_ENV=production
 
 COPY package*.json ./
 
-RUN npm ci
+RUN npm install --legacy-peer-deps
 
 COPY . .
 
 RUN npm run build
 
-RUN npm ci --omit=dev
+RUN npm prune --omit=dev
 
 EXPOSE 5020
 
