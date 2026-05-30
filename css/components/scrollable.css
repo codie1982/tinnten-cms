@@ -100,7 +100,7 @@
   }
 
   /* Responsive adjustments for smaller screens */
-  @media (max-width: var(--screen-lg)) {
+  @media (max-width: 1024px) {
     .kt-scrollable,
     .kt-scrollable-hover {
       overflow: auto;
