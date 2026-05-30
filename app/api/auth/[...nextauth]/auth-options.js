@@ -2,6 +2,7 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 
 const BACKEND_URL =
   process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5001/api/v10';
+const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
 
 const normalizeBoolean = (value, defaultValue = false) => {
   if (typeof value === 'boolean') return value;
@@ -13,6 +14,7 @@ const normalizeBoolean = (value, defaultValue = false) => {
 };
 
 const authOptions = {
+  secret: NEXTAUTH_SECRET,
   providers: [
     CredentialsProvider({
       id: 'ExternalCredentials',

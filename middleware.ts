@@ -2,6 +2,8 @@ import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
 import type { NextRequestWithAuth } from 'next-auth/middleware';
 
+const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
+
 export default withAuth(
   function middleware(req: NextRequestWithAuth) {
     const { pathname } = req.nextUrl;
@@ -26,6 +28,7 @@ export default withAuth(
     return NextResponse.next();
   },
   {
+    secret: NEXTAUTH_SECRET,
     callbacks: {
       // token varsa oturum geçerli sayılır
       authorized: ({ token }) => !!token,
