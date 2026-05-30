@@ -1,7 +1,9 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import {
   Save,
   Globe,
@@ -41,20 +43,32 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { CMS_ROLES } from '@/lib/roles';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
-import { newsMock, statusMeta, contentTypeMeta } from '../_data';
+import {
+  useGetNewsQuery,
+  useCreateNewsMutation,
+  useUpdateNewsMutation,
+  usePublishNewsMutation,
+  useUnpublishNewsMutation,
+  useDeleteNewsMutation,
+  useGetCategoryTreeQuery,
+} from '@/redux/services';
+import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
+import { statusMeta, contentTypeMeta } from '../_data';
+
+const DEFAULT_COUNTRY = DEFAULT_NEWS_COUNTRY;
 
 /* ─── helpers ─── */
-const CATEGORIES = [
-  { id: 'cat-1-1', name: 'Yapay Zeka' },
-  { id: 'cat-1-2', name: 'Siber Güvenlik' },
-  { id: 'cat-2-1', name: 'Borsa' },
-  { id: 'cat-2-2', name: 'Girişimcilik' },
-  { id: 'cat-3-1', name: 'Platform Haberleri' },
-  { id: 'cat-3-2', name: 'Satıcı Rehberleri' },
-  { id: 'cat-4-1', name: 'Lojistik' },
-];
+function flattenTree(nodes, depth = 0, acc = []) {
+  for (const n of nodes || []) {
+    acc.push({ id: n._id ?? n.id, name: n.name, depth });
+    if (n.children?.length) flattenTree(n.children, depth + 1, acc);
+  }
+  return acc;
+}
 
 const PLATFORMS = [
   { value: 'x', label: 'X (Twitter)', icon: '𝕏' },
@@ -148,39 +162,75 @@ function RichSectionEditor({ sections, onChange }) {
 export default function NewsDetailPage({ params }) {
   const { id } = use(params);
   const isNew = id === 'new';
-  const raw = isNew ? null : newsMock.find((n) => n.id === id);
+  const router = useRouter();
+  const { data: session } = useSession();
+  const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
+
+  const { data: doc, isLoading, error } = useGetNewsQuery(id, { skip: isNew || !authorized });
+  const [country, setCountry] = useState(DEFAULT_COUNTRY);
+  const { data: tree = [] } = useGetCategoryTreeQuery({ countryCode: country }, { skip: !authorized });
+  const categories = useMemo(() => flattenTree(tree), [tree]);
+
+  const [createNews, { isLoading: creating }] = useCreateNewsMutation();
+  const [updateNews, { isLoading: updating }] = useUpdateNewsMutation();
+  const [publishNews] = usePublishNewsMutation();
+  const [unpublishNews] = useUnpublishNewsMutation();
+  const [deleteNews] = useDeleteNewsMutation();
+  const saving = creating || updating;
 
   const [meta, setMeta] = useState({
-    title: raw?.title ?? '',
-    subtitle: raw?.subtitle ?? '',
-    slug: raw?.slug ?? '',
-    categoryId: raw?.category?.id ?? '',
-    tags: raw?.tags?.join(', ') ?? '',
-    contentType: raw?.contentType ?? 'richSections',
+    title: '', subtitle: '', slug: '', categoryId: '', tags: '', contentType: 'richSections',
   });
-  const [richSections, setRichSections] = useState(raw?.richSections ?? [{ heading: '', body: '', order: 1 }]);
-  const [sections, setSections] = useState(raw?.content ?? [{ heading: '', text: '', order: 1 }]);
-  const [htmlContent, setHtmlContent] = useState(raw?.htmlContent ?? '');
-  const [mdContent, setMdContent] = useState(raw?.markdownContent ?? '');
-  const [status, setStatus] = useState(raw?.status ?? 'draft');
-  const [saving, setSaving] = useState(false);
-
-  // Social posts
-  const [posts, setPosts] = useState([
-    { id: 'sp-1', platform: 'x', postText: 'Tinnten B2B platformunda büyük gelişme! 🚀 #b2b #tinnten', status: 'published', scheduledAt: null, platformPostUrl: 'https://x.com' },
-    { id: 'sp-2', platform: 'linkedin', postText: 'Platformumuzda önemli bir güncelleme yayınladık.', status: 'queued', scheduledAt: null },
-    { id: 'sp-3', platform: 'telegram', postText: 'Haberler bölümünde yeni içerik mevcut.', status: 'failed', scheduledAt: null },
-  ]);
-  const [newPost, setNewPost] = useState({ platform: 'x', postText: '', scheduledAt: '' });
+  const [richSections, setRichSections] = useState([{ heading: '', body: '', order: 1 }]);
+  const [sections, setSections] = useState([{ heading: '', text: '', order: 1 }]);
+  const [htmlContent, setHtmlContent] = useState('');
+  const [mdContent, setMdContent] = useState('');
+  const [status, setStatus] = useState('draft');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState('content'); // content | cover | social
 
-  if (!isNew && !raw) {
+  // Mevcut haber yüklenince formu doldur
+  useEffect(() => {
+    if (!doc) return;
+    setMeta({
+      title: doc.title || '',
+      subtitle: doc.subtitle || '',
+      slug: doc.slug || '',
+      categoryId: doc.categoryId ? String(doc.categoryId) : '',
+      tags: (doc.tags || []).join(', '),
+      contentType: doc.contentType || 'richSections',
+    });
+    setRichSections(doc.richSections?.length ? doc.richSections : [{ heading: '', body: '', order: 1 }]);
+    setSections(doc.content?.length ? doc.content : [{ heading: '', text: '', order: 1 }]);
+    setHtmlContent(doc.htmlContent || '');
+    setMdContent(doc.markdownContent || '');
+    setStatus(doc.status || 'draft');
+    setCountry(doc.countryCode || DEFAULT_COUNTRY);
+  }, [doc]);
+
+  // Social posts (henüz API'ye bağlı değil — UI placeholder)
+  const [posts, setPosts] = useState([]);
+  const [newPost, setNewPost] = useState({ platform: 'x', postText: '', scheduledAt: '' });
+
+  if (!isNew && isLoading) {
+    return (
+      <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
+        <PageHeader breadcrumb={[{ label: 'Haberler', href: '/cms/content/news' }, { label: '…' }]} title="Yükleniyor…" />
+        <div className="grid gap-5 lg:grid-cols-3">
+          <Skeleton className="h-96 lg:col-span-1" />
+          <Skeleton className="h-96 lg:col-span-2" />
+        </div>
+      </RoleGuard>
+    );
+  }
+
+  if (!isNew && (error || !doc)) {
     return (
       <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
         <PageHeader breadcrumb={[{ label: 'Haberler', href: '/cms/content/news' }, { label: 'Bulunamadı' }]} title="Haber Bulunamadı" />
         <Card>
           <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            Bu ID ile eşleşen haber bulunamadı.{' '}
+            {error ? (error?.data?.message || 'Haber yüklenirken hata oluştu.') : 'Bu ID ile eşleşen haber bulunamadı.'}{' '}
             <Link href="/cms/content/news" className="text-primary hover:underline">Listeye dön</Link>
           </CardContent>
         </Card>
@@ -188,23 +238,58 @@ export default function NewsDetailPage({ params }) {
     );
   }
 
-  function handleSave() {
-    setSaving(true);
-    setTimeout(() => setSaving(false), 700);
+  function buildBody() {
+    return {
+      title: meta.title,
+      subtitle: meta.subtitle,
+      slug: meta.slug || undefined,
+      categoryId: meta.categoryId || undefined,
+      tags: meta.tags ? meta.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+      contentType: meta.contentType,
+      richSections,
+      content: sections,
+      htmlContent,
+      markdownContent: mdContent,
+      countryCode: country,
+      status,
+    };
   }
 
-  function handlePublish() {
-    setStatus(status === 'published' ? 'draft' : 'published');
+  async function handleSave() {
+    if (!meta.title.trim()) return;
+    const body = buildBody();
+    if (isNew) {
+      const r = await createNews(body).unwrap().catch(() => null);
+      const newId = r?.data?._id ?? r?.data?.id ?? r?._id ?? r?.id;
+      if (newId) router.push(`/cms/content/news/${newId}`);
+    } else {
+      await updateNews({ id, ...body }).unwrap().catch(() => {});
+    }
+  }
+
+  async function handlePublish() {
+    if (isNew) return;
+    if (status === 'published') {
+      await unpublishNews(id).unwrap().catch(() => {});
+      setStatus('draft');
+    } else {
+      await publishNews(id).unwrap().catch(() => {});
+      setStatus('published');
+    }
+  }
+
+  async function handleDelete() {
+    if (!isNew) await deleteNews(id).unwrap().catch(() => {});
+    router.push('/cms/content/news');
   }
 
   function addPost() {
     if (!newPost.postText) return;
-    setPosts((p) => [...p, { id: `sp-${Date.now()}`, ...newPost, status: 'queued' }]);
+    setPosts((p) => [...p, { id: `sp-${p.length + 1}`, ...newPost, status: 'queued' }]);
     setNewPost({ platform: 'x', postText: '', scheduledAt: '' });
   }
-
-  function removePost(id) {
-    setPosts((p) => p.filter((s) => s.id !== id));
+  function removePost(pid) {
+    setPosts((p) => p.filter((s) => s.id !== pid));
   }
 
   /* ─── content editor based on type ─── */
@@ -330,11 +415,25 @@ export default function NewsDetailPage({ params }) {
                 </div>
               </div>
               <div className="space-y-1.5">
+                <label className="text-2sm font-medium">Ülke</label>
+                <Select value={country} onValueChange={(v) => { setCountry(v); setMeta((m) => ({ ...m, categoryId: '' })); }}>
+                  <SelectTrigger><SelectValue placeholder="Ülke" /></SelectTrigger>
+                  <SelectContent>
+                    {NEWS_COUNTRIES.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
                 <label className="text-2sm font-medium">Kategori</label>
-                <Select value={meta.categoryId} onValueChange={(v) => setMeta((m) => ({ ...m, categoryId: v }))}>
+                <Select value={meta.categoryId || 'none'} onValueChange={(v) => setMeta((m) => ({ ...m, categoryId: v === 'none' ? '' : v }))}>
                   <SelectTrigger><SelectValue placeholder="Kategori seçin" /></SelectTrigger>
                   <SelectContent>
-                    {CATEGORIES.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    <SelectItem value="none">Kategorisiz</SelectItem>
+                    {categories.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{'— '.repeat(c.depth)}{c.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -361,10 +460,17 @@ export default function NewsDetailPage({ params }) {
           {/* Actions */}
           <Card>
             <CardContent className="p-4 space-y-2">
-              <Button className="w-full" variant="destructive">
-                <Trash2 className="size-4" />
-                Haberi Sil
-              </Button>
+              {confirmDelete ? (
+                <div className="flex gap-2">
+                  <Button className="flex-1" variant="destructive" onClick={handleDelete}>Evet, Sil</Button>
+                  <Button variant="outline" onClick={() => setConfirmDelete(false)}>İptal</Button>
+                </div>
+              ) : (
+                <Button className="w-full" variant="destructive" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="size-4" />
+                  {isNew ? 'İptal Et' : 'Haberi Sil'}
+                </Button>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -426,9 +532,9 @@ export default function NewsDetailPage({ params }) {
                 {/* Main cover */}
                 <div>
                   <p className="mb-2 text-2sm font-medium text-muted-foreground">Ana Kapak Görseli</p>
-                  {raw?.imageUrl ? (
+                  {doc?.imageUrl ? (
                     <div className="relative w-full overflow-hidden rounded-xl border border-border">
-                      <img src={raw.imageUrl} alt="cover" className="h-48 w-full object-cover" />
+                      <img src={doc.imageUrl} alt="cover" className="h-48 w-full object-cover" />
                       <div className="absolute bottom-2 right-2 flex gap-1.5">
                         <Button size="sm" variant="outline" className="bg-background/90">
                           <X className="size-3.5" />
@@ -448,7 +554,7 @@ export default function NewsDetailPage({ params }) {
                 <div>
                   <p className="mb-2 text-2sm font-medium text-muted-foreground">Galeri</p>
                   <div className="grid grid-cols-3 gap-3">
-                    {[raw?.imageUrl].filter(Boolean).map((url, i) => (
+                    {[doc?.imageUrl].filter(Boolean).map((url, i) => (
                       <div key={i} className="group relative overflow-hidden rounded-lg border border-border">
                         <img src={url} alt="" className="h-24 w-full object-cover" />
                         <div className="absolute inset-0 flex items-center justify-center gap-1 bg-foreground/40 opacity-0 transition-opacity group-hover:opacity-100">

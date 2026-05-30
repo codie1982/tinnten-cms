@@ -38,11 +38,38 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar } from '@/components/ui/avatar';
-import { CMS_ROLES } from '@/lib/roles';
-import { newsMock, statusMeta } from './_data';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { useSession } from 'next-auth/react';
+import { CMS_ROLES, canAccess } from '@/lib/roles';
+import {
+  useGetNewsListQuery,
+  useGetCategoryTreeQuery,
+  useGenerateNewsMutation,
+} from '@/redux/services';
+import { cn } from '@/lib/utils';
+import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
+import { statusMeta } from './_data';
+
+const DEFAULT_COUNTRY = DEFAULT_NEWS_COUNTRY;
+
+function formatTrDate(input) {
+  if (!input) return '—';
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return String(input);
+  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/** Kategori ağacını düz listeye indirger (id + name). */
+function flattenTree(nodes, acc = []) {
+  for (const n of nodes || []) {
+    acc.push({ id: n._id ?? n.id, name: n.name });
+    if (n.children?.length) flattenTree(n.children, acc);
+  }
+  return acc;
+}
 
 /* ─── AI Generate Modal ─── */
-const AI_COUNTRIES = ['TR', 'US', 'GB', 'DE', 'FR', 'ES', 'AR', 'GR', 'GLOBAL'];
+const AI_COUNTRIES = NEWS_COUNTRIES.map((c) => c.code);
 const AI_CONTENT_TYPES = [
   { value: 'richSections', label: 'Zengin Bölümler' },
   { value: 'sections', label: 'Bölümler' },
@@ -50,21 +77,95 @@ const AI_CONTENT_TYPES = [
   { value: 'markdown', label: 'Markdown' },
 ];
 
+function FormatSelect({ value, onChange }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-2sm font-medium">İçerik Formatı</label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {AI_CONTENT_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function AIGenerateModal({ onClose }) {
   const [phase, setPhase] = useState('form'); // form | loading | done
+  const [mode, setMode] = useState('topic'); // topic | general
+  const [errorMsg, setErrorMsg] = useState('');
   const [form, setForm] = useState({
     topic: '',
     direction: '',
     categoryId: '',
     country: 'TR',
+    countries: ['TR'],
     wordCount: '800',
     contentType: 'richSections',
+    maxCategories: '5',
+    jobsJson: '[\n  { "topic": "Örnek konu", "country": "TR", "contentType": "richSections" }\n]',
   });
+  const [generateNews] = useGenerateNewsMutation();
 
-  function handleGenerate() {
-    if (!form.topic) return;
+  const canSubmit =
+    mode === 'general' ? form.countries.length > 0
+      : mode === 'batch' ? !!form.jobsJson.trim()
+      : !!form.topic;
+
+  function toggleCountry(code) {
+    setForm((f) => ({
+      ...f,
+      countries: f.countries.includes(code)
+        ? f.countries.filter((c) => c !== code)
+        : [...f.countries, code],
+    }));
+  }
+
+  async function handleGenerate() {
+    if (!canSubmit) return;
+    setErrorMsg('');
+
+    let body;
+    if (mode === 'general') {
+      body = {
+        mode: 'general',
+        countries: form.countries,
+        contentType: form.contentType,
+        maxCategories: form.maxCategories ? Number(form.maxCategories) : undefined,
+      };
+    } else if (mode === 'batch') {
+      let jobs;
+      try {
+        jobs = JSON.parse(form.jobsJson);
+      } catch {
+        setErrorMsg('Geçersiz JSON. Lütfen biçimi kontrol edin.');
+        return;
+      }
+      if (!Array.isArray(jobs) || jobs.length === 0) {
+        setErrorMsg('JSON bir iş dizisi (array) olmalı ve boş olmamalı.');
+        return;
+      }
+      body = { mode: 'batch', jobs };
+    } else {
+      body = {
+        topic: form.topic,
+        direction: form.direction || undefined,
+        category: form.categoryId || undefined,
+        country: form.country,
+        wordcount: form.wordCount,
+        contentType: form.contentType,
+      };
+    }
+
     setPhase('loading');
-    setTimeout(() => setPhase('done'), 2200);
+    const res = await generateNews(body)
+      .unwrap()
+      .catch((e) => {
+        setErrorMsg(e?.data?.message || e?.normalizedMessage || 'Üretim başlatılamadı.');
+        return null;
+      });
+    setPhase(res ? 'done' : 'form');
   }
 
   return (
@@ -84,61 +185,145 @@ function AIGenerateModal({ onClose }) {
         <CardContent>
           {phase === 'form' && (
             <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-2sm font-medium">Konu / Başlık *</label>
-                <input
-                  value={form.topic}
-                  onChange={(e) => setForm((f) => ({ ...f, topic: e.target.value }))}
-                  placeholder="örn. Türkiye'de B2B e-ticaret büyümesi"
-                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
-                />
+              {/* Mod seçici */}
+              <div className="grid grid-cols-3 gap-2 rounded-lg border border-border bg-muted/30 p-1">
+                {[
+                  { key: 'topic', label: 'Konu Bazlı' },
+                  { key: 'general', label: 'Genel' },
+                  { key: 'batch', label: 'Toplu / JSON' },
+                ].map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={() => setMode(m.key)}
+                    className={cn(
+                      'rounded-md py-1.5 text-sm font-medium transition-colors',
+                      mode === m.key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
-              <div className="space-y-1.5">
-                <label className="text-2sm font-medium">Yön / Ek Bağlam</label>
-                <textarea
-                  value={form.direction}
-                  onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value }))}
-                  rows={2}
-                  placeholder="Analitik, pozitif/negatif bakış açısı, vurgulanacak konular..."
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none placeholder:text-muted-foreground"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-2sm font-medium">Ülke</label>
-                  <Select value={form.country} onValueChange={(v) => setForm((f) => ({ ...f, country: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {AI_COUNTRIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-2sm font-medium">Kelime Sayısı</label>
-                  <Select value={form.wordCount} onValueChange={(v) => setForm((f) => ({ ...f, wordCount: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {['400', '600', '800', '1200', '1600'].map((n) => (
-                        <SelectItem key={n} value={n}>{n} kelime</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-2sm font-medium">İçerik Formatı</label>
-                <Select value={form.contentType} onValueChange={(v) => setForm((f) => ({ ...f, contentType: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {AI_CONTENT_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
+
+              {/* ── Konu Bazlı ── */}
+              {mode === 'topic' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-2sm font-medium">Konu / Başlık *</label>
+                    <input
+                      value={form.topic}
+                      onChange={(e) => setForm((f) => ({ ...f, topic: e.target.value }))}
+                      placeholder="örn. Türkiye'de B2B e-ticaret büyümesi"
+                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-2sm font-medium">Yön / Ek Bağlam</label>
+                    <textarea
+                      value={form.direction}
+                      onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value }))}
+                      rows={2}
+                      placeholder="Analitik, pozitif/negatif bakış açısı..."
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none placeholder:text-muted-foreground"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-2sm font-medium">Ülke</label>
+                      <Select value={form.country} onValueChange={(v) => setForm((f) => ({ ...f, country: v }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {NEWS_COUNTRIES.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-2sm font-medium">Kelime Sayısı</label>
+                      <Select value={form.wordCount} onValueChange={(v) => setForm((f) => ({ ...f, wordCount: v }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {['400', '600', '800', '1200', '1600'].map((n) => (
+                            <SelectItem key={n} value={n}>{n} kelime</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <FormatSelect value={form.contentType} onChange={(v) => setForm((f) => ({ ...f, contentType: v }))} />
+                </>
+              )}
+
+              {/* ── Genel (çoklu ülke) ── */}
+              {mode === 'general' && (
+                <>
+                  <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    Genel araştırma: seçili ülkelerin aktif kategorileri için Google News trendlerinden
+                    otomatik haber üretilir. Diller ülkeden türetilir. Çok sayıda LLM çağrısı yapılabilir.
+                  </p>
+                  <div className="space-y-1.5">
+                    <label className="text-2sm font-medium">Ülkeler (çoklu) *</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {NEWS_COUNTRIES.map((c) => {
+                        const on = form.countries.includes(c.code);
+                        return (
+                          <button
+                            key={c.code}
+                            type="button"
+                            onClick={() => toggleCountry(c.code)}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                              on ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent',
+                            )}
+                          >
+                            {c.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-2sm font-medium">Maks. Kategori</label>
+                      <Select value={form.maxCategories} onValueChange={(v) => setForm((f) => ({ ...f, maxCategories: v }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {['3', '5', '10', '20', '50'].map((n) => (
+                            <SelectItem key={n} value={n}>{n} kategori</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormatSelect value={form.contentType} onChange={(v) => setForm((f) => ({ ...f, contentType: v }))} />
+                  </div>
+                </>
+              )}
+
+              {/* ── Toplu / JSON ── */}
+              {mode === 'batch' && (
+                <>
+                  <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    İş listesini JSON dizisi olarak girin. Her iş: <code>topic</code> (zorunlu),
+                    <code> direction</code>, <code>category</code>, <code>country</code>,
+                    <code> targetWordCount</code>, <code>contentType</code>.
+                  </p>
+                  <textarea
+                    value={form.jobsJson}
+                    onChange={(e) => setForm((f) => ({ ...f, jobsJson: e.target.value }))}
+                    rows={10}
+                    spellCheck={false}
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y"
+                  />
+                </>
+              )}
+              {errorMsg && (
+                <p className="text-sm text-destructive">{errorMsg}</p>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="outline" onClick={onClose}>İptal</Button>
-                <Button onClick={handleGenerate} disabled={!form.topic}>
+                <Button onClick={handleGenerate} disabled={!canSubmit}>
                   <Sparkles className="size-4" />
-                  Oluştur
+                  {mode === 'general' ? 'Araştır & Üret' : 'Oluştur'}
                 </Button>
               </div>
             </div>
@@ -163,8 +348,10 @@ function AIGenerateModal({ onClose }) {
                 <CheckCircle2 className="size-7" />
               </div>
               <div className="space-y-1 text-center">
-                <p className="font-medium">Haber oluşturuldu!</p>
-                <p className="text-sm text-muted-foreground">Taslak kaydedildi. Listede görüntüleyebilirsiniz.</p>
+                <p className="font-medium">Haber üretimi başlatıldı!</p>
+                <p className="text-sm text-muted-foreground">
+                  Üretim arka planda sürüyor; birkaç dakika içinde listede taslak olarak görünecek.
+                </p>
               </div>
               <Button onClick={onClose}>Listeye Dön</Button>
             </div>
@@ -177,34 +364,56 @@ function AIGenerateModal({ onClose }) {
 
 /* ─── page ─── */
 export default function NewsListPage() {
+  const { data: session } = useSession();
+  const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
+
+  const [country, setCountry] = useState(DEFAULT_COUNTRY);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [isLoading, setIsLoading] = useState(true);
   const [showAI, setShowAI] = useState(false);
 
+  // Ülke değişince kategori filtresini sıfırla (kategoriler ülkeye özgü)
   useEffect(() => {
-    setIsLoading(true);
-    const t = setTimeout(() => setIsLoading(false), 400);
-    return () => clearTimeout(t);
-  }, [search, statusFilter, categoryFilter]);
+    setCategoryFilter('all');
+  }, [country]);
 
-  const filtered = useMemo(() =>
-    newsMock
-      .filter((n) => statusFilter === 'all' || n.status === statusFilter)
-      .filter((n) => categoryFilter === 'all' || n.category.id === categoryFilter)
-      .filter((n) =>
-        search
-          ? [n.title, n.subtitle, ...(n.tags ?? [])].some((f) =>
-              f.toLowerCase().includes(search.toLowerCase()),
-            )
-          : true,
-      ),
-    [search, statusFilter, categoryFilter],
+  const { data: tree = [] } = useGetCategoryTreeQuery(
+    { countryCode: country },
+    { skip: !authorized },
+  );
+  const categories = useMemo(() => flattenTree(tree), [tree]);
+  const catMap = useMemo(() => {
+    const m = {};
+    for (const c of categories) m[c.id] = c.name;
+    return m;
+  }, [categories]);
+
+  const { data, isLoading, isFetching, error } = useGetNewsListQuery(
+    {
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      categoryId: categoryFilter === 'all' ? undefined : categoryFilter,
+      countryCode: country,
+      limit: 100,
+    },
+    { skip: !authorized },
   );
 
-  const categories = [...new Map(newsMock.map((n) => [n.category.id, n.category])).values()];
-  const isEmpty = !isLoading && filtered.length === 0;
+  const items = useMemo(() => {
+    const raw = data?.items ?? [];
+    if (!search) return raw;
+    const q = search.toLowerCase();
+    return raw.filter((n) =>
+      [n.title, n.subtitle, ...(n.tags ?? [])].filter(Boolean).some((f) => f.toLowerCase().includes(q)),
+    );
+  }, [data, search]);
+
+  const filtered = items.map((n) => ({
+    ...n,
+    id: n._id ?? n.id,
+    categoryName: n.category?.name ?? catMap[n.categoryId] ?? '—',
+  }));
+  const isEmpty = !isLoading && !error && filtered.length === 0;
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
@@ -243,6 +452,16 @@ export default function NewsListPage() {
               className="h-9 w-full rounded-lg border border-input bg-background ps-9 pe-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
             />
           </div>
+          <div className="w-40">
+            <Select value={country} onValueChange={setCountry}>
+              <SelectTrigger><SelectValue placeholder="Ülke" /></SelectTrigger>
+              <SelectContent>
+                {NEWS_COUNTRIES.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="w-36">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger><SelectValue placeholder="Durum" /></SelectTrigger>
@@ -271,11 +490,25 @@ export default function NewsListPage() {
         <CardHeader>
           <CardTitle>Haber Listesi</CardTitle>
           <CardToolbar>
-            <Badge variant="muted">{filtered.length} kayıt</Badge>
+            <Badge variant="muted">{data?.total ?? filtered.length} kayıt</Badge>
           </CardToolbar>
         </CardHeader>
-        <CardContent className="px-0 py-0">
-          {isLoading ? (
+        <CardContent className="relative px-0 py-0">
+          {isFetching && !isLoading && !error && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+              <div className="size-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+            </div>
+          )}
+          {error ? (
+            <div className="p-4">
+              <Alert variant="destructive">
+                <AlertTitle>Haberler yüklenemedi</AlertTitle>
+                <AlertDescription>
+                  {error?.data?.message || error?.normalizedMessage || 'Sunucuya ulaşılamadı. (news:editor yetkisi gerekebilir.)'}
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : isLoading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -344,18 +577,18 @@ export default function NewsListPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{n.category.name}</Badge>
+                        <Badge variant="secondary">{n.categoryName}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={statusMeta[n.status]?.variant}>
-                          {statusMeta[n.status]?.label}
+                        <Badge variant={statusMeta[n.status]?.variant ?? 'muted'}>
+                          {statusMeta[n.status]?.label ?? n.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {n.viewCount > 0 ? n.viewCount.toLocaleString('tr-TR') : '—'}
+                        {(n.viewCount ?? 0) > 0 ? n.viewCount.toLocaleString('tr-TR') : '—'}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {n.publishedAt ?? n.updatedAt}
+                        {formatTrDate(n.publishedAt ?? n.updatedAt)}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">

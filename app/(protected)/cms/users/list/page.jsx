@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Plus, Search } from 'lucide-react';
+import { useSession } from 'next-auth/react';
+import { Plus, Search, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import {
@@ -31,36 +32,68 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CMS_ROLES } from '@/lib/roles';
-import { usersMock, statusMeta, roleMeta, statusOptions } from '../_data';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { CMS_ROLES, canAccess } from '@/lib/roles';
+import { useGetUsersQuery } from '@/redux/services';
+import { statusMeta, roleMeta, statusOptions } from '../_data';
+
+const PAGE_SIZE = 10;
+
+const sortOptions = [
+  { value: 'created:desc', label: 'Kayıt Tarihi (Yeni → Eski)' },
+  { value: 'created:asc', label: 'Kayıt Tarihi (Eski → Yeni)' },
+];
+
+/* ─── tr tarih yardımcısı ─── */
+function formatTrDate(input) {
+  if (!input) return '—';
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('tr-TR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
 
 /* ─── page ─── */
 export default function CmsUsersListPage() {
+  const { data: session } = useSession();
+  const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
+
   const [search, setSearch] = useState('');
+  const [submittedSearch, setSubmittedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [isLoading, setIsLoading] = useState(true);
+  const [sortValue, setSortValue] = useState('created:desc');
+  const [page, setPage] = useState(1);
 
+  // filtre/arama/sıralama değişince ilk sayfaya dön
   useEffect(() => {
-    setIsLoading(true);
-    const t = setTimeout(() => setIsLoading(false), 400);
-    return () => clearTimeout(t);
-  }, [search, statusFilter]);
+    setPage(1);
+  }, [submittedSearch, statusFilter, sortValue]);
 
-  const filtered = useMemo(
-    () =>
-      usersMock
-        .filter((u) => statusFilter === 'all' || u.status === statusFilter)
-        .filter((u) =>
-          search
-            ? [u.name, u.email].some((f) =>
-                f.toLowerCase().includes(search.toLowerCase()),
-              )
-            : true,
-        ),
-    [search, statusFilter],
+  const [, order] = sortValue.split(':');
+
+  // Arama backend'de yapılır (Keycloak `search`); buton/Enter ile tetiklenir.
+  const applySearch = () => setSubmittedSearch(search.trim());
+
+  // Yetkisiz kullanıcı backend'e hiç istek atmaz; UI'ı RoleGuard zaten engeller.
+  const { data, isLoading, isFetching, error } = useGetUsersQuery(
+    {
+      query: submittedSearch || undefined,
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      page,
+      limit: PAGE_SIZE,
+      sort: 'created',
+      order,
+    },
+    { skip: !authorized },
   );
 
-  const isEmpty = !isLoading && filtered.length === 0;
+  const users = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = data?.totalPages ?? 1;
+  const isEmpty = !isLoading && !error && users.length === 0;
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -86,9 +119,16 @@ export default function CmsUsersListPage() {
               placeholder="İsim veya e-posta ile ara..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applySearch();
+              }}
               className="h-9 w-full rounded-lg border border-input bg-background ps-9 pe-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
             />
           </div>
+          <Button variant="outline" onClick={applySearch} disabled={isFetching}>
+            <Search className="size-4" />
+            Ara
+          </Button>
           <div className="w-44">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger>
@@ -96,6 +136,20 @@ export default function CmsUsersListPage() {
               </SelectTrigger>
               <SelectContent>
                 {statusOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-56">
+            <Select value={sortValue} onValueChange={setSortValue}>
+              <SelectTrigger>
+                <SelectValue placeholder="Sıralama" />
+              </SelectTrigger>
+              <SelectContent>
+                {sortOptions.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
                     {o.label}
                   </SelectItem>
@@ -111,14 +165,32 @@ export default function CmsUsersListPage() {
         <CardHeader>
           <CardTitle>Kullanıcı Listesi</CardTitle>
           <CardToolbar>
-            <Badge variant="muted">{filtered.length} kayıt</Badge>
+            <Badge variant="muted">{total} kayıt</Badge>
           </CardToolbar>
         </CardHeader>
-        <CardContent className="px-0 py-0">
-          {isLoading ? (
+        <CardContent className="relative px-0 py-0">
+          {/* Arama / sayfalama / sıralama sırasında yükleme göstergesi */}
+          {isFetching && !isLoading && !error && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+              <Loader2 className="size-6 animate-spin text-primary" />
+            </div>
+          )}
+          {error ? (
+            <div className="p-4">
+              <Alert variant="destructive">
+                <AlertTitle>Kullanıcılar yüklenemedi</AlertTitle>
+                <AlertDescription>
+                  {error?.data?.message ||
+                    error?.normalizedMessage ||
+                    'Sunucuya ulaşılamadı. Lütfen daha sonra tekrar deneyin.'}
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : isLoading ? (
             <div className="space-y-2 p-4">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="grid grid-cols-3 gap-4">
+              {Array.from({ length: PAGE_SIZE }).map((_, i) => (
+                <div key={i} className="grid grid-cols-4 gap-4">
+                  <Skeleton className="h-5" />
                   <Skeleton className="h-5" />
                   <Skeleton className="h-5" />
                   <Skeleton className="h-5 w-20" />
@@ -137,6 +209,7 @@ export default function CmsUsersListPage() {
                 variant="outline"
                 onClick={() => {
                   setSearch('');
+                  setSubmittedSearch('');
                   setStatusFilter('all');
                 }}
               >
@@ -144,57 +217,106 @@ export default function CmsUsersListPage() {
               </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Kullanıcı</TableHead>
-                    <TableHead>Roller</TableHead>
-                    <TableHead>Durum</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map((u) => {
-                    const s = statusMeta[u.status];
-                    return (
-                      <TableRow key={u.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <Avatar name={u.name} size="md" />
-                            <div>
-                              <Link
-                                href={`/cms/users/${u.id}`}
-                                className="text-sm font-medium text-foreground hover:text-primary"
-                              >
-                                {u.name}
-                              </Link>
-                              <div className="text-xs text-muted-foreground">
-                                {u.email}
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Kullanıcı</TableHead>
+                      <TableHead>E-posta</TableHead>
+                      <TableHead>Roller</TableHead>
+                      <TableHead>Durum</TableHead>
+                      <TableHead>Kayıt Tarihi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.map((u) => {
+                      const s = statusMeta[u.status];
+                      const cmsRoles = (u.roles ?? []).filter((r) =>
+                        r.startsWith('cms:'),
+                      );
+                      return (
+                        <TableRow key={u.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <Avatar name={u.name} size="md" />
+                              <div className="min-w-0">
+                                <Link
+                                  href={`/cms/users/${u.id}`}
+                                  className="text-sm font-medium text-foreground hover:text-primary"
+                                >
+                                  {u.name}
+                                </Link>
+                                <div
+                                  className="max-w-[200px] truncate font-mono text-[11px] text-muted-foreground"
+                                  title={u.id}
+                                >
+                                  {u.id}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-1">
-                            {u.roles.map((r) => (
-                              <Badge
-                                key={r}
-                                variant={roleMeta[r]?.variant ?? 'muted'}
-                              >
-                                {roleMeta[r]?.label ?? r}
-                              </Badge>
-                            ))}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={s?.variant}>{s?.label}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {u.email ?? '—'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {cmsRoles.length > 0 ? (
+                                cmsRoles.map((r) => (
+                                  <Badge
+                                    key={r}
+                                    variant={roleMeta[r]?.variant ?? 'muted'}
+                                  >
+                                    {roleMeta[r]?.label ?? r}
+                                  </Badge>
+                                ))
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={s?.variant}>{s?.label ?? u.status}</Badge>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                            {formatTrDate(u.memberSince)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+                <p className="text-xs text-muted-foreground">
+                  Sayfa <span className="font-medium text-foreground">{page}</span> / {totalPages}
+                  {' · '}
+                  Toplam <span className="font-medium text-foreground">{total}</span> kayıt
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page <= 1 || isFetching}
+                    onClick={() => setPage((p) => Math.max(p - 1, 1))}
+                  >
+                    <ChevronLeft className="size-4" />
+                    Önceki
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page >= totalPages || isFetching}
+                    onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
+                  >
+                    Sonraki
+                    <ChevronRight className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

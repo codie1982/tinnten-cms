@@ -3,15 +3,17 @@ import {
   Bot,
   Workflow,
   Server,
-  FileText,
   Mail,
   FileSignature,
   Building2,
   ShieldCheck,
   Users,
   Settings,
-  Newspaper,
   CreditCard,
+  Activity,
+  Compass,
+  Files,
+  MoreHorizontal,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -34,11 +36,8 @@ export const CMS_NAV = [
   {
     title: 'Asistanlar',
     icon: Bot,
+    path: '/cms/assistants',
     roles: [CMS_ROLES.ACCESS],
-    children: [
-      { title: 'Tüm Asistanlar', path: '/cms/assistants', roles: [CMS_ROLES.ACCESS] },
-      { title: 'Kullanım', path: '/cms/assistants/usage', roles: [CMS_ROLES.ACCESS] },
-    ],
   },
   {
     title: 'İş Akışları',
@@ -46,27 +45,39 @@ export const CMS_NAV = [
     path: '/cms/workflows',
     roles: [CMS_ROLES.ACCESS],
   },
-
-  { heading: 'KEŞFET' },
   {
-    title: 'İçerikler',
-    icon: FileText,
-    roles: [CMS_ROLES.EDITOR],
-    children: [
-      { title: 'Tüm İçerikler', path: '/cms/content', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Ana Sayfa İçeriği', path: '/cms/content/homepage', roles: [CMS_ROLES.EDITOR] },
-      { title: 'SSS', path: '/cms/content/faq', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Akademi', path: '/cms/content/academy', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Kütüphaneler', path: '/cms/assistants/libraries', roles: [CMS_ROLES.EDITOR] },
-    ],
+    title: 'Kullanım',
+    icon: Activity,
+    path: '/cms/usage',
+    roles: [CMS_ROLES.ACCESS],
   },
+
+  { heading: 'İÇERİKLER' },
   {
-    title: 'Haberler',
-    icon: Newspaper,
+    title: 'Keşfet',
+    icon: Compass,
     roles: [CMS_ROLES.EDITOR],
     children: [
       { title: 'Tüm Haberler', path: '/cms/content/news', roles: [CMS_ROLES.EDITOR] },
       { title: 'Haber Kategorileri', path: '/cms/content/news-categories', roles: [CMS_ROLES.EDITOR] },
+    ],
+  },
+  {
+    title: 'Dökümanlar',
+    icon: Files,
+    roles: [CMS_ROLES.EDITOR],
+    children: [
+      { title: 'Tüm Dökümanlar', path: '/cms/documents', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Kategoriler', path: '/cms/documents/categories', roles: [CMS_ROLES.EDITOR] },
+    ],
+  },
+  {
+    title: 'Diğer',
+    icon: MoreHorizontal,
+    roles: [CMS_ROLES.EDITOR],
+    children: [
+      { title: 'Ana Sayfa', path: '/cms/content/homepage', roles: [CMS_ROLES.EDITOR] },
+      { title: 'SSS', path: '/cms/content/faq', roles: [CMS_ROLES.EDITOR] },
     ],
   },
 
@@ -74,13 +85,8 @@ export const CMS_NAV = [
   {
     title: 'Sözleşmeler',
     icon: FileSignature,
+    path: '/cms/contracts',
     roles: [CMS_ROLES.EDITOR],
-    children: [
-      { title: 'Satıcı Sözleşmeleri', path: '/cms/contracts/seller', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Kullanıcı Sözleşmeleri', path: '/cms/contracts/user', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Gizlilik Politikası', path: '/cms/contracts/privacy-policy', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Hizmet Şartları', path: '/cms/contracts/terms-of-service', roles: [CMS_ROLES.EDITOR] },
-    ],
   },
 
   { heading: 'PARTNERLER' },
@@ -131,6 +137,8 @@ export const CMS_NAV = [
       { title: 'Fetcher Servisi', path: '/cms/services/fetcher', roles: [CMS_ROLES.ADMIN] },
       { title: 'Embedding Servisi', path: '/cms/services/embedding', roles: [CMS_ROLES.ADMIN] },
       { title: 'Cron Servisi', path: '/cms/services/cron', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Mesaj Kuyruğu', path: '/cms/services/queues', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Sistem İzleme', path: '/cms/services/monitoring', roles: [CMS_ROLES.ADMIN] },
       { title: 'Scraper Durumları', path: '/cms/services/scraper', roles: [CMS_ROLES.ADMIN] },
     ],
   },
@@ -140,6 +148,9 @@ export const CMS_NAV = [
     roles: [CMS_ROLES.ADMIN],
     children: [
       { title: 'Genel Ayarlar', path: '/cms/settings', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Eklenen Dosyalar', path: '/cms/settings/files', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Tool Listesi', path: '/cms/settings/tools', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Paketler', path: '/cms/settings/packages', roles: [CMS_ROLES.ADMIN] },
       { title: 'Log & Denetim', path: '/cms/settings/logs', roles: [CMS_ROLES.ADMIN] },
     ],
   },
@@ -148,10 +159,11 @@ export const CMS_NAV = [
     icon: Mail,
     roles: [CMS_ROLES.EDITOR],
     children: [
-      { title: 'Kampanyalar', path: '/cms/email', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Mail Listeleri', path: '/cms/email/lists', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Gelen Mailler', path: '/cms/email/inbox', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Giden Mailler', path: '/cms/email/history', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Mail Abonelikleri', path: '/cms/email/lists', roles: [CMS_ROLES.EDITOR] },
       { title: 'Şablonlar', path: '/cms/email/templates', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Mail Geçmişi', path: '/cms/email/history', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Kampanyalar', path: '/cms/email', roles: [CMS_ROLES.EDITOR] },
     ],
   },
 ];
