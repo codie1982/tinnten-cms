@@ -26,6 +26,13 @@ const redirectToDashboard = (url = DASHBOARD_PATH) => {
   window.location.assign(url || DASHBOARD_PATH);
 };
 
+const assertSignInSucceeded = (result, message) => {
+  const url = String(result?.url || '');
+  if (!result?.ok || result?.error || url.includes('/api/auth/error')) {
+    throw new Error(message);
+  }
+};
+
 // localStorage'daki session ile NextAuth oturumu aç; hata fırlat
 async function resumeSessionFromStorage(session) {
   const { accessToken, refreshToken, userid, info, lang, company } = session;
@@ -39,11 +46,12 @@ async function resumeSessionFromStorage(session) {
     [info?.firstName, info?.lastName].filter(Boolean).join(' ').trim() ||
     info?.email ||
     '';
+  const sessionEmail = info?.email || session?.email || userid || '';
 
   const result = await signIn('ExternalCredentials', {
     redirect: false,
     callbackUrl: DASHBOARD_PATH,
-    email: info?.email ?? '',
+    email: sessionEmail,
     accessToken,
     refreshToken: refreshToken ?? '',
     userid: userid ?? '',
@@ -53,7 +61,7 @@ async function resumeSessionFromStorage(session) {
     roles: JSON.stringify(roles),
   });
 
-  if (result?.error) throw new Error('Oturum yenilenemedi.');
+  assertSignInSucceeded(result, 'Oturum yenilenemedi.');
   redirectToDashboard(result?.url);
 }
 
@@ -137,7 +145,7 @@ export default function SignIn() {
         roles: JSON.stringify(roles),
       });
 
-      if (result?.error) throw new Error('Oturum oluşturulamadı.');
+      assertSignInSucceeded(result, 'Oturum oluşturulamadı.');
 
       redirectToDashboard(result?.url);
     } catch (err) {

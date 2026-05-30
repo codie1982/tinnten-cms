@@ -34,11 +34,15 @@ const authOptions = {
         roles: { label: 'Roles', type: 'text' },
       },
       async authorize(credentials) {
+        const email = String(credentials?.email || '').trim();
+        const password = credentials?.password;
+        const accessToken = credentials?.accessToken;
+
         // DEV bypass: DEV_MOCK_AUTH=true ile preview/geliştirme ortamında çalışır
         if (
           process.env.DEV_MOCK_AUTH === 'true' &&
-          credentials?.email === 'admin@tinnten.ai' &&
-          credentials?.password === 'cms2025'
+          email === 'admin@tinnten.ai' &&
+          password === 'cms2025'
         ) {
           return {
             id: 'dev-admin',
@@ -53,20 +57,11 @@ const authOptions = {
           };
         }
 
-        if (!credentials?.email) {
-          throw new Error(
-            JSON.stringify({
-              code: 400,
-              message: 'Please enter both email and password.',
-            }),
-          );
-        }
-
-        if (credentials?.accessToken && !credentials?.password) {
+        if (accessToken && !password) {
           const res = await fetch(`${BACKEND_URL}/auth/validate`, {
             method: 'GET',
             headers: {
-              Authorization: `Bearer ${credentials.accessToken}`,
+              Authorization: `Bearer ${accessToken}`,
             },
           });
 
@@ -86,12 +81,15 @@ const authOptions = {
             roles = [];
           }
 
+          const fallbackEmail =
+            email || credentials.userid || credentials.name || 'cms-user';
+
           return {
-            id: credentials.userid || credentials.email,
-            userid: credentials.userid || credentials.email,
-            email: credentials.email,
+            id: credentials.userid || fallbackEmail,
+            userid: credentials.userid || fallbackEmail,
+            email: fallbackEmail,
             name: credentials.name || 'User',
-            accessToken: credentials.accessToken,
+            accessToken,
             refreshToken: credentials.refreshToken || null,
             company: credentials.company || null,
             lang: credentials.lang || null,
@@ -99,7 +97,7 @@ const authOptions = {
           };
         }
 
-        if (!credentials?.password) {
+        if (!email || !password) {
           throw new Error(
             JSON.stringify({
               code: 400,
@@ -120,8 +118,8 @@ const authOptions = {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              email: credentials.email,
-              password: credentials.password,
+              email,
+              password,
               rememberme,
               device,
               deviceid,
@@ -196,8 +194,8 @@ const authOptions = {
         return {
           id: loginData.userid,
           userid: loginData.userid,
-          email: profile.email || credentials.email,
-          name: fullName || credentials.email,
+          email: profile.email || email,
+          name: fullName || email,
           accessToken: loginData.accessToken,
           refreshToken: loginData.refreshToken,
           company: loginData.company,
