@@ -1,5 +1,7 @@
 import { Suspense } from 'react';
 import { Inter } from 'next/font/google';
+import { getServerSession } from 'next-auth';
+import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 import { cn } from '@/lib/utils';
 import { SettingsProvider } from '@/providers/settings-provider';
 import { TooltipsProvider } from '@/providers/tooltips-provider';
@@ -21,6 +23,8 @@ export const metadata = {
 };
 
 export default async function RootLayout({ children }) {
+  const session = await getServerSession(authOptions);
+
   return (
     <html className="h-full" suppressHydrationWarning>
       <body
@@ -31,7 +35,7 @@ export default async function RootLayout({ children }) {
       >
         <QueryProvider>
           <ReduxProvider>
-          <AuthProvider>
+          <AuthProvider session={session}>
             <SettingsProvider>
               <ThemeProvider>
                 <I18nProvider>
