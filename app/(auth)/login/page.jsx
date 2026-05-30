@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -21,6 +20,12 @@ const schema = z.object({
   password: z.string().min(1, 'Şifre zorunludur'),
 });
 
+const DASHBOARD_PATH = '/cms/dashboard';
+
+const redirectToDashboard = (url = DASHBOARD_PATH) => {
+  window.location.assign(url || DASHBOARD_PATH);
+};
+
 // localStorage'daki session ile NextAuth oturumu aç; hata fırlat
 async function resumeSessionFromStorage(session) {
   const { accessToken, refreshToken, userid, info, lang, company } = session;
@@ -37,6 +42,7 @@ async function resumeSessionFromStorage(session) {
 
   const result = await signIn('ExternalCredentials', {
     redirect: false,
+    callbackUrl: DASHBOARD_PATH,
     email: info?.email ?? '',
     accessToken,
     refreshToken: refreshToken ?? '',
@@ -48,10 +54,10 @@ async function resumeSessionFromStorage(session) {
   });
 
   if (result?.error) throw new Error('Oturum yenilenemedi.');
+  redirectToDashboard(result?.url);
 }
 
 export default function SignIn() {
-  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [serverError, setServerError] = useState('');
   // checking: localStorage kontrol edilirken form gizlenir
@@ -74,7 +80,6 @@ export default function SignIn() {
     resumeSessionFromStorage(existing)
       .then(() => {
         setAuthToken(existing.accessToken);
-        router.replace('/cms/dashboard');
       })
       .catch((err) => {
         // 403 → cms:access yok; 401 → token süresi dolmuş
@@ -121,6 +126,7 @@ export default function SignIn() {
 
       const result = await signIn('ExternalCredentials', {
         redirect: false,
+        callbackUrl: DASHBOARD_PATH,
         email,
         accessToken: loginData.accessToken,
         refreshToken: loginData.refreshToken ?? '',
@@ -133,7 +139,7 @@ export default function SignIn() {
 
       if (result?.error) throw new Error('Oturum oluşturulamadı.');
 
-      router.push('/cms/dashboard');
+      redirectToDashboard(result?.url);
     } catch (err) {
       setServerError(err.message || 'Giriş başarısız.');
     }
