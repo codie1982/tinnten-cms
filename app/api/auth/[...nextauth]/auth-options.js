@@ -58,19 +58,12 @@ const authOptions = {
         }
 
         if (accessToken && !password) {
-          const res = await fetch(`${BACKEND_URL}/auth/validate`, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-          });
-
-          if (!res.ok) {
+          // Login page zaten client-side validate ettiğinden burada tekrar
+          // backend çağrısı yapmıyoruz; zorunlu alanları kontrol edip
+          // session objesini döndürüyoruz.
+          if (!credentials.userid && !email) {
             throw new Error(
-              JSON.stringify({
-                code: res.status,
-                message: 'Token validation failed',
-              }),
+              JSON.stringify({ code: 400, message: 'Missing user identity in token session.' }),
             );
           }
 
@@ -81,14 +74,13 @@ const authOptions = {
             roles = [];
           }
 
-          const fallbackEmail =
-            email || credentials.userid || credentials.name || 'cms-user';
+          const resolvedEmail = email || credentials.userid || credentials.name || '';
 
           return {
-            id: credentials.userid || fallbackEmail,
-            userid: credentials.userid || fallbackEmail,
-            email: fallbackEmail,
-            name: credentials.name || 'User',
+            id: credentials.userid || resolvedEmail,
+            userid: credentials.userid || resolvedEmail,
+            email: resolvedEmail,
+            name: credentials.name || resolvedEmail,
             accessToken,
             refreshToken: credentials.refreshToken || null,
             company: credentials.company || null,

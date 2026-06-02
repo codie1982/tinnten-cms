@@ -41,6 +41,7 @@ prisma/*.sqlite
 .env
 .env.local
 .env.*.local
+.env.*
 .envrc
 .envrc.local
 !.env.example

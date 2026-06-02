@@ -28,7 +28,12 @@ const redirectToDashboard = (url = DASHBOARD_PATH) => {
 
 const assertSignInSucceeded = (result, message) => {
   const url = String(result?.url || '');
-  if (!result?.ok || result?.error || url.includes('/api/auth/error')) {
+  if (
+    !result?.ok ||
+    result?.error ||
+    url.includes('/api/auth/error') ||
+    url.includes('/login')
+  ) {
     throw new Error(message);
   }
 };
@@ -62,7 +67,7 @@ async function resumeSessionFromStorage(session) {
   });
 
   assertSignInSucceeded(result, 'Oturum yenilenemedi.');
-  redirectToDashboard(result?.url);
+  redirectToDashboard();
 }
 
 export default function SignIn() {
@@ -147,7 +152,7 @@ export default function SignIn() {
 
       assertSignInSucceeded(result, 'Oturum oluşturulamadı.');
 
-      redirectToDashboard(result?.url);
+      redirectToDashboard();
     } catch (err) {
       setServerError(err.message || 'Giriş başarısız.');
     }
