@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { signIn, getSession } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -21,9 +21,11 @@ const schema = z.object({
 });
 
 const DASHBOARD_PATH = '/cms/dashboard';
+const RESUME_ATTEMPT_KEY = 'cms_resume_attempt_at';
+const RESUME_LOOP_WINDOW_MS = 15_000;
 
-const redirectToDashboard = (url = DASHBOARD_PATH) => {
-  window.location.assign(url || DASHBOARD_PATH);
+const redirectToDashboard = () => {
+  window.location.assign(DASHBOARD_PATH);
 };
 
 const assertSignInSucceeded = (result, message) => {
@@ -37,6 +39,21 @@ const assertSignInSucceeded = (result, message) => {
     throw new Error(message);
   }
 };
+
+// signIn POST'u Set-Cookie döner; cookie yanlış domain/secret nedeniyle
+// browser'a yerleşmediyse middleware token'ı okuyamaz ve sonsuz redirect
+// döngüsüne gireriz. /session endpoint'ini cookie ile çağırıp gerçekten
+// session kurulup kurulmadığını doğruluyoruz.
+async function assertSessionEstablished() {
+  const session = await getSession();
+  if (!session?.user) {
+    const err = new Error(
+      'Oturum çerezi tarayıcıya yerleşmedi. NEXTAUTH_URL ayarınızı erişim domain\'i ile eşleştirin.',
+    );
+    err.code = 'COOKIE_NOT_SET';
+    throw err;
+  }
+}
 
 // localStorage'daki session ile NextAuth oturumu aç; hata fırlat
 async function resumeSessionFromStorage(session) {
@@ -67,6 +84,7 @@ async function resumeSessionFromStorage(session) {
   });
 
   assertSignInSucceeded(result, 'Oturum yenilenemedi.');
+  await assertSessionEstablished();
   redirectToDashboard();
 }
 
@@ -90,6 +108,33 @@ export default function SignIn() {
       return;
     }
 
+    // Döngü koruması: yakın zamanda otomatik resume denedik ve yine
+    // login sayfasındayız → cookie kurulmuyor demektir, kullanıcıya formu göster.
+    let lastAttempt = 0;
+    try {
+      lastAttempt = Number(sessionStorage.getItem(RESUME_ATTEMPT_KEY) || 0);
+    } catch {
+      lastAttempt = 0;
+    }
+    if (lastAttempt && Date.now() - lastAttempt < RESUME_LOOP_WINDOW_MS) {
+      clearUserSession();
+      try {
+        sessionStorage.removeItem(RESUME_ATTEMPT_KEY);
+      } catch {
+        /* ignore */
+      }
+      setChecking(false);
+      setServerError(
+        'Oturum kurulamadı (cookie yerleşmedi). Lütfen tekrar giriş yapın.',
+      );
+      return;
+    }
+    try {
+      sessionStorage.setItem(RESUME_ATTEMPT_KEY, String(Date.now()));
+    } catch {
+      /* ignore */
+    }
+
     resumeSessionFromStorage(existing)
       .then(() => {
         setAuthToken(existing.accessToken);
@@ -97,8 +142,15 @@ export default function SignIn() {
       .catch((err) => {
         // 403 → cms:access yok; 401 → token süresi dolmuş
         clearUserSession();
+        try {
+          sessionStorage.removeItem(RESUME_ATTEMPT_KEY);
+        } catch {
+          /* ignore */
+        }
         setChecking(false);
-        if (err?.status === 403) {
+        if (err?.code === 'COOKIE_NOT_SET') {
+          setServerError(err.message);
+        } else if (err?.status === 403) {
           setServerError('Bu hesapta CMS erişim izni bulunmuyor.');
         }
         // 401 veya diğer durumlarda sadece formu göster
@@ -151,9 +203,22 @@ export default function SignIn() {
       });
 
       assertSignInSucceeded(result, 'Oturum oluşturulamadı.');
+      await assertSessionEstablished();
+
+      // Yeni başarılı login → eski döngü guard'ını temizle
+      try {
+        sessionStorage.removeItem(RESUME_ATTEMPT_KEY);
+      } catch {
+        /* ignore */
+      }
 
       redirectToDashboard();
     } catch (err) {
+      // Cookie kurulamadıysa localStorage'ı temizle → bir sonraki yükleme
+      // formu açar, otomatik resume tetiklenmez.
+      if (err?.code === 'COOKIE_NOT_SET') {
+        clearUserSession();
+      }
       setServerError(err.message || 'Giriş başarısız.');
     }
   };

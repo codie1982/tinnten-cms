@@ -206,8 +206,14 @@ const authOptions = {
       return false;
     },
     redirect({ url, baseUrl }) {
+      // Relative path → her zaman baseUrl ile birleştir.
       if (url.startsWith('/')) return `${baseUrl}${url}`;
-      else if (new URL(url).origin === baseUrl) return url;
+      // Aynı origin → izin ver. Farklı origin → güvenli olarak baseUrl'e düş.
+      try {
+        if (new URL(url).origin === baseUrl) return url;
+      } catch {
+        /* invalid URL → fall through */
+      }
       return baseUrl;
     },
     async jwt({ token, user, session, trigger }) {
