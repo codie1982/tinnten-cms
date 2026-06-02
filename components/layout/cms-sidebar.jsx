@@ -45,7 +45,7 @@ function SidebarMenu({ pathname }) {
   const items = filterNav(roles);
 
   const matchPath = useCallback(
-    (path) => path === pathname || (path.length > 1 && pathname.startsWith(path)),
+    (path) => path === pathname || (path.length > 1 && pathname.startsWith(path + '/')),
     [pathname],
   );
 
