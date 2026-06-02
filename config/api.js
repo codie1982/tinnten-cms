@@ -7,8 +7,29 @@
  * Base URL `.env.local` içindeki NEXT_PUBLIC_BACKEND_URL ile override edilebilir.
  * Varsayılan: yerel backend (tinnten-server) → http://localhost:5001/api/v10
  */
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5001/api/v10';
+const DEFAULT_API_VERSION = 'v10';
+
+/**
+ * Env değişkeni nasıl set edilirse edilsin (`https://api.tinnten.com`,
+ * `https://api.tinnten.com/`, `https://api.tinnten.com/api/v10`,
+ * `https://api.tinnten.com/api/v10/` …) hep `<origin>/api/v10` haline getir.
+ * Production'da `/api/v10` suffix'i unutulduğunda istekler 404'e düşmesin.
+ */
+export const normalizeApiBaseUrl = (raw, version = DEFAULT_API_VERSION) => {
+  if (!raw) return `http://localhost:5001/api/${version}`;
+  // Sondaki slash'leri at
+  const trimmed = String(raw).trim().replace(/\/+$/, '');
+  // /api/vN ile bitiyorsa olduğu gibi bırak
+  if (/\/api\/v\d+$/.test(trimmed)) return trimmed;
+  // Yolda /api/vN varsa (örn .../api/v10/extra) o noktaya kadar al
+  const match = trimmed.match(/^(.*?\/api\/v\d+)(?:\/|$)/);
+  if (match) return match[1];
+  return `${trimmed}/api/${version}`;
+};
+
+export const API_BASE_URL = normalizeApiBaseUrl(
+  process.env.NEXT_PUBLIC_BACKEND_URL,
+);
 
 /** Sadece host (örn. dosya/CDN URL'leri için) → http://localhost:5001 */
 export const API_HOST = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '');
