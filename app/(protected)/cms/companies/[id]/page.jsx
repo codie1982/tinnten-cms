@@ -1,13 +1,12 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
-  SlidersHorizontal, Save, RotateCcw, Loader2, AlertTriangle, ArrowRight,
-  Ban, ShieldCheck,
+  SlidersHorizontal, Loader2, Ban, ShieldCheck,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -22,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
@@ -33,6 +32,7 @@ import {
   useSetCompanyAdminActiveMutation,
 } from '@/redux/services';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
+import { AccountSummary, PackagesTable, LimitsPanel, UsagePanel } from '@/components/cms/account-panels';
 
 /* ─── sol alt-menü ─── */
 const SECTIONS = [
@@ -46,30 +46,6 @@ const SECTIONS = [
   { key: 'limitler', label: 'Limitler', icon: SlidersHorizontal },
   { key: 'kullanim', label: 'Kullanım', icon: Gauge },
 ];
-
-/** Flat key ("ai.images") + değer → nested obje ({ ai: { images: değer } }). */
-function keyToNested(key, value) {
-  const parts = key.split('.');
-  const root = {};
-  let cur = root;
-  parts.forEach((p, i) => {
-    if (i === parts.length - 1) cur[p] = value;
-    else { cur[p] = {}; cur = cur[p]; }
-  });
-  return root;
-}
-
-/** Birden çok nested objeyi yıkıcı olmadan birleştirir. */
-function mergeNested(target, source) {
-  for (const [k, v] of Object.entries(source)) {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      target[k] = mergeNested(target[k] || {}, v);
-    } else {
-      target[k] = v;
-    }
-  }
-  return target;
-}
 
 function formatTrDate(input) {
   if (!input) return '—';
@@ -122,47 +98,10 @@ export default function CmsCompanyDetailPage({ params }) {
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
   const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
 
-  const metrics = company?.limitUsage?.metrics ?? [];
-  // Değerlerin imzası — kaydedince (refetch) değişir → draft'lar yeniden tohumlanır.
-  const limitsSig = metrics.map((m) => `${m.key}:${m.limit}`).join('|');
-  const usageSig = metrics.map((m) => `${m.key}:${m.used}`).join('|');
-
-  // Limit düzenleme state'i
-  const [limitDraft, setLimitDraft] = useState({}); // { [key]: number }
-  const [reviewing, setReviewing] = useState(false);
-  const [notice, setNotice] = useState(null); // { type, text }
-
-  // Kullanım düzenleme state'i
-  const [usageDraft, setUsageDraft] = useState({}); // { [key]: number }
-  const [usageEditing, setUsageEditing] = useState(false);
-  const [usageReviewing, setUsageReviewing] = useState(false);
-  const [usageNotice, setUsageNotice] = useState(null); // { type, text }
-  const [confirmReset, setConfirmReset] = useState(false);
-
   // Engelleme state'i
   const [blockOpen, setBlockOpen] = useState(false); // gerekçe formu açık mı
   const [blockReason, setBlockReason] = useState('');
   const [blockNotice, setBlockNotice] = useState(null); // { type, text }
-
-  useEffect(() => {
-    if (!metrics.length) return;
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.limit;
-    setLimitDraft(seed);
-    setReviewing(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company?._id, limitsSig]);
-
-  useEffect(() => {
-    if (!metrics.length) return;
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.used;
-    setUsageDraft(seed);
-    setUsageEditing(false);
-    setUsageReviewing(false);
-    setConfirmReset(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company?._id, usageSig]);
 
   if (isLoading) {
     return (
@@ -200,6 +139,17 @@ export default function CmsCompanyDetailPage({ params }) {
   const employees = company.employees ?? [];
   const packages = company.account?.packages ?? [];
   const limitUsage = company.limitUsage ?? null;
+  const metrics = limitUsage?.metrics ?? [];
+
+  // Paketleri ortak PackagesTable şemasına normalize et
+  const normalizedPackages = packages.map((p) => ({
+    id: p._id || p.id || null,
+    name: (p.packageid && typeof p.packageid === 'object' ? p.packageid.title : null) || p.packageName || '—',
+    category: (p.packageid && typeof p.packageid === 'object' ? p.packageid.category : null) || p.category || null,
+    isActive: p.isActive ?? true,
+    forCompany: Boolean(p.forCompany),
+    expiredAt: p.expiredAt || null,
+  }));
 
   const COUNT = {
     adresler: addresses.length,
@@ -210,74 +160,6 @@ export default function CmsCompanyDetailPage({ params }) {
     paketler: packages.length,
     limitler: metrics.length,
     kullanim: metrics.length,
-  };
-
-  // Değişen limit metrikleri (kontrol/diff için)
-  const dirtyMetrics = metrics.filter(
-    (m) => Number(limitDraft[m.key] ?? m.limit) !== Number(m.limit),
-  );
-
-  const resetLimitDraft = () => {
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.limit;
-    setLimitDraft(seed);
-    setReviewing(false);
-    setNotice(null);
-  };
-
-  const handleSaveLimits = async () => {
-    const payload = {};
-    for (const m of metrics) {
-      const v = Number(limitDraft[m.key]);
-      if (Number.isFinite(v) && v >= 0) mergeNested(payload, keyToNested(m.key, v));
-    }
-    try {
-      await updateLimits({ id, limits: payload }).unwrap();
-      setNotice({ type: 'success', text: 'Limitler güncellendi.' });
-      setReviewing(false);
-    } catch (e) {
-      setNotice({ type: 'error', text: e?.data?.message || 'Limitler güncellenemedi.' });
-    }
-  };
-
-  // ─── Kullanım düzenleme/sıfırlama ───
-  const dirtyUsage = metrics.filter(
-    (m) => Number(usageDraft[m.key] ?? m.used) !== Number(m.used),
-  );
-
-  const cancelUsageEdit = () => {
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.used;
-    setUsageDraft(seed);
-    setUsageEditing(false);
-    setUsageReviewing(false);
-    setUsageNotice(null);
-  };
-
-  const handleSaveUsage = async () => {
-    const payload = {};
-    for (const m of metrics) {
-      const v = Number(usageDraft[m.key]);
-      if (Number.isFinite(v) && v >= 0) mergeNested(payload, keyToNested(m.key, v));
-    }
-    try {
-      await updateUsage({ id, usage: payload }).unwrap();
-      setUsageNotice({ type: 'success', text: 'Kullanım güncellendi.' });
-      setUsageEditing(false);
-      setUsageReviewing(false);
-    } catch (e) {
-      setUsageNotice({ type: 'error', text: e?.data?.message || 'Kullanım güncellenemedi.' });
-    }
-  };
-
-  const handleResetUsage = async () => {
-    try {
-      await resetUsage({ id }).unwrap();
-      setUsageNotice({ type: 'success', text: 'Kullanım sıfırlandı.' });
-      setConfirmReset(false);
-    } catch (e) {
-      setUsageNotice({ type: 'error', text: e?.data?.message || 'Kullanım sıfırlanamadı.' });
-    }
   };
 
   // ─── Engelle / Engeli kaldır ───
@@ -617,315 +499,37 @@ export default function CmsCompanyDetailPage({ params }) {
                 <CardTitle>Hesap & Paketler</CardTitle>
                 <CardToolbar><Badge variant="muted">{packages.length} paket</Badge></CardToolbar>
               </CardHeader>
-              <CardContent className="p-4">
-                {packages.length === 0 ? (
-                  <EmptyCard icon={<Package className="size-5" />} message="Bu firmaya bağlı paket yok." />
-                ) : (
-                  <div className="space-y-2">
-                    {packages.map((p, i) => {
-                      const pkg = p.packageid;
-                      const name = (pkg && typeof pkg === 'object') ? (pkg.title || pkg.name) : '—';
-                      const category = (pkg && typeof pkg === 'object') ? pkg.category : null;
-                      return (
-                        <div key={p._id || i} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-                          <div>
-                            <p className="text-sm font-medium text-foreground">{name}</p>
-                            {category && <p className="text-xs text-muted-foreground capitalize">{category}</p>}
-                          </div>
-                          {p.expireDate && (
-                            <span className="font-mono text-xs text-muted-foreground">Bitiş: {formatTrDate(p.expireDate)}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <CardContent className="space-y-5 p-4">
+                <AccountSummary
+                  accountId={company.account?._id ? String(company.account._id) : null}
+                  balance={company.account?.balance}
+                  packageCount={packages.length}
+                />
+                <div className="border-t border-border pt-4">
+                  <PackagesTable packages={normalizedPackages} />
+                </div>
               </CardContent>
             </Card>
           )}
 
           {section === 'kullanim' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Kullanım</CardTitle>
-                <CardToolbar>
-                  {limitUsage?.packageName
-                    ? <Badge variant="primary">{limitUsage.packageName}</Badge>
-                    : <Badge variant="muted">Paket yok</Badge>}
-                </CardToolbar>
-              </CardHeader>
-              <CardContent className="space-y-4 p-4">
-                {metrics.length === 0 ? (
-                  <EmptyCard icon={<Gauge className="size-5" />} message="Bu firmanın hesabına bağlı kullanım verisi yok." />
-                ) : (
-                  <>
-                    {usageNotice && (
-                      <Alert variant={usageNotice.type === 'error' ? 'destructive' : 'info'}>
-                        <AlertDescription>{usageNotice.text}</AlertDescription>
-                      </Alert>
-                    )}
-
-                    {/* Üst aksiyon çubuğu */}
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {usageEditing ? 'Kullanım miktarlarını düzenliyorsunuz' : 'Mevcut kullanım / limit oranları'}
-                      </span>
-                      {!usageEditing && !confirmReset && (
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="ghost" onClick={() => { setUsageNotice(null); setConfirmReset(true); }} disabled={resettingUsage || savingUsage}>
-                            <RotateCcw className="size-4" />
-                            Kullanımı Sıfırla
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setUsageNotice(null); setUsageEditing(true); }} disabled={resettingUsage || savingUsage}>
-                            <SlidersHorizontal className="size-4" />
-                            Miktarı Ayarla
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Sıfırlama onayı */}
-                    {confirmReset && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-                        <p className="flex items-center gap-1.5 text-sm text-foreground">
-                          <AlertTriangle className="size-4 text-destructive" />
-                          Tüm kullanım sayaçları <span className="font-semibold">0</span>'a sıfırlanacak. Emin misiniz?
-                        </p>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="destructive" onClick={handleResetUsage} disabled={resettingUsage}>
-                            {resettingUsage ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-                            Evet, Sıfırla
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)} disabled={resettingUsage}>
-                            Vazgeç
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* DÜZENLEME MODU — kullanım miktarı input'ları */}
-                    {usageEditing ? (
-                      <>
-                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <AlertTriangle className="size-3.5" />
-                          Kullanım sayaçlarını manuel ayarlıyorsunuz. Bu, faturalandırma/kota davranışını etkiler.
-                        </p>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {metrics.map((m) => {
-                            const val = usageDraft[m.key] ?? m.used;
-                            const changed = Number(val) !== Number(m.used);
-                            return (
-                              <div key={m.key} className={cn('rounded-lg border p-3', changed ? 'border-primary/50 bg-primary/5' : 'border-border')}>
-                                <label className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                                  <span className="font-medium text-foreground">{m.label}</span>
-                                  <span className="font-mono">limit: {m.unlimited ? '∞' : m.limit}</span>
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  value={val}
-                                  disabled={savingUsage}
-                                  onChange={(e) => {
-                                    setUsageNotice(null);
-                                    setUsageReviewing(false);
-                                    setUsageDraft((d) => ({ ...d, [m.key]: e.target.value === '' ? '' : Number(e.target.value) }));
-                                  }}
-                                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Kontrol (diff) paneli */}
-                        {usageReviewing && dirtyUsage.length > 0 && (
-                          <div className="rounded-lg border border-primary/40 bg-primary/5 p-4">
-                            <p className="mb-2 text-sm font-semibold text-foreground">Değişiklikleri Onayla</p>
-                            <ul className="space-y-1.5">
-                              {dirtyUsage.map((m) => (
-                                <li key={m.key} className="flex items-center gap-2 text-sm">
-                                  <span className="min-w-[140px] text-muted-foreground">{m.label}</span>
-                                  <span className="font-mono text-muted-foreground">{m.used}</span>
-                                  <ArrowRight className="size-3.5 text-primary" />
-                                  <span className="font-mono font-semibold text-primary">{Number(usageDraft[m.key])}</span>
-                                </li>
-                              ))}
-                            </ul>
-                            <div className="mt-3 flex gap-2">
-                              <Button size="sm" onClick={handleSaveUsage} disabled={savingUsage}>
-                                {savingUsage ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                                Güncelle
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setUsageReviewing(false)} disabled={savingUsage}>
-                                Vazgeç
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Düzenleme aksiyonları */}
-                        {!usageReviewing && (
-                          <div className="flex items-center justify-between border-t border-border pt-4">
-                            <span className="text-xs text-muted-foreground">
-                              {dirtyUsage.length > 0 ? `${dirtyUsage.length} değişiklik bekliyor` : 'Değişiklik yok'}
-                            </span>
-                            <div className="flex gap-2">
-                              <Button size="sm" variant="ghost" onClick={cancelUsageEdit} disabled={savingUsage}>
-                                İptal
-                              </Button>
-                              <Button size="sm" onClick={() => setUsageReviewing(true)} disabled={dirtyUsage.length === 0 || savingUsage}>
-                                <SlidersHorizontal className="size-4" />
-                                Değişiklikleri Kontrol Et
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      /* SALT-OKUNUR — progress bar'lar */
-                      <div className="space-y-3">
-                        {metrics.map((m, i) => {
-                          const pct = m.unlimited || m.limit === 0
-                            ? 0
-                            : Math.min(Math.round((m.used / m.limit) * 100), 100);
-                          const over = !m.unlimited && m.used > m.limit;
-                          return (
-                            <div key={i} className="space-y-1">
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="font-medium text-foreground">{m.label}</span>
-                                <span className={cn('font-mono text-xs', over ? 'text-destructive' : 'text-muted-foreground')}>
-                                  {m.used}{' / '}{m.unlimited ? '∞' : m.limit}
-                                  {!m.unlimited && ` · %${pct}`}
-                                </span>
-                              </div>
-                              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                                {m.unlimited ? (
-                                  <div className="h-full w-full bg-gradient-to-r from-primary/30 to-primary/10" />
-                                ) : (
-                                  <div
-                                    className={cn('h-full rounded-full transition-all', over ? 'bg-destructive' : pct >= 80 ? 'bg-amber-500' : 'bg-primary')}
-                                    style={{ width: `${Math.max(pct, 2)}%` }}
-                                  />
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
+            <UsagePanel
+              metrics={metrics}
+              packageName={limitUsage?.packageName}
+              onSaveUsage={(usage) => updateUsage({ id, usage }).unwrap()}
+              onResetUsage={() => resetUsage({ id }).unwrap()}
+              savingUsage={savingUsage}
+              resetting={resettingUsage}
+            />
           )}
 
           {section === 'limitler' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Limitler</CardTitle>
-                <CardToolbar>
-                  {limitUsage?.packageName
-                    ? <Badge variant="primary">{limitUsage.packageName}</Badge>
-                    : <Badge variant="muted">Paket yok</Badge>}
-                </CardToolbar>
-              </CardHeader>
-              <CardContent className="space-y-4 p-4">
-                {metrics.length === 0 ? (
-                  <EmptyCard icon={<SlidersHorizontal className="size-5" />} message="Bu firmanın hesabına bağlı paket/limit yok." />
-                ) : (
-                  <>
-                    {notice && (
-                      <Alert variant={notice.type === 'error' ? 'destructive' : 'info'}>
-                        <AlertDescription>{notice.text}</AlertDescription>
-                      </Alert>
-                    )}
-
-                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <AlertTriangle className="size-3.5" />
-                      Değer <span className="font-mono">0</span> = sınırsız. Değişiklikler bu firmanın aktif paketine özel uygulanır.
-                    </p>
-
-                    {/* Düzenlenebilir limit alanları */}
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {metrics.map((m) => {
-                        const val = limitDraft[m.key] ?? m.limit;
-                        const changed = Number(val) !== Number(m.limit);
-                        return (
-                          <div key={m.key} className={cn('rounded-lg border p-3', changed ? 'border-primary/50 bg-primary/5' : 'border-border')}>
-                            <label className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">{m.label}</span>
-                              <span className="font-mono">kullanım: {m.used}</span>
-                            </label>
-                            <input
-                              type="number"
-                              min={0}
-                              value={val}
-                              disabled={savingLimits}
-                              onChange={(e) => {
-                                setNotice(null);
-                                setReviewing(false);
-                                setLimitDraft((d) => ({ ...d, [m.key]: e.target.value === '' ? '' : Number(e.target.value) }));
-                              }}
-                              className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Kontrol (diff) paneli */}
-                    {reviewing && dirtyMetrics.length > 0 && (
-                      <div className="rounded-lg border border-primary/40 bg-primary/5 p-4">
-                        <p className="mb-2 text-sm font-semibold text-foreground">Değişiklikleri Onayla</p>
-                        <ul className="space-y-1.5">
-                          {dirtyMetrics.map((m) => {
-                            const next = Number(limitDraft[m.key]);
-                            return (
-                              <li key={m.key} className="flex items-center gap-2 text-sm">
-                                <span className="min-w-[140px] text-muted-foreground">{m.label}</span>
-                                <span className="font-mono text-muted-foreground">{m.unlimited ? '∞' : m.limit}</span>
-                                <ArrowRight className="size-3.5 text-primary" />
-                                <span className="font-mono font-semibold text-primary">{next === 0 ? '∞' : next}</span>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                        <div className="mt-3 flex gap-2">
-                          <Button size="sm" onClick={handleSaveLimits} disabled={savingLimits}>
-                            {savingLimits ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                            Güncelle
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setReviewing(false)} disabled={savingLimits}>
-                            Vazgeç
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Aksiyonlar */}
-                    {!reviewing && (
-                      <div className="flex items-center justify-between border-t border-border pt-4">
-                        <span className="text-xs text-muted-foreground">
-                          {dirtyMetrics.length > 0
-                            ? `${dirtyMetrics.length} değişiklik bekliyor`
-                            : 'Değişiklik yok'}
-                        </span>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="ghost" onClick={resetLimitDraft} disabled={dirtyMetrics.length === 0 || savingLimits}>
-                            <RotateCcw className="size-4" />
-                            Sıfırla
-                          </Button>
-                          <Button size="sm" onClick={() => setReviewing(true)} disabled={dirtyMetrics.length === 0 || savingLimits}>
-                            <SlidersHorizontal className="size-4" />
-                            Değişiklikleri Kontrol Et
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
+            <LimitsPanel
+              metrics={metrics}
+              packageName={limitUsage?.packageName}
+              onSave={(limits) => updateLimits({ id, limits }).unwrap()}
+              saving={savingLimits}
+            />
           )}
         </div>
       </div>

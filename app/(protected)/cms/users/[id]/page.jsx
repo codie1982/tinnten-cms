@@ -23,10 +23,11 @@ import {
   Contact,
   Wallet,
   Package,
-  Activity,
   MessagesSquare,
   ChevronLeft,
   ChevronRight,
+  SlidersHorizontal,
+  Gauge,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -61,8 +62,12 @@ import {
   useGetUserConversationsQuery,
   useUpdateUserMutation,
   useResetUserPasswordMutation,
+  useUpdateUserAccountLimitsMutation,
+  useUpdateUserAccountUsageMutation,
+  useResetUserAccountUsageMutation,
 } from '@/redux/services';
 import { roleMeta, statusMeta } from '../_data';
+import { AccountSummary, PackagesTable, LimitsPanel, UsagePanel } from '@/components/cms/account-panels';
 
 /* ─── sol alt-menü ─── */
 const SECTIONS = [
@@ -73,11 +78,11 @@ const SECTIONS = [
   { key: 'oturumlar', label: 'Oturumlar', icon: MonitorSmartphone },
   { key: 'kutuphaneler', label: 'Kütüphaneler', icon: Library },
   { key: 'email', label: 'Email', icon: Mail },
-  { key: 'hesap', label: 'Hesap', icon: Wallet },
-  { key: 'paketler', label: 'Paketler', icon: Package },
-  { key: 'kullanim', label: 'Kullanım', icon: Activity },
+  { key: 'hesap', label: 'Hesap & Paketler', icon: Wallet },
+  { key: 'limitler', label: 'Limitler', icon: SlidersHorizontal },
+  { key: 'kullanim', label: 'Kullanım', icon: Gauge },
 ];
-const ACCOUNT_SECTIONS = ['hesap', 'paketler', 'kullanim'];
+const ACCOUNT_SECTIONS = ['hesap', 'limitler', 'kullanim'];
 
 /* ─── tr tarih / etiket yardımcıları ─── */
 function formatTrDate(input) {
@@ -628,24 +633,23 @@ function CompaniesSection({ companies }) {
   );
 }
 
-/* ─── Hesap / Paketler / Kullanım (lazy account fetch) ─── */
+/* ─── Hesap & Paketler / Limitler / Kullanım (lazy account fetch) ─── */
 function AccountSections({ userId, view, authorized }) {
   const { data, isLoading, error } = useGetUserAccountQuery(userId, { skip: !authorized });
   const account = data?.account ?? null;
 
-  const title =
-    view === 'paketler' ? 'Paketler' : view === 'kullanim' ? 'Kullanım' : 'Hesap';
+  const [updateLimits, { isLoading: savingLimits }] = useUpdateUserAccountLimitsMutation();
+  const [updateUsage, { isLoading: savingUsage }] = useUpdateUserAccountUsageMutation();
+  const [resetUsage, { isLoading: resettingUsage }] = useResetUserAccountUsageMutation();
+
+  const title = view === 'limitler' ? 'Limitler' : view === 'kullanim' ? 'Kullanım' : 'Hesap & Paketler';
 
   if (isLoading) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
         <CardContent className="space-y-2 p-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-6" />
-          ))}
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)}
         </CardContent>
       </Card>
     );
@@ -653,9 +657,7 @@ function AccountSections({ userId, view, authorized }) {
   if (error) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
         <CardContent className="p-4">
           <Alert variant="destructive">
             <AlertTitle>Hesap bilgisi yüklenemedi</AlertTitle>
@@ -669,136 +671,54 @@ function AccountSections({ userId, view, authorized }) {
   }
   if (!account) {
     return (
-      <SimpleEmptyCard
-        title={title}
-        icon={<Wallet className="size-5" />}
-        message="Bu kullanıcı için hesap kaydı bulunamadı."
+      <SimpleEmptyCard title={title} icon={<Wallet className="size-5" />} message="Bu kullanıcı için hesap kaydı bulunamadı." />
+    );
+  }
+
+  const metrics = account.limitUsage?.metrics ?? [];
+  const packageName = account.limitUsage?.packageName;
+
+  if (view === 'limitler') {
+    return (
+      <LimitsPanel
+        metrics={metrics}
+        packageName={packageName}
+        onSave={(limits) => updateLimits({ id: userId, limits }).unwrap()}
+        saving={savingLimits}
+      />
+    );
+  }
+  if (view === 'kullanim') {
+    return (
+      <UsagePanel
+        metrics={metrics}
+        packageName={packageName}
+        onSaveUsage={(usage) => updateUsage({ id: userId, usage }).unwrap()}
+        onResetUsage={() => resetUsage({ id: userId }).unwrap()}
+        savingUsage={savingUsage}
+        resetting={resettingUsage}
       />
     );
   }
 
-  if (view === 'paketler') return <PackagesView account={account} />;
-  if (view === 'kullanim') return <UsageView usage={account.usage} />;
-  return <AccountOverview account={account} />;
-}
-
-function AccountOverview({ account }) {
-  const amount = account.balance?.amount;
-  const currency = account.balance?.currency || '';
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Hesap</CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-1 gap-4 p-6 sm:grid-cols-2">
-        <StatRow icon={Wallet} label="Hesap ID" value={account.id} />
-        <StatRow
-          icon={Wallet}
-          label="Bakiye"
-          value={amount != null ? `${amount} ${currency}`.trim() : '—'}
-        />
-        <StatRow icon={Package} label="Paket Sayısı" value={`${account.packages?.length ?? 0} paket`} />
-        <StatRow icon={CalendarDays} label="Oluşturulma" value={formatTrDate(account.createdAt)} />
-      </CardContent>
-    </Card>
-  );
-}
-
-function PackagesView({ account }) {
+  // view === 'hesap' → Hesap & Paketler (firma detayıyla aynı düzen)
   const packages = account.packages ?? [];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Paketler</CardTitle>
-        <CardToolbar>
-          <Badge variant="muted">{packages.length} paket</Badge>
-        </CardToolbar>
+        <CardTitle>Hesap & Paketler</CardTitle>
+        <CardToolbar><Badge variant="muted">{packages.length} paket</Badge></CardToolbar>
       </CardHeader>
-      <CardContent className="px-0 py-0">
-        {packages.length === 0 ? (
-          <EmptyState
-            icon={<Package className="size-5" />}
-            title="Paket yok"
-            description="Bu kullanıcıya ekli paket bulunmuyor."
-            className="py-10"
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Paket</TableHead>
-                  <TableHead>Kategori</TableHead>
-                  <TableHead>Durum</TableHead>
-                  <TableHead>Bitiş</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {packages.map((p) => (
-                  <TableRow key={p.id ?? p.packageId ?? p.name}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-foreground">{p.name}</span>
-                        {p.forCompany && <Badge variant="muted">Firma</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground capitalize">{p.category ?? '—'}</TableCell>
-                    <TableCell>
-                      {p.isActive ? <Badge variant="success">Aktif</Badge> : <Badge variant="muted">Pasif</Badge>}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {p.expiredAt ? formatTrDate(p.expiredAt) : '—'}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function UsageView({ usage }) {
-  // usage şekli serbest; primitive ve bir seviye iç içe nesneleri düzleştir.
-  const flat = [];
-  for (const [k, v] of Object.entries(usage || {})) {
-    if (v == null) continue;
-    if (typeof v === 'object') {
-      for (const [k2, v2] of Object.entries(v)) {
-        if (v2 != null && typeof v2 !== 'object') flat.push([`${k}.${k2}`, v2]);
-      }
-    } else {
-      flat.push([k, v]);
-    }
-  }
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Kullanım</CardTitle>
-        <CardToolbar>
-          <Badge variant="muted">{flat.length} metrik</Badge>
-        </CardToolbar>
-      </CardHeader>
-      <CardContent className="p-2">
-        {flat.length === 0 ? (
-          <EmptyState
-            icon={<Activity className="size-5" />}
-            title="Kullanım verisi yok"
-            description="Bu hesap için kullanım metriği bulunmuyor."
-            className="py-10"
-          />
-        ) : (
-          <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border sm:grid-cols-2">
-            {flat.map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between bg-card px-3 py-2.5">
-                <span className="font-mono text-xs text-muted-foreground">{k}</span>
-                <span className="text-sm font-medium text-foreground">{String(v)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+      <CardContent className="space-y-5 p-4">
+        <AccountSummary
+          accountId={account.id}
+          balance={account.balance}
+          packageCount={packages.length}
+          createdAt={account.createdAt}
+        />
+        <div className="border-t border-border pt-4">
+          <PackagesTable packages={packages} />
+        </div>
       </CardContent>
     </Card>
   );

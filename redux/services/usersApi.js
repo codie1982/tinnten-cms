@@ -46,6 +46,21 @@ export const usersApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, { id }) => [{ type: 'User', id: `conversations-${id}` }],
     }),
+    updateUserAccountLimits: build.mutation({
+      query: ({ id, limits }) => ({ url: ENDPOINTS.users.accountLimits(id), method: 'PATCH', body: { limits } }),
+      transformResponse: (res) => res?.data ?? res, // { limitUsage }
+      invalidatesTags: (r, e, { id }) => [{ type: 'User', id: `account-${id}` }],
+    }),
+    updateUserAccountUsage: build.mutation({
+      query: ({ id, usage }) => ({ url: ENDPOINTS.users.accountUsage(id), method: 'PATCH', body: { usage } }),
+      transformResponse: (res) => res?.data ?? res, // { limitUsage }
+      invalidatesTags: (r, e, { id }) => [{ type: 'User', id: `account-${id}` }],
+    }),
+    resetUserAccountUsage: build.mutation({
+      query: ({ id }) => ({ url: ENDPOINTS.users.accountUsageReset(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res, // { limitUsage }
+      invalidatesTags: (r, e, { id }) => [{ type: 'User', id: `account-${id}` }],
+    }),
     getAllSessions: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.users.sessionsAll, params }), // { page, limit }
       transformResponse: (res) => res?.data ?? res,
@@ -64,4 +79,7 @@ export const {
   useGetUserAccountQuery,
   useGetUserConversationsQuery,
   useGetAllSessionsQuery,
+  useUpdateUserAccountLimitsMutation,
+  useUpdateUserAccountUsageMutation,
+  useResetUserAccountUsageMutation,
 } = usersApi;
