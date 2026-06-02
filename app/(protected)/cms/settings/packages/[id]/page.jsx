@@ -4,7 +4,9 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Plus, Trash2, Loader2, ChevronLeft, Check } from 'lucide-react';
+import {
+  Save, Plus, Trash2, Loader2, ChevronLeft, Check, Eye, EyeOff, AlertTriangle,
+} from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
@@ -16,6 +18,9 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { CONTENT_LOCALES } from '@/config/api';
@@ -23,6 +28,7 @@ import {
   useGetCmsPackageQuery,
   useCreatePackageMutation,
   useUpdatePackageMutation,
+  useDeletePackageMutation,
 } from '@/redux/services';
 
 const CATEGORIES = ['free', 'basic', 'premium', 'enterprise'];
@@ -38,11 +44,49 @@ const INTERVALS = [
   { value: 'lifetime', label: 'Ömür Boyu' },
 ];
 const CURRENCIES = ['USD', 'TRY', 'EUR'];
+// Backend systemPackagesController.buildLimitPayload ile birebir uyumlu birimler
+const SIZE_UNITS = ['kb', 'mb', 'gb', 'tb'];
+const STREAM_UNITS = ['mb', 'gb', 'tb'];
+const REGEN_PERIODS = [
+  { value: 'Hourly', label: 'Saatlik' },
+  { value: 'Daily', label: 'Günlük' },
+  { value: 'Weekly', label: 'Haftalık' },
+  { value: 'Monthly', label: 'Aylık' },
+];
+
+// Backend default değerleri ile birebir aynı (buildLimitPayload)
+const DEFAULT_LIMITS = {
+  product: { amount: 10 },
+  services: { amount: 10 },
+  file: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
+  image: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
+  video: { download: 1024, upload: 1024, maxfileupload: 100, maxfileDownload: 100, unit: 'mb', stream: 50, stream_unit: 'gb' },
+  offer: { max: 10, regeneretetime: 'Daily' },
+  llm: { token: 1024, regeneretetime: 'Daily' },
+  ai: { images: 20, enrich: 50, video: 5 },
+  workflow: { count: 5, totalRun: 100 },
+  maxDevices: null,
+};
 
 const emptyI18n = () => {
   const o = {};
   for (const l of CONTENT_LOCALES) o[l.code] = { title: '', description: '', features: '' };
   return o;
+};
+
+// Backend'den gelen kısmi limits'i default ile derinlemesine merge et — eksik
+// alanlar default değer alır, böylece UI hep dolu render eder.
+const mergeLimits = (incoming) => {
+  const out = JSON.parse(JSON.stringify(DEFAULT_LIMITS));
+  if (!incoming || typeof incoming !== 'object') return out;
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out[k] = { ...out[k], ...v };
+    } else if (v !== undefined) {
+      out[k] = v;
+    }
+  }
+  return out;
 };
 
 export default function PackageEditorPage({ params }) {
@@ -55,6 +99,7 @@ export default function PackageEditorPage({ params }) {
   const { data: pkg, isLoading, error } = useGetCmsPackageQuery(id, { skip: isNew || !authorized });
   const [createPackage, { isLoading: creating }] = useCreatePackageMutation();
   const [updatePackage, { isLoading: updating }] = useUpdatePackageMutation();
+  const [deletePackage, { isLoading: deleting }] = useDeletePackageMutation();
   const saving = creating || updating;
 
   const [form, setForm] = useState({
@@ -67,8 +112,10 @@ export default function PackageEditorPage({ params }) {
   });
   const [i18n, setI18n] = useState(emptyI18n);
   const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1 }]);
+  const [limits, setLimits] = useState(() => JSON.parse(JSON.stringify(DEFAULT_LIMITS)));
   const [activeLocale, setActiveLocale] = useState('tr');
   const [notice, setNotice] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (isNew || !pkg) return;
@@ -99,6 +146,8 @@ export default function PackageEditorPage({ params }) {
         durationTime: p.durationTime ?? 1,
       })),
     );
+    // Backend `limit` (tekil) ya da eski kayıtlarda `limits` (çoğul) tutabilir
+    setLimits(mergeLimits(pkg.limit ?? pkg.limits));
   }, [pkg, isNew]);
 
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -106,6 +155,73 @@ export default function PackageEditorPage({ params }) {
   const setPriceRow = (i, k, v) => setPricing((rows) => rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
   const addPriceRow = () => setPricing((rows) => [...rows, { interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false, durationTime: 1 }]);
   const removePriceRow = (i) => setPricing((rows) => rows.filter((_, idx) => idx !== i));
+
+  // Nested limit alanlarını güncelleme: setLimitField('file', 'upload', 1024)
+  const setLimitField = (group, key, v) => {
+    setLimits((s) => ({ ...s, [group]: { ...(s[group] || {}), [key]: v } }));
+  };
+  const setLimitRoot = (key, v) => setLimits((s) => ({ ...s, [key]: v }));
+
+  function buildLimitBody() {
+    // Sayısal alanları Number'a çevir; null/boş → 0 (maxDevices hariç)
+    const num = (v, fallback = 0) => {
+      if (v === '' || v === null || v === undefined) return fallback;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    return {
+      product: { amount: num(limits.product?.amount) },
+      services: { amount: num(limits.services?.amount) },
+      file: {
+        download: num(limits.file?.download),
+        upload: num(limits.file?.upload),
+        maxfileupload: num(limits.file?.maxfileupload),
+        maxfileDownload: num(limits.file?.maxfileDownload),
+        unit: limits.file?.unit || 'mb',
+        stream: num(limits.file?.stream),
+        stream_unit: limits.file?.stream_unit || 'gb',
+      },
+      image: {
+        download: num(limits.image?.download),
+        upload: num(limits.image?.upload),
+        maxfileupload: num(limits.image?.maxfileupload),
+        maxfileDownload: num(limits.image?.maxfileDownload),
+        unit: limits.image?.unit || 'mb',
+        stream: num(limits.image?.stream),
+        stream_unit: limits.image?.stream_unit || 'gb',
+      },
+      video: {
+        download: num(limits.video?.download),
+        upload: num(limits.video?.upload),
+        maxfileupload: num(limits.video?.maxfileupload),
+        maxfileDownload: num(limits.video?.maxfileDownload),
+        unit: limits.video?.unit || 'mb',
+        stream: num(limits.video?.stream),
+        stream_unit: limits.video?.stream_unit || 'gb',
+      },
+      offer: {
+        max: num(limits.offer?.max),
+        regeneretetime: limits.offer?.regeneretetime || 'Daily',
+      },
+      llm: {
+        token: num(limits.llm?.token),
+        regeneretetime: limits.llm?.regeneretetime || 'Daily',
+      },
+      ai: {
+        images: num(limits.ai?.images),
+        enrich: num(limits.ai?.enrich),
+        video: num(limits.ai?.video),
+      },
+      workflow: {
+        count: num(limits.workflow?.count),
+        totalRun: num(limits.workflow?.totalRun),
+      },
+      maxDevices:
+        limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
+          ? null
+          : num(limits.maxDevices, null),
+    };
+  }
 
   function buildBody() {
     // Sadece başlığı olan diller gönderilir
@@ -138,6 +254,9 @@ export default function PackageEditorPage({ params }) {
       default_package: form.default_package,
       i18n: i18nOut,
       pricing: pricingOut,
+      // Backend hem `limit` (tekil) hem `limits` (çoğul) kabul ediyor;
+      // canonical olan `limit`'i gönderiyoruz.
+      limit: buildLimitBody(),
     };
   }
 
@@ -154,6 +273,38 @@ export default function PackageEditorPage({ params }) {
     } else {
       const r = await updatePackage({ id, ...body }).unwrap().catch((e) => { setNotice(e?.data?.message || 'Güncellenemedi.'); return null; });
       if (r) setNotice('Paket kaydedildi.');
+    }
+  }
+
+  // Status toggle — list sayfasındaki togglePublish davranışıyla birebir
+  async function handleToggleStatus() {
+    if (isNew) return;
+    setNotice('');
+    const next = form.status === 'active' ? 'inactive' : 'active';
+    const r = await updatePackage({ id, status: next })
+      .unwrap()
+      .catch((e) => {
+        setNotice(e?.data?.message || 'Durum güncellenemedi.');
+        return null;
+      });
+    if (r) {
+      setField('status', next);
+      setNotice(next === 'active' ? 'Paket yayına alındı.' : 'Paket pasifleştirildi.');
+    }
+  }
+
+  async function handleDelete() {
+    if (isNew) return;
+    setNotice('');
+    const r = await deletePackage(id)
+      .unwrap()
+      .catch((e) => {
+        setNotice(e?.data?.message || 'Silinemedi.');
+        return null;
+      });
+    if (r !== null) {
+      setConfirmDelete(false);
+      router.push('/cms/settings/packages');
     }
   }
 
@@ -185,10 +336,34 @@ export default function PackageEditorPage({ params }) {
         breadcrumb={[{ label: 'Paketler', href: '/cms/settings/packages' }, { label: isNew ? 'Yeni' : form.name || 'Düzenle' }]}
         title={isNew ? 'Yeni Paket' : form.name || 'Paketi Düzenle'}
         actions={
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            Kaydet
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {!isNew && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleToggleStatus}
+                  disabled={updating || deleting}
+                  title={form.status === 'active' ? 'Yayından kaldır' : 'Yayına al'}
+                >
+                  {form.status === 'active' ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  {form.status === 'active' ? 'Pasif Yap' : 'Aktif Et'}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={deleting}
+                >
+                  <Trash2 className="size-4" />
+                  Sil
+                </Button>
+              </>
+            )}
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              Kaydet
+            </Button>
+          </div>
         }
       />
 
@@ -303,6 +478,161 @@ export default function PackageEditorPage({ params }) {
               ))}
             </CardContent>
           </Card>
+
+          {/* Limitler */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Limitler</CardTitle>
+              <CardToolbar>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setLimits(JSON.parse(JSON.stringify(DEFAULT_LIMITS)))}
+                  title="Tüm limitleri varsayılana sıfırla"
+                >
+                  Varsayılana sıfırla
+                </Button>
+              </CardToolbar>
+            </CardHeader>
+            <CardContent className="space-y-5 p-4">
+              {/* Genel sayım limitleri */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Genel</p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <LimitRow label="Ürün adedi" value={limits.product?.amount} unit="adet" onChange={(v) => setLimitField('product', 'amount', v)} />
+                  <LimitRow label="Servis adedi" value={limits.services?.amount} unit="adet" onChange={(v) => setLimitField('services', 'amount', v)} />
+                  <LimitRow
+                    label="Maks. cihaz"
+                    value={limits.maxDevices ?? ''}
+                    unit="cihaz"
+                    placeholder="sınırsız"
+                    onChange={(v) => setLimitRoot('maxDevices', v === '' ? null : v)}
+                    helper="boş bırakılırsa sınırsız"
+                  />
+                </div>
+              </div>
+
+              {/* Dosya / Görsel / Video kotaları */}
+              {[
+                { key: 'file', label: 'Dosya' },
+                { key: 'image', label: 'Görsel' },
+                { key: 'video', label: 'Video' },
+              ].map(({ key, label }) => (
+                <div key={key}>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label} Kotası</p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <LimitRowWithUnit
+                      label="Aylık upload"
+                      value={limits[key]?.upload}
+                      unit={limits[key]?.unit}
+                      unitOptions={SIZE_UNITS}
+                      onChange={(v) => setLimitField(key, 'upload', v)}
+                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
+                    />
+                    <LimitRowWithUnit
+                      label="Aylık download"
+                      value={limits[key]?.download}
+                      unit={limits[key]?.unit}
+                      unitOptions={SIZE_UNITS}
+                      onChange={(v) => setLimitField(key, 'download', v)}
+                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
+                    />
+                    <LimitRowWithUnit
+                      label="Tek upload (maks.)"
+                      value={limits[key]?.maxfileupload}
+                      unit={limits[key]?.unit}
+                      unitOptions={SIZE_UNITS}
+                      onChange={(v) => setLimitField(key, 'maxfileupload', v)}
+                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
+                    />
+                    <LimitRowWithUnit
+                      label="Tek download (maks.)"
+                      value={limits[key]?.maxfileDownload}
+                      unit={limits[key]?.unit}
+                      unitOptions={SIZE_UNITS}
+                      onChange={(v) => setLimitField(key, 'maxfileDownload', v)}
+                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
+                    />
+                    <LimitRowWithUnit
+                      label="Aylık stream"
+                      value={limits[key]?.stream}
+                      unit={limits[key]?.stream_unit}
+                      unitOptions={STREAM_UNITS}
+                      onChange={(v) => setLimitField(key, 'stream', v)}
+                      onUnitChange={(u) => setLimitField(key, 'stream_unit', u)}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              {/* Teklif limiti */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Teklif</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <LimitRow
+                    label="Maks. teklif"
+                    value={limits.offer?.max}
+                    unit="adet"
+                    onChange={(v) => setLimitField('offer', 'max', v)}
+                  />
+                  <LimitPeriodRow
+                    label="Yenileme periyodu"
+                    value={limits.offer?.regeneretetime}
+                    onChange={(v) => setLimitField('offer', 'regeneretetime', v)}
+                  />
+                </div>
+              </div>
+
+              {/* LLM token limiti */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">LLM</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <LimitRow
+                    label="Token"
+                    value={limits.llm?.token}
+                    unit="token"
+                    onChange={(v) => setLimitField('llm', 'token', v)}
+                  />
+                  <LimitPeriodRow
+                    label="Yenileme periyodu"
+                    value={limits.llm?.regeneretetime}
+                    onChange={(v) => setLimitField('llm', 'regeneretetime', v)}
+                  />
+                </div>
+              </div>
+
+              {/* AI üretim limitleri */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Üretim</p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <LimitRow label="Görsel üretim" value={limits.ai?.images} unit="adet" onChange={(v) => setLimitField('ai', 'images', v)} />
+                  <LimitRow label="Enrich" value={limits.ai?.enrich} unit="adet" onChange={(v) => setLimitField('ai', 'enrich', v)} />
+                  <LimitRow label="Video üretim" value={limits.ai?.video} unit="adet" onChange={(v) => setLimitField('ai', 'video', v)} />
+                </div>
+              </div>
+
+              {/* Workflow limitleri */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workflow</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <LimitRow
+                    label="Workflow adedi"
+                    value={limits.workflow?.count}
+                    unit="adet"
+                    onChange={(v) => setLimitField('workflow', 'count', v)}
+                    helper="Kullanıcının oluşturabileceği toplam workflow sayısı"
+                  />
+                  <LimitRow
+                    label="Toplam çalıştırma"
+                    value={limits.workflow?.totalRun}
+                    unit="run"
+                    onChange={(v) => setLimitField('workflow', 'totalRun', v)}
+                    helper="Tüm workflow'ların toplam çalışma hakkı"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Yan ayarlar */}
@@ -363,6 +693,102 @@ export default function PackageEditorPage({ params }) {
           </Link>
         </div>
       </div>
+
+      {/* Silme onay diyaloğu */}
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-5 text-destructive" />
+              Paketi sil
+            </DialogTitle>
+            <DialogDescription>
+              <strong>{form.name || 'Bu paket'}</strong> kalıcı olarak silinecek.
+              Bu pakete bağlı abonelikler/snapshotlar etkilenmez ama yeni satışlarda
+              kullanılamaz. Devam etmek istiyor musunuz?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+              İptal
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Evet, sil
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </RoleGuard>
+  );
+}
+
+// ── Limit input helpers ─────────────────────────────────────────────────────
+
+function LimitRow({ label, value, unit, onChange, placeholder, helper }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          min={0}
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? '0'}
+          className="flex-1"
+        />
+        {unit && (
+          <span className="rounded-md border border-border bg-muted px-2.5 py-2 text-xs font-medium text-muted-foreground">
+            {unit}
+          </span>
+        )}
+      </div>
+      {helper && <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p>}
+    </div>
+  );
+}
+
+function LimitRowWithUnit({ label, value, unit, unitOptions, onChange, onUnitChange }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <div className="flex items-stretch gap-2">
+        <Input
+          type="number"
+          min={0}
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="0"
+          className="flex-1"
+        />
+        <div className="w-24 shrink-0">
+          <Select value={unit || unitOptions[0]} onValueChange={onUnitChange}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {unitOptions.map((u) => (
+                <SelectItem key={u} value={u} className="uppercase">{u.toUpperCase()}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LimitPeriodRow({ label, value, onChange }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <Select value={value || 'Daily'} onValueChange={onChange}>
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {REGEN_PERIODS.map((p) => (
+            <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
