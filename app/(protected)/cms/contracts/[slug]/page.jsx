@@ -41,6 +41,16 @@ const LOCALE_FULL = {
   el: 'Ελληνικά', es: 'Español', fr: 'Français', it: 'Italiano', ru: 'Русский',
 };
 const EMPTY_LOCALE_FORM = { title: '', summary: '', content: '' };
+
+/** Backend contents[] (dil varyasyonları) → { [locale]: {title,summary,content} } form state. */
+function contentsToForms(contents) {
+  const forms = Object.fromEntries(ALL_LOCALES.map((l) => [l, { ...EMPTY_LOCALE_FORM }]));
+  for (const c of contents ?? []) {
+    if (!c?.locale || !forms[c.locale]) continue;
+    forms[c.locale] = { title: c.title ?? '', summary: c.summary ?? '', content: c.content ?? '' };
+  }
+  return forms;
+}
 const SECTIONS = [
   { key: 'icerik', label: 'İçerik', icon: FileText },
   { key: 'onaylayanlar', label: 'Onaylayanlar', icon: Users },
@@ -131,32 +141,22 @@ export default function ContractDetailPage({ params }) {
     setSelectedId(versions[0].id);
   }, [versions, isNew, selectedId]);
 
-  /* Seçili TR versiyonunu TR form state'e yükle */
+  /* Seçili versiyonun TÜM dil varyasyonlarını form state'e yükle */
   useEffect(() => {
     if (isNew || selectedId === 'NEW' || !selectedId) return;
     const v = versions.find((x) => x.id === selectedId);
     if (!v) return;
     setSharedFields({ slug, version: v.version });
-    setLocaleForms((prev) => ({
-      ...prev,
-      tr: { title: v.title ?? '', summary: v.summary ?? '', content: v.content ?? '' },
-    }));
+    setLocaleForms(contentsToForms(v.contents));
   }, [selectedId, versions, isNew, slug]);
 
-  /* Yeni versiyon: mevcut TR içeriğini şablonla */
+  /* Yeni versiyon: mevcut tüm dilleri şablonla (her dil kopyalanır) */
   function startNewVersion() {
     const base = selected || versions[0];
     setNotice('');
     setSelectedId('NEW');
     setSharedFields((s) => ({ ...s, version: bumpVersion(base?.version) }));
-    setLocaleForms((prev) => ({
-      ...prev,
-      tr: {
-        title: base?.title || data?.title || '',
-        summary: base?.summary || '',
-        content: base?.content || '',
-      },
-    }));
+    setLocaleForms(contentsToForms(base?.contents));
   }
 
   const setLocaleField = useCallback((k, v) => {
