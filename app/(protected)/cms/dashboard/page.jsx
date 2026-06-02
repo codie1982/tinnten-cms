@@ -2,114 +2,75 @@
 
 import Link from 'next/link';
 import {
-  Users,
-  Bot,
-  FileText,
-  Mail,
-  ArrowUpRight,
-  TrendingUp,
-  Workflow,
+  Users, Bot, FileText, Building2, Workflow, CreditCard,
+  Store, Wrench, Loader2,
 } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardToolbar,
-  CardFooter,
+  Card, CardContent, CardHeader, CardTitle, CardToolbar, CardFooter,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES } from '@/lib/roles';
+import { useGetDashboardStatsQuery } from '@/redux/services';
 
-/* ─── static data ─── */
+/* ─── yardımcılar ─── */
+function fmtNumber(n) {
+  if (n == null) return '—';
+  return new Intl.NumberFormat('tr-TR').format(n);
+}
+function timeAgo(input) {
+  if (!input) return '—';
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return '—';
+  const diff = Date.now() - d.getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'az önce';
+  if (min < 60) return `${min} dk önce`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} saat önce`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day} gün önce`;
+  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
 
-const kpis = [
-  {
-    label: 'Toplam Kullanıcı',
-    value: '12.480',
-    delta: '+4.2%',
-    icon: Users,
-    tint: 'bg-blue-500/10 text-blue-600',
-    progress: 72,
-  },
-  {
-    label: 'Aktif Asistan',
-    value: '328',
-    delta: '+12',
-    icon: Bot,
-    tint: 'bg-violet-500/10 text-violet-600',
-    progress: 58,
-  },
-  {
-    label: 'Yayında İçerik',
-    value: '1.204',
-    delta: '+38',
-    icon: FileText,
-    tint: 'bg-amber-500/10 text-amber-600',
-    progress: 45,
-  },
-  {
-    label: 'Gönderilen Email',
-    value: '86.300',
-    delta: '+9.1%',
-    icon: Mail,
-    tint: 'bg-emerald-500/10 text-emerald-600',
-    progress: 88,
-  },
-];
-
+/* ─── statik hızlı aksiyonlar ─── */
 const quickActions = [
-  {
-    title: 'Yeni Asistan Oluştur',
-    desc: 'AI asistan konfigüre et ve yayına al',
-    icon: Bot,
-    href: '/cms/assistants',
-    tint: 'bg-violet-500/10 text-violet-600',
-  },
-  {
-    title: 'İçerik Yayınla',
-    desc: 'Yeni içerik, SSS veya akademi makalesi ekle',
-    icon: FileText,
-    href: '/cms/content',
-    tint: 'bg-amber-500/10 text-amber-600',
-  },
-  {
-    title: 'İş Akışı Oluştur',
-    desc: 'Otomasyon senaryosu ve workflow tanımla',
-    icon: Workflow,
-    href: '/cms/workflows',
-    tint: 'bg-blue-500/10 text-blue-600',
-  },
+  { title: 'Yeni Asistan Oluştur', desc: 'AI asistan konfigüre et ve yayına al', icon: Bot, href: '/cms/assistants', tint: 'bg-violet-500/10 text-violet-600' },
+  { title: 'İçerik Yayınla', desc: 'Yeni içerik, SSS veya akademi makalesi ekle', icon: FileText, href: '/cms/content', tint: 'bg-amber-500/10 text-amber-600' },
+  { title: 'İş Akışı Oluştur', desc: 'Otomasyon senaryosu ve workflow tanımla', icon: Workflow, href: '/cms/workflows', tint: 'bg-blue-500/10 text-blue-600' },
 ];
 
-const activity = [
-  { who: 'Ayşe Demir', what: 'yeni içerik yayınladı', when: '5 dk önce' },
-  { who: 'Mehmet Kaya', what: 'asistan ayarını güncelledi', when: '22 dk önce' },
-  { who: 'Sistem', what: 'haftalık email kampanyası gönderdi', when: '1 saat önce' },
-  { who: 'Zeynep Ak', what: 'profesyonel hesap onayladı', when: '3 saat önce' },
-  { who: 'Kaan Arslan', what: 'yeni firma kaydı tamamlandı', when: '5 saat önce' },
-];
-
-const services = [
-  { name: 'Fetcher Servisi', status: 'ok', uptime: '99.9%', href: '/cms/services/fetcher' },
-  { name: 'Embedding Servisi', status: 'ok', uptime: '99.7%', href: '/cms/services/embedding' },
-  { name: 'Cron Servisi', status: 'ok', uptime: '100%', href: '/cms/services/cron' },
-  { name: 'Scraper', status: 'warning', uptime: '94.2%', href: '/cms/services/scraper' },
+const COMPANY_STATUS_META = [
+  { key: 'approved', label: 'Onaylı', bar: 'bg-emerald-500', text: 'text-emerald-600' },
+  { key: 'pending', label: 'Beklemede', bar: 'bg-amber-500', text: 'text-amber-600' },
+  { key: 'suspended', label: 'Askıda', bar: 'bg-muted-foreground/50', text: 'text-muted-foreground' },
+  { key: 'blocked', label: 'Engelli', bar: 'bg-destructive', text: 'text-destructive' },
 ];
 
 /* ─── page ─── */
-
 export default function DashboardPage() {
   const { data: session } = useSession();
   const rawName = session?.user?.name || session?.user?.email || '';
   const firstName = rawName.split(' ')[0].split('@')[0] || 'Kullanıcı';
-  const activeServices = services.filter((s) => s.status === 'ok').length;
+
+  const { data: stats, isLoading, isFetching, error } = useGetDashboardStatsQuery();
+
+  const kpis = [
+    { label: 'Toplam Kullanıcı', value: stats?.users?.total, icon: Users, tint: 'bg-blue-500/10 text-blue-600', href: '/cms/users/list' },
+    { label: 'Toplam Firma', value: stats?.companies?.total, icon: Building2, tint: 'bg-indigo-500/10 text-indigo-600', href: '/cms/companies/list' },
+    { label: 'Aktif Asistan', value: stats?.assistants?.published, icon: Bot, tint: 'bg-violet-500/10 text-violet-600', href: '/cms/assistants' },
+    { label: 'Yayında İçerik', value: stats?.content?.published, icon: FileText, tint: 'bg-amber-500/10 text-amber-600', href: '/cms/content' },
+  ];
+
+  const companies = stats?.companies;
+  const recent = stats?.recentCompanies ?? [];
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ACCESS]}>
@@ -123,51 +84,51 @@ export default function DashboardPage() {
       <Card className="mb-5">
         <CardContent className="flex items-center justify-between gap-4 p-5">
           <div className="flex items-center gap-4">
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-base font-bold text-primary-foreground">
-              t
-            </span>
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-base font-bold text-primary-foreground">t</span>
             <div>
               <p className="font-semibold text-foreground">Merhaba, {firstName}</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Platform aktif · {activeServices}/{services.length} servis çalışıyor
+                {companies != null
+                  ? `${fmtNumber(companies.total)} firma · ${fmtNumber(stats?.subscriptions?.active)} aktif abonelik`
+                  : 'Platform genel görünümü'}
               </p>
             </div>
           </div>
           <div className="hidden shrink-0 items-center gap-2 sm:flex">
+            {isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
             <Badge variant="success" dot>Platform Aktif</Badge>
             <Badge variant="muted">v1.0</Badge>
           </div>
         </CardContent>
       </Card>
 
+      {error ? (
+        <Alert variant="destructive" className="mb-5">
+          <AlertTitle>İstatistikler yüklenemedi</AlertTitle>
+          <AlertDescription>{error?.data?.message || error?.normalizedMessage || 'Sunucuya ulaşılamadı.'}</AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* ── KPI cards ── */}
       <div className="mb-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map((k) => {
           const Icon = k.icon;
           return (
-            <Card key={k.label}>
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
+            <Link key={k.label} href={k.href} className="group block">
+              <Card className="h-full transition-all group-hover:-translate-y-0.5 group-hover:shadow-md">
+                <CardContent className="p-5">
                   <span className={cn('flex size-11 items-center justify-center rounded-xl', k.tint)}>
                     <Icon className="size-5" />
                   </span>
-                  <Badge variant="success">
-                    <ArrowUpRight className="size-3" />
-                    {k.delta}
-                  </Badge>
-                </div>
-                <p className="mt-4 text-2xl font-bold tracking-tight text-foreground">
-                  {k.value}
-                </p>
-                <p className="mt-0.5 text-sm text-muted-foreground">{k.label}</p>
-                <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary/50"
-                    style={{ width: `${k.progress}%` }}
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                  {isLoading ? (
+                    <Skeleton className="mt-4 h-8 w-24" />
+                  ) : (
+                    <p className="mt-4 text-2xl font-bold tracking-tight text-foreground">{fmtNumber(k.value)}</p>
+                  )}
+                  <p className="mt-0.5 text-sm text-muted-foreground">{k.label}</p>
+                </CardContent>
+              </Card>
+            </Link>
           );
         })}
       </div>
@@ -194,110 +155,99 @@ export default function DashboardPage() {
 
       {/* ── Bottom grid ── */}
       <div className="grid gap-5 lg:grid-cols-3">
-        {/* Activity feed */}
+        {/* Son kayıtlı firmalar */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Son Aktiviteler</CardTitle>
+            <CardTitle>Son Kayıtlı Firmalar</CardTitle>
             <CardToolbar>
-              <Badge variant="muted" dot>Canlı</Badge>
+              <Link href="/cms/companies/list">
+                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">Tümü</Button>
+              </Link>
             </CardToolbar>
           </CardHeader>
           <CardContent className="p-2">
-            <div className="space-y-0.5">
-              {activity.map((a, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-muted/50"
-                >
-                  <Avatar name={a.who} size="sm" />
-                  <p className="flex-1 text-sm">
-                    <span className="font-medium text-foreground">{a.who}</span>{' '}
-                    <span className="text-muted-foreground">{a.what}</span>
-                  </p>
-                  <span className="whitespace-nowrap text-xs text-muted-foreground">
-                    {a.when}
-                  </span>
-                </div>
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="space-y-2 p-2">
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
+              </div>
+            ) : recent.length === 0 ? (
+              <p className="px-3 py-10 text-center text-sm text-muted-foreground">Henüz firma kaydı yok.</p>
+            ) : (
+              <div className="space-y-0.5">
+                {recent.map((c) => (
+                  <Link key={c.id} href={`/cms/companies/${c.id}`} className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-muted/50">
+                    <Avatar name={c.name} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
+                      {c.businessMode && (
+                        <span className="text-xs text-muted-foreground">{c.businessMode === 'service' ? 'Hizmet' : 'E-ticaret'}</span>
+                      )}
+                    </div>
+                    <span className="whitespace-nowrap text-xs text-muted-foreground">{timeAgo(c.createdAt)}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
           </CardContent>
-          <CardFooter className="justify-center border-t border-dashed border-border/60 py-3">
-            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
-              Tüm aktiviteleri görüntüle
-            </Button>
-          </CardFooter>
         </Card>
 
         {/* Right column */}
         <div className="flex flex-col gap-5">
-          {/* Week stats */}
+          {/* Firma durumları */}
           <Card>
             <CardHeader>
-              <CardTitle>Bu Hafta</CardTitle>
+              <CardTitle>Firma Durumları</CardTitle>
               <CardToolbar>
-                <TrendingUp className="size-4 text-emerald-500" />
-                <span className="text-sm font-semibold text-emerald-600">+18.4%</span>
+                <Badge variant="muted">{fmtNumber(companies?.total)} toplam</Badge>
               </CardToolbar>
             </CardHeader>
             <CardContent className="space-y-4">
-              {[
-                { label: 'Yeni kayıtlar', value: 72 },
-                { label: 'Aktif oturumlar', value: 54 },
-                { label: 'Dönüşüm', value: 38 },
-              ].map((row) => (
-                <div key={row.label}>
-                  <div className="mb-1.5 flex justify-between text-sm">
-                    <span className="text-muted-foreground">{row.label}</span>
-                    <span className="font-semibold text-foreground">%{row.value}</span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-primary"
-                      style={{ width: `${row.value}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+              {isLoading ? (
+                Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)
+              ) : (
+                COMPANY_STATUS_META.map((s) => {
+                  const count = companies?.[s.key] ?? 0;
+                  const total = companies?.total || 1;
+                  const pct = Math.round((count / total) * 100);
+                  return (
+                    <div key={s.key}>
+                      <div className="mb-1.5 flex justify-between text-sm">
+                        <span className="text-muted-foreground">{s.label}</span>
+                        <span className={cn('font-semibold', s.text)}>{fmtNumber(count)}</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div className={cn('h-full rounded-full', s.bar)} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </CardContent>
           </Card>
 
-          {/* Service status */}
+          {/* İş modu dağılımı */}
           <Card>
             <CardHeader>
-              <CardTitle>Servis Durumu</CardTitle>
-              <CardToolbar>
-                <Badge variant={activeServices === services.length ? 'success' : 'warning'}>
-                  {activeServices}/{services.length} Aktif
-                </Badge>
-              </CardToolbar>
+              <CardTitle>İş Modu Dağılımı</CardTitle>
             </CardHeader>
-            <CardContent className="p-2">
-              <div className="space-y-0.5">
-                {services.map((s) => (
-                  <Link
-                    key={s.href}
-                    href={s.href}
-                    className="flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-muted/50"
-                  >
-                    <span
-                      className={cn(
-                        'size-2 shrink-0 rounded-full',
-                        s.status === 'ok' ? 'bg-emerald-500' : 'bg-amber-500',
-                      )}
-                    />
-                    <span className="flex-1 text-sm text-foreground">{s.name}</span>
-                    <span
-                      className={cn(
-                        'text-xs font-medium tabular-nums',
-                        s.status === 'ok' ? 'text-emerald-600' : 'text-amber-600',
-                      )}
-                    >
-                      {s.uptime}
-                    </span>
-                  </Link>
-                ))}
+            <CardContent className="grid grid-cols-2 gap-3 p-4">
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Wrench className="size-4" /><span className="text-xs">Hizmet</span>
+                </div>
+                <p className="mt-1 text-xl font-bold text-foreground">{isLoading ? '…' : fmtNumber(companies?.service)}</p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Store className="size-4" /><span className="text-xs">E-ticaret</span>
+                </div>
+                <p className="mt-1 text-xl font-bold text-foreground">{isLoading ? '…' : fmtNumber(companies?.ecommerce)}</p>
               </div>
             </CardContent>
+            <CardFooter className="justify-between border-t border-dashed border-border/60 py-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5"><CreditCard className="size-3.5" />Aktif abonelik</span>
+              <span className="font-semibold text-foreground">{isLoading ? '…' : fmtNumber(stats?.subscriptions?.active)}</span>
+            </CardFooter>
           </Card>
         </div>
       </div>

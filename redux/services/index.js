@@ -21,3 +21,4 @@ export * from './docsApi';
 export * from './legalApi';
 export * from './settingsApi';
 export * from './translationApi';
+export * from './dashboardApi';

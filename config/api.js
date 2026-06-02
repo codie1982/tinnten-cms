@@ -136,6 +136,9 @@ export const ENDPOINTS = {
     detail: (slug) => `/docs/cms/${slug}`,
     translate: (slug) => `/docs/cms/${slug}/translate`,
   },
+  dashboard: {
+    stats: '/cms/dashboard/stats',
+  },
   companies: {
     list: '/company/cms/list',
     detail: (id) => `/company/cms/${id}`,
