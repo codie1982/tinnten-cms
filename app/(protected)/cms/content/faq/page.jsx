@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Filter, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Filter, Globe, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import {
@@ -31,6 +31,13 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CMS_ROLES } from '@/lib/roles';
+import { useTranslateMutation } from '@/redux/services';
+
+const LOCALE_LABELS = {
+  tr: 'Türkçe', en: 'English', de: 'Deutsch',
+  ar: 'العربية', el: 'Ελληνικά', es: 'Español',
+  fr: 'Français', it: 'Italiano', ru: 'Русский',
+};
 
 /* ─── options ─── */
 const categoryOptions = [
@@ -81,6 +88,36 @@ function FaqForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState(initial);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
+  const [translate, { isLoading: translating }] = useTranslateMutation();
+  const [translations, setTranslations] = useState(null); // { en: { question, answer }, ... }
+  const [transOpen, setTransOpen] = useState(false);
+
+  const handleTranslate = async () => {
+    if (!form.question.trim() && !form.answer.trim()) return;
+    try {
+      const [qRes, aRes] = await Promise.all([
+        form.question.trim()
+          ? translate({ text: form.question.trim(), context: 'FAQ question' }).unwrap()
+          : Promise.resolve({ translations: {} }),
+        form.answer.trim()
+          ? translate({ text: form.answer.trim(), context: 'FAQ answer' }).unwrap()
+          : Promise.resolve({ translations: {} }),
+      ]);
+      const merged = {};
+      const locales = Object.keys({ ...qRes.translations, ...aRes.translations });
+      for (const l of locales) {
+        merged[l] = {
+          question: qRes.translations?.[l] ?? '',
+          answer: aRes.translations?.[l] ?? '',
+        };
+      }
+      setTranslations(merged);
+      setTransOpen(true);
+    } catch {
+      // hata sessizce geçer — kullanıcı tekrar deneyebilir
+    }
+  };
+
   return (
     <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 space-y-4">
       <h3 className="font-semibold text-sm text-foreground">
@@ -91,7 +128,7 @@ function FaqForm({ initial, onSave, onCancel }) {
           <label className="text-xs font-medium text-muted-foreground">Soru</label>
           <input
             value={form.question}
-            onChange={(e) => set('question', e.target.value)}
+            onChange={(e) => { set('question', e.target.value); setTranslations(null); }}
             className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
             placeholder="Soru metni..."
           />
@@ -100,7 +137,7 @@ function FaqForm({ initial, onSave, onCancel }) {
           <label className="text-xs font-medium text-muted-foreground">Cevap</label>
           <textarea
             value={form.answer}
-            onChange={(e) => set('answer', e.target.value)}
+            onChange={(e) => { set('answer', e.target.value); setTranslations(null); }}
             rows={3}
             className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none"
             placeholder="Cevap metni..."
@@ -149,9 +186,60 @@ function FaqForm({ initial, onSave, onCancel }) {
           />
         </div>
       </div>
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onCancel}>İptal</Button>
-        <Button size="sm" onClick={() => onSave(form)}>Kaydet</Button>
+
+      {/* ─── Çeviri paneli ─── */}
+      {translations && (
+        <div className="rounded-lg border border-border bg-background">
+          <button
+            type="button"
+            onClick={() => setTransOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted/40 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <Globe className="size-3.5 text-primary" />
+              Çeviri Sonuçları
+              <Badge variant="muted" className="text-xs">{Object.keys(translations).length} dil</Badge>
+            </span>
+            {transOpen
+              ? <ChevronDown className="size-4 text-muted-foreground" />
+              : <ChevronRight className="size-4 text-muted-foreground" />}
+          </button>
+          {transOpen && (
+            <div className="divide-y border-t">
+              {Object.entries(translations).map(([locale, t]) => (
+                <div key={locale} className="px-4 py-3 space-y-1">
+                  <p className="text-xs font-semibold text-primary">
+                    {LOCALE_LABELS[locale] ?? locale.toUpperCase()}
+                  </p>
+                  {t.question && (
+                    <p className="text-sm font-medium text-foreground">{t.question}</p>
+                  )}
+                  {t.answer && (
+                    <p className="text-xs text-muted-foreground">{t.answer}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2 pt-1">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleTranslate}
+          disabled={translating || (!form.question.trim() && !form.answer.trim())}
+          className="gap-1.5"
+        >
+          <Globe className="size-3.5" />
+          {translating ? 'Çevriliyor…' : translations ? 'Yeniden Çevir' : 'Otomatik Çevir'}
+        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel}>İptal</Button>
+          <Button size="sm" onClick={() => onSave(form)}>Kaydet</Button>
+        </div>
       </div>
     </div>
   );
