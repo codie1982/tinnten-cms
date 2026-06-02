@@ -15,6 +15,9 @@ import {
   Loader2,
   CheckCircle2,
   ChevronDown,
+  AlertTriangle,
+  Share2,
+  Radio,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -45,6 +48,7 @@ import {
   useGetNewsListQuery,
   useGetCategoryTreeQuery,
   useGenerateNewsMutation,
+  useGetNewsJobQuery,
 } from '@/redux/services';
 import { cn } from '@/lib/utils';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
@@ -66,6 +70,123 @@ function flattenTree(nodes, acc = []) {
     if (n.children?.length) flattenTree(n.children, acc);
   }
   return acc;
+}
+
+/* ─── Canlı üretim takip paneli (polling) ─── */
+const JOB_STATUS_META = {
+  running: { label: 'Çalışıyor', variant: 'warning' },
+  done: { label: 'Tamamlandı', variant: 'success' },
+  failed: { label: 'Hata', variant: 'destructive' },
+};
+const LOG_LEVEL_COLOR = {
+  info: 'text-muted-foreground',
+  success: 'text-emerald-600',
+  warn: 'text-amber-600',
+  error: 'text-destructive',
+};
+
+function JobLivePanel({ jobId, onClose }) {
+  const [terminal, setTerminal] = useState(false);
+  const { data: job } = useGetNewsJobQuery(jobId, {
+    pollingInterval: terminal ? 0 : 3000,
+    skip: !jobId,
+  });
+  const status = job?.status || 'running';
+  useEffect(() => {
+    if (status === 'done' || status === 'failed') setTerminal(true);
+  }, [status]);
+
+  const meta = JOB_STATUS_META[status] || JOB_STATUS_META.running;
+  const c = job?.counts || {};
+  const logs = job?.logs || [];
+
+  const fmtTime = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
+
+  return (
+    <div className="space-y-4 py-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {status === 'running'
+            ? <Loader2 className="size-5 animate-spin text-primary" />
+            : status === 'done'
+              ? <CheckCircle2 className="size-5 text-emerald-600" />
+              : <AlertTriangle className="size-5 text-destructive" />}
+          <span className="font-medium text-foreground">
+            {status === 'running' ? 'Üretim sürüyor…' : status === 'done' ? 'Üretim tamamlandı' : 'Üretim hata ile bitti'}
+          </span>
+        </div>
+        <Badge variant={meta.variant} dot={status === 'running'}>{meta.label}</Badge>
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 text-center">
+        {[
+          { label: 'Makale', value: c.articles ?? 0 },
+          { label: 'Yayında', value: c.published ?? 0 },
+          { label: 'Taslak', value: c.drafts ?? 0 },
+          { label: 'Atlandı', value: c.skipped ?? 0 },
+        ].map((s) => (
+          <div key={s.label} className="rounded-lg border border-border p-2">
+            <p className="text-lg font-bold text-foreground">{s.value}</p>
+            <p className="text-[11px] text-muted-foreground">{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-center gap-2 rounded-lg border border-border p-2.5">
+          <Share2 className="size-4 text-violet-600" />
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Sosyal Medya</p>
+            <p className="truncate text-sm font-medium text-foreground">
+              {job?.social?.queued ? `${job.social.queued} gönderi (${(job.social.platforms || []).join(', ')})` : 'Yok'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-border p-2.5">
+          <Radio className={cn('size-4', job?.indexNow?.ok ? 'text-emerald-600' : job?.indexNow?.called ? 'text-amber-600' : 'text-muted-foreground')} />
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">IndexNow</p>
+            <p className="truncate text-sm font-medium text-foreground">
+              {job?.indexNow?.called ? `${job.indexNow.submitted} URL${job.indexNow.ok ? ' ✓' : ' ⚠'}` : 'Çağrılmadı'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {job?.error && (
+        <Alert variant="destructive">
+          <AlertTitle>Hata</AlertTitle>
+          <AlertDescription className="break-words">{job.error}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="rounded-lg border border-border bg-muted/30">
+        <div className="border-b border-border px-3 py-1.5 text-xs font-medium text-muted-foreground">Canlı Log</div>
+        <div className="max-h-48 overflow-y-auto p-2 font-mono text-[11px] leading-relaxed">
+          {logs.length === 0 ? (
+            <p className="px-1 py-3 text-center text-muted-foreground">Henüz log yok…</p>
+          ) : (
+            logs.slice(-60).map((l, i) => (
+              <div key={i} className="flex gap-2 px-1 py-0.5">
+                <span className="shrink-0 text-muted-foreground/60">{fmtTime(l.ts)}</span>
+                <span className={cn('break-words', LOG_LEVEL_COLOR[l.level] || 'text-muted-foreground')}>{l.message}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button variant={terminal ? 'default' : 'outline'} onClick={onClose}>
+          {terminal ? 'Kapat' : 'Arka planda devam etsin'}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /* ─── AI Generate Modal ─── */
@@ -95,6 +216,7 @@ function AIGenerateModal({ onClose }) {
   const [phase, setPhase] = useState('form'); // form | loading | done
   const [mode, setMode] = useState('topic'); // topic | general
   const [errorMsg, setErrorMsg] = useState('');
+  const [jobId, setJobId] = useState(null);
   const [form, setForm] = useState({
     topic: '',
     direction: '',
@@ -165,6 +287,7 @@ function AIGenerateModal({ onClose }) {
         setErrorMsg(e?.data?.message || e?.normalizedMessage || 'Üretim başlatılamadı.');
         return null;
       });
+    setJobId(res?.jobId || null);
     setPhase(res ? 'done' : 'form');
   }
 
@@ -343,18 +466,20 @@ function AIGenerateModal({ onClose }) {
           )}
 
           {phase === 'done' && (
-            <div className="flex flex-col items-center gap-4 py-8">
-              <div className="flex size-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
-                <CheckCircle2 className="size-7" />
-              </div>
-              <div className="space-y-1 text-center">
-                <p className="font-medium">Haber üretimi başlatıldı!</p>
-                <p className="text-sm text-muted-foreground">
-                  Üretim arka planda sürüyor; birkaç dakika içinde listede taslak olarak görünecek.
-                </p>
-              </div>
-              <Button onClick={onClose}>Listeye Dön</Button>
-            </div>
+            jobId
+              ? <JobLivePanel jobId={jobId} onClose={onClose} />
+              : (
+                <div className="flex flex-col items-center gap-4 py-8">
+                  <div className="flex size-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
+                    <CheckCircle2 className="size-7" />
+                  </div>
+                  <div className="space-y-1 text-center">
+                    <p className="font-medium">Haber üretimi başlatıldı!</p>
+                    <p className="text-sm text-muted-foreground">Üretim arka planda sürüyor; birkaç dakika içinde listede görünecek.</p>
+                  </div>
+                  <Button onClick={onClose}>Listeye Dön</Button>
+                </div>
+              )
           )}
         </CardContent>
       </Card>

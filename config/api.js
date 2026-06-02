@@ -91,6 +91,8 @@ export const ENDPOINTS = {
     publish: (id) => `/news-content/${id}/publish`,
     unpublish: (id) => `/news-content/${id}/unpublish`,
     generate: '/news-content/generate',
+    jobs: '/news-content/generate/jobs',
+    job: (id) => `/news-content/generate/jobs/${id}`,
     aiImage: (id) => `/news-content/${id}/ai-image`,
     images: (id) => `/news-content/${id}/images`,
     cover: (id) => `/news-content/${id}/cover`,

@@ -71,7 +71,18 @@ export const newsApi = baseApi.injectEndpoints({
     /* ─── AI ile içerik üret (async, 202) ─── */
     generateNews: build.mutation({
       query: (body) => ({ url: ENDPOINTS.news.generate, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res, // { status, mode, pid, jobId }
       invalidatesTags: [{ type: 'News', id: 'LIST' }],
+    }),
+
+    /* ─── Üretim işleri (canlı takip) ─── */
+    getNewsJobs: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.news.jobs, params }),
+      transformResponse: (res) => (res?.data ?? res)?.items ?? [],
+    }),
+    getNewsJob: build.query({
+      query: (id) => ENDPOINTS.news.job(id),
+      transformResponse: (res) => res?.data ?? res, // { status, counts, social, indexNow, logs, ... }
     }),
 
     /* ─── Sosyal medya paylaşımları ─── */
@@ -101,6 +112,8 @@ export const {
   usePublishNewsMutation,
   useUnpublishNewsMutation,
   useGenerateNewsMutation,
+  useGetNewsJobsQuery,
+  useGetNewsJobQuery,
   useGetSocialPostsQuery,
   useCreateSocialPostMutation,
 } = newsApi;
