@@ -139,6 +139,12 @@ export const ENDPOINTS = {
   dashboard: {
     stats: '/cms/dashboard/stats',
   },
+  faq: {
+    cmsList: '/faq/cms',
+    create: '/faq/cms',
+    update: (id) => `/faq/cms/${id}`,
+    remove: (id) => `/faq/cms/${id}`,
+  },
   companies: {
     list: '/company/cms/list',
     detail: (id) => `/company/cms/${id}`,

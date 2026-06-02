@@ -22,3 +22,4 @@ export * from './legalApi';
 export * from './settingsApi';
 export * from './translationApi';
 export * from './dashboardApi';
+export * from './faqApi';
