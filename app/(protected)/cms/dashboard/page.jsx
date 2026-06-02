@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import {
-  Users, Bot, FileText, Building2, Workflow, CreditCard,
-  Store, Wrench, Loader2,
+  Users, Bot, FileText, Building2, CreditCard,
+  Store, Wrench, Loader2, ShieldCheck, Newspaper, Package,
 } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { RoleGuard } from '@/components/auth/role-guard';
@@ -40,11 +40,11 @@ function timeAgo(input) {
   return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-/* ─── statik hızlı aksiyonlar ─── */
+/* ─── statik hızlı aksiyonlar (gerçek admin sayfalarına yönlenir) ─── */
 const quickActions = [
-  { title: 'Yeni Asistan Oluştur', desc: 'AI asistan konfigüre et ve yayına al', icon: Bot, href: '/cms/assistants', tint: 'bg-violet-500/10 text-violet-600' },
-  { title: 'İçerik Yayınla', desc: 'Yeni içerik, SSS veya akademi makalesi ekle', icon: FileText, href: '/cms/content', tint: 'bg-amber-500/10 text-amber-600' },
-  { title: 'İş Akışı Oluştur', desc: 'Otomasyon senaryosu ve workflow tanımla', icon: Workflow, href: '/cms/workflows', tint: 'bg-blue-500/10 text-blue-600' },
+  { title: 'Firma Onayları', desc: 'Satıcı başvurularını ve KYC evraklarını incele', icon: ShieldCheck, href: '/cms/company-approvals/applications', tint: 'bg-emerald-500/10 text-emerald-600' },
+  { title: 'Yeni Haber Ekle', desc: 'Keşfet akışı için içerik oluştur ve yayınla', icon: Newspaper, href: '/cms/content/news/new', tint: 'bg-amber-500/10 text-amber-600' },
+  { title: 'Paket Yönetimi', desc: 'Abonelik paketlerini ve limitleri düzenle', icon: Package, href: '/cms/settings/packages', tint: 'bg-indigo-500/10 text-indigo-600' },
 ];
 
 const COMPANY_STATUS_META = [
