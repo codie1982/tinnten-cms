@@ -137,8 +137,8 @@ export const ENDPOINTS = {
     translate: (slug) => `/docs/cms/${slug}/translate`,
   },
   companies: {
-    list: '/companies',
-    detail: (id) => `/companies/${id}`,
+    list: '/company/cms/list',
+    detail: (id) => `/company/cms/${id}`,
     update: (id) => `/companies/${id}`,
     approve: (id) => `/companies/${id}/approve`,
     reject: (id) => `/companies/${id}/reject`,

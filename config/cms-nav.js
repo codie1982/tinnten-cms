@@ -6,7 +6,6 @@ import {
   Mail,
   FileSignature,
   Building2,
-  ShieldCheck,
   Users,
   Settings,
   CreditCard,
@@ -93,14 +92,9 @@ export const CMS_NAV = [
   {
     title: 'Firmalar',
     icon: Building2,
-    path: '/cms/companies/list',
-    roles: [CMS_ROLES.ADMIN],
-  },
-  {
-    title: 'Firma Onayları',
-    icon: ShieldCheck,
     roles: [CMS_ROLES.ADMIN],
     children: [
+      { title: 'Tüm Firmalar', path: '/cms/companies/list', roles: [CMS_ROLES.ADMIN] },
       { title: 'Satıcı Başvuruları', path: '/cms/company-approvals/applications', roles: [CMS_ROLES.ADMIN] },
       { title: 'KYC / Evrak Kontrolü', path: '/cms/company-approvals/kyc', roles: [CMS_ROLES.ADMIN] },
     ],
