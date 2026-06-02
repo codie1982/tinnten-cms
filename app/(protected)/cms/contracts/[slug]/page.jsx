@@ -1,10 +1,13 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { ChevronDown, ChevronRight, FileText, Users, Save, Globe, Plus, Loader2, Lock, Clock } from 'lucide-react';
+import {
+  ChevronDown, ChevronRight, Check, FileText, Users,
+  Save, Globe, Plus, Loader2, Lock, Clock,
+} from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/layout/page-shell';
@@ -27,12 +30,17 @@ import {
   useTranslateMutation,
 } from '@/redux/services';
 
+/* ─── Sabitler ─── */
+const ALL_LOCALES = ['tr', 'en', 'de', 'ar', 'el', 'es', 'fr', 'it', 'ru'];
 const LOCALE_LABELS = {
-  tr: 'Türkçe', en: 'English', de: 'Deutsch',
-  ar: 'العربية', el: 'Ελληνικά', es: 'Español',
-  fr: 'Français', it: 'Italiano', ru: 'Русский',
+  tr: 'TR', en: 'EN', de: 'DE', ar: 'AR',
+  el: 'EL', es: 'ES', fr: 'FR', it: 'IT', ru: 'RU',
 };
-
+const LOCALE_FULL = {
+  tr: 'Türkçe', en: 'English', de: 'Deutsch', ar: 'العربية',
+  el: 'Ελληνικά', es: 'Español', fr: 'Français', it: 'Italiano', ru: 'Русский',
+};
+const EMPTY_LOCALE_FORM = { title: '', summary: '', content: '' };
 const SECTIONS = [
   { key: 'icerik', label: 'İçerik', icon: FileText },
   { key: 'onaylayanlar', label: 'Onaylayanlar', icon: Users },
@@ -50,6 +58,38 @@ function formatTrDateTime(input) {
   return `${d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })} · ${d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+/* ─── Dil sekmeleri bileşeni ─── */
+function LocaleTabs({ selectedLocale, onSelect, localeForms, translating }) {
+  return (
+    <div className="flex flex-wrap gap-1 pb-1 border-b border-border mb-4">
+      {ALL_LOCALES.map((locale) => {
+        const hasContent = !!(localeForms[locale]?.title || localeForms[locale]?.content);
+        const isActive = selectedLocale === locale;
+        return (
+          <button
+            key={locale}
+            type="button"
+            disabled={translating}
+            onClick={() => onSelect(locale)}
+            className={cn(
+              'relative flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+              isActive
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+            )}
+          >
+            {LOCALE_LABELS[locale]}
+            {hasContent && !isActive && (
+              <span className="absolute -top-0.5 -right-0.5 flex size-2 rounded-full bg-green-500" />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Ana sayfa ─── */
 export default function ContractDetailPage({ params }) {
   const { slug } = use(params);
   const isNew = slug === 'new';
@@ -57,103 +97,127 @@ export default function ContractDetailPage({ params }) {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
-  const { data, isLoading, error } = useGetAgreementQuery({ slug, locale: 'tr' }, { skip: isNew || !authorized });
+  /* API */
+  const { data, isLoading, error } = useGetAgreementQuery(
+    { slug, locale: 'tr' },
+    { skip: isNew || !authorized },
+  );
   const [saveDraft, { isLoading: saving }] = useSaveAgreementDraftMutation();
   const [publishAgreement, { isLoading: publishing }] = usePublishAgreementMutation();
   const [translate, { isLoading: translating }] = useTranslateMutation();
 
+  /* UI state */
   const [section, setSection] = useState('icerik');
+  const [selectedLocale, setSelectedLocale] = useState('tr');
   const [selectedId, setSelectedId] = useState(isNew ? 'NEW' : null);
-  const [form, setForm] = useState({ slug: '', title: '', version: '1.0.0', summary: '', content: '' });
+
+  /* Dil başına form: { tr: {title, summary, content}, en: {...}, ... } */
+  const [localeForms, setLocaleForms] = useState(
+    Object.fromEntries(ALL_LOCALES.map((l) => [l, { ...EMPTY_LOCALE_FORM }])),
+  );
+  /* Versiyon ve slug tüm diller için ortaktır */
+  const [sharedFields, setSharedFields] = useState({ slug: '', version: '1.0.0' });
   const [notifyPrevious, setNotifyPrevious] = useState(false);
   const [notice, setNotice] = useState('');
-  const [translations, setTranslations] = useState(null);
-  const [transOpen, setTransOpen] = useState(false);
 
   const versions = data?.versions ?? [];
   const selected = versions.find((v) => v.id === selectedId) || null;
   const isDraftMode = isNew || selectedId === 'NEW' || selected?.status === 'draft';
   const isPublicSelected = !isNew && selected?.status === 'public';
 
-  // İlk yüklemede en son versiyonu seç
+  /* İlk yüklemede en son versiyonu seç */
   useEffect(() => {
     if (isNew || !versions.length || selectedId !== null) return;
     setSelectedId(versions[0].id);
   }, [versions, isNew, selectedId]);
 
-  // Seçili versiyonu forma yükle
+  /* Seçili TR versiyonunu TR form state'e yükle */
   useEffect(() => {
     if (isNew || selectedId === 'NEW' || !selectedId) return;
     const v = versions.find((x) => x.id === selectedId);
-    if (v) setForm({ slug, title: v.title, version: v.version, summary: v.summary, content: v.content });
+    if (!v) return;
+    setSharedFields({ slug, version: v.version });
+    setLocaleForms((prev) => ({
+      ...prev,
+      tr: { title: v.title ?? '', summary: v.summary ?? '', content: v.content ?? '' },
+    }));
   }, [selectedId, versions, isNew, slug]);
 
+  /* Yeni versiyon: mevcut TR içeriğini şablonla */
   function startNewVersion() {
     const base = selected || versions[0];
     setNotice('');
     setSelectedId('NEW');
-    setForm({
-      slug,
-      title: base?.title || data?.title || '',
-      version: bumpVersion(base?.version),
-      summary: base?.summary || '',
-      content: base?.content || '',
-    });
+    setSharedFields((s) => ({ ...s, version: bumpVersion(base?.version) }));
+    setLocaleForms((prev) => ({
+      ...prev,
+      tr: {
+        title: base?.title || data?.title || '',
+        summary: base?.summary || '',
+        content: base?.content || '',
+      },
+    }));
   }
 
-  function setField(k, v) {
-    setForm((f) => ({ ...f, [k]: v }));
-    setTranslations(null);
-  }
+  const setLocaleField = useCallback((k, v) => {
+    setLocaleForms((prev) => ({
+      ...prev,
+      [selectedLocale]: { ...(prev[selectedLocale] ?? EMPTY_LOCALE_FORM), [k]: v },
+    }));
+  }, [selectedLocale]);
 
+  /* Tüm dillere otomatik çeviri */
   async function handleTranslate() {
-    const hasText = form.title.trim() || form.summary.trim() || form.content.trim();
-    if (!hasText) return;
+    const src = localeForms.tr;
+    if (!src.title && !src.summary && !src.content) {
+      setNotice('Çeviri için önce Türkçe içeriği doldurun.');
+      return;
+    }
+    setNotice('');
     try {
       const [titleRes, summaryRes, contentRes] = await Promise.all([
-        form.title.trim()
-          ? translate({ text: form.title.trim(), context: 'legal agreement title' }).unwrap()
+        src.title
+          ? translate({ text: src.title, context: 'legal agreement title' }).unwrap()
           : Promise.resolve({ translations: {} }),
-        form.summary.trim()
-          ? translate({ text: form.summary.trim(), context: 'legal agreement summary' }).unwrap()
+        src.summary
+          ? translate({ text: src.summary, context: 'legal agreement summary' }).unwrap()
           : Promise.resolve({ translations: {} }),
-        form.content.trim()
-          ? translate({ text: form.content.trim(), context: 'legal agreement content, preserve HTML/Markdown formatting' }).unwrap()
+        src.content
+          ? translate({ text: src.content, context: 'legal agreement content, preserve HTML/Markdown formatting' }).unwrap()
           : Promise.resolve({ translations: {} }),
       ]);
-      const locales = Object.keys({
-        ...titleRes.translations,
-        ...summaryRes.translations,
-        ...contentRes.translations,
+      setLocaleForms((prev) => {
+        const next = { ...prev };
+        for (const l of ALL_LOCALES.filter((x) => x !== 'tr')) {
+          next[l] = {
+            title: titleRes.translations?.[l] ?? prev[l]?.title ?? '',
+            summary: summaryRes.translations?.[l] ?? prev[l]?.summary ?? '',
+            content: contentRes.translations?.[l] ?? prev[l]?.content ?? '',
+          };
+        }
+        return next;
       });
-      const merged = {};
-      for (const l of locales) {
-        merged[l] = {
-          title: titleRes.translations?.[l] ?? '',
-          summary: summaryRes.translations?.[l] ?? '',
-          content: contentRes.translations?.[l] ?? '',
-        };
-      }
-      setTranslations(merged);
-      setTransOpen(true);
+      setNotice('Çeviri tamamlandı. Dil sekmelerini inceleyebilirsiniz.');
     } catch {
       setNotice('Çeviri sırasında hata oluştu.');
     }
   }
 
-  async function persistDraft() {
-    const finalSlug = (isNew ? form.slug : slug).trim().toLowerCase();
-    if (!finalSlug || !form.title.trim() || !form.content.trim() || !form.summary.trim()) {
-      setNotice('Slug, başlık, özet ve içerik zorunludur.');
+  /* Taslak kaydetme — seçili dil için */
+  async function persistDraft(locale) {
+    const lf = localeForms[locale] ?? EMPTY_LOCALE_FORM;
+    const finalSlug = (isNew ? sharedFields.slug : slug).trim().toLowerCase();
+    if (!finalSlug || !lf.title?.trim() || !lf.content?.trim() || !lf.summary?.trim()) {
+      setNotice(`Slug, başlık, özet ve içerik zorunludur. (${LOCALE_FULL[locale]})`);
       return null;
     }
     const r = await saveDraft({
       slug: finalSlug,
-      title: form.title,
-      version: form.version,
-      locale: 'tr',
-      content: form.content,
-      summary: form.summary,
+      title: lf.title,
+      version: sharedFields.version,
+      locale,
+      content: lf.content,
+      summary: lf.summary,
     }).unwrap().catch((e) => {
       setNotice(e?.data?.message || 'Kaydedilemedi.');
       return null;
@@ -161,31 +225,48 @@ export default function ContractDetailPage({ params }) {
     return r ? { r, finalSlug } : null;
   }
 
+  /* Seçili dili kaydet */
   async function handleSave() {
     setNotice('');
-    const out = await persistDraft();
+    const out = await persistDraft(selectedLocale);
     if (!out) return;
-    if (isNew) {
-      router.push(`/cms/contracts/${out.finalSlug}`);
-      return;
-    }
+    if (isNew) { router.push(`/cms/contracts/${out.finalSlug}`); return; }
     const id = out.r?.agreement?._id ?? out.r?.agreement?.id;
     if (id) setSelectedId(id);
-    setNotice('Taslak kaydedildi.');
+    setNotice(`Taslak kaydedildi. (${LOCALE_FULL[selectedLocale]})`);
+  }
+
+  /* Tüm dolu dilleri toplu kaydet */
+  async function handleSaveAll() {
+    setNotice('');
+    const filledLocales = ALL_LOCALES.filter((l) => {
+      const lf = localeForms[l];
+      return lf?.title?.trim() && lf?.content?.trim() && lf?.summary?.trim();
+    });
+    if (!filledLocales.length) { setNotice('Kaydetmek için en az bir dilde içerik doldurulmalı.'); return; }
+    let savedSlug = isNew ? sharedFields.slug.trim().toLowerCase() : slug;
+    for (const l of filledLocales) {
+      const out = await persistDraft(l);
+      if (!out) return;
+      if (isNew && l === filledLocales[0]) {
+        savedSlug = out.finalSlug;
+        router.push(`/cms/contracts/${savedSlug}`);
+        return;
+      }
+      const id = out.r?.agreement?._id ?? out.r?.agreement?.id;
+      if (id) setSelectedId(id);
+    }
+    setNotice(`${filledLocales.length} dil kaydedildi: ${filledLocales.map((l) => LOCALE_LABELS[l]).join(', ')}`);
   }
 
   async function handlePublish() {
     setNotice('');
     let id = selectedId && selectedId !== 'NEW' ? selectedId : null;
     if (!id) {
-      const out = await persistDraft();
+      const out = await persistDraft(selectedLocale);
       if (!out) return;
       id = out.r?.agreement?._id ?? out.r?.agreement?.id;
-      if (isNew) {
-        // yeni slug — kaydettikten sonra detaya geç (yayını orada yapabilir)
-        router.push(`/cms/contracts/${out.finalSlug}`);
-        return;
-      }
+      if (isNew) { router.push(`/cms/contracts/${out.finalSlug}`); return; }
     }
     if (!id) return;
     const res = await publishAgreement({ id, slug, notifyPrevious }).unwrap().catch((e) => {
@@ -198,6 +279,7 @@ export default function ContractDetailPage({ params }) {
     }
   }
 
+  /* Loading / error states */
   if (!isNew && isLoading) {
     return (
       <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
@@ -224,6 +306,8 @@ export default function ContractDetailPage({ params }) {
   }
 
   const title = isNew ? 'Yeni Sözleşme' : data?.title || slug;
+  const currentForm = localeForms[selectedLocale] ?? EMPTY_LOCALE_FORM;
+  const filledLocaleCount = ALL_LOCALES.filter((l) => !!(localeForms[l]?.title || localeForms[l]?.content)).length;
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
@@ -278,7 +362,7 @@ export default function ContractDetailPage({ params }) {
                   <CardContent className="flex flex-wrap gap-1.5 p-4">
                     {selectedId === 'NEW' && (
                       <span className="rounded-full border border-primary bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                        Yeni (v{form.version})
+                        Yeni (v{sharedFields.version})
                       </span>
                     )}
                     {versions.map((v) => (
@@ -302,7 +386,12 @@ export default function ContractDetailPage({ params }) {
               {/* Editör */}
               <Card>
                 <CardHeader>
-                  <CardTitle>{isDraftMode ? 'İçerik Düzenle' : 'İçerik (Yayında)'}</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    {isDraftMode ? 'İçerik Düzenle' : 'İçerik (Yayında)'}
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {filledLocaleCount}/{ALL_LOCALES.length} dil dolu
+                    </span>
+                  </CardTitle>
                   {isPublicSelected && (
                     <CardToolbar><Badge variant="success">v{selected?.version} yayında</Badge></CardToolbar>
                   )}
@@ -313,47 +402,108 @@ export default function ContractDetailPage({ params }) {
                       <Lock className="size-3.5" /> Yayınlanmış versiyon düzenlenemez. Değişiklik için "Yeni Versiyon" oluşturun.
                     </div>
                   )}
+
+                  {/* Slug + Versiyon (ortak alanlar) */}
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     {isNew && (
                       <div>
                         <label className="mb-1 block text-xs text-muted-foreground">Slug</label>
-                        <Input value={form.slug} onChange={(e) => setField('slug', e.target.value)} placeholder="kullanici-sozlesmesi" className="font-mono text-xs" />
+                        <Input
+                          value={sharedFields.slug}
+                          onChange={(e) => setSharedFields((s) => ({ ...s, slug: e.target.value }))}
+                          placeholder="kullanici-sozlesmesi"
+                          className="font-mono text-xs"
+                        />
                       </div>
                     )}
-                    <div className={isNew ? '' : 'sm:col-span-2'}>
-                      <label className="mb-1 block text-xs text-muted-foreground">Başlık</label>
-                      <Input value={form.title} onChange={(e) => setField('title', e.target.value)} readOnly={isPublicSelected} placeholder="Sözleşme başlığı" />
-                    </div>
                     <div>
                       <label className="mb-1 block text-xs text-muted-foreground">Versiyon</label>
-                      <Input value={form.version} onChange={(e) => setField('version', e.target.value)} readOnly={isPublicSelected} placeholder="1.0.0" className="font-mono text-xs" />
+                      <Input
+                        value={sharedFields.version}
+                        onChange={(e) => setSharedFields((s) => ({ ...s, version: e.target.value }))}
+                        readOnly={isPublicSelected}
+                        placeholder="1.0.0"
+                        className="font-mono text-xs"
+                      />
                     </div>
                   </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Özet</label>
-                    <Input value={form.summary} onChange={(e) => setField('summary', e.target.value)} readOnly={isPublicSelected} placeholder="Kısa özet (maks. 500)" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">İçerik</label>
-                    <textarea
-                      value={form.content}
-                      onChange={(e) => setField('content', e.target.value)}
-                      readOnly={isPublicSelected}
-                      rows={16}
-                      placeholder="Sözleşme metni (HTML/Markdown destekli)…"
-                      className={cn(
-                        'w-full rounded-lg border border-input bg-background p-3 font-mono text-sm leading-relaxed outline-none focus:ring-2 focus:ring-ring/30',
-                        isPublicSelected && 'opacity-70',
+
+                  {/* Dil Sekmeleri */}
+                  <LocaleTabs
+                    selectedLocale={selectedLocale}
+                    onSelect={setSelectedLocale}
+                    localeForms={localeForms}
+                    translating={translating}
+                  />
+
+                  {/* Seçili dil alanları */}
+                  <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-4">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {LOCALE_FULL[selectedLocale]}
+                      {selectedLocale !== 'tr' && !currentForm.title && !currentForm.content && (
+                        <span className="ml-2 text-amber-500">· Henüz içerik yok — "Otomatik Çevir" ile doldurun</span>
                       )}
-                    />
+                    </p>
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Başlık</label>
+                      <Input
+                        value={currentForm.title}
+                        onChange={(e) => setLocaleField('title', e.target.value)}
+                        readOnly={isPublicSelected}
+                        placeholder="Sözleşme başlığı"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Özet</label>
+                      <Input
+                        value={currentForm.summary}
+                        onChange={(e) => setLocaleField('summary', e.target.value)}
+                        readOnly={isPublicSelected}
+                        placeholder="Kısa özet (maks. 500)"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">İçerik</label>
+                      <textarea
+                        value={currentForm.content}
+                        onChange={(e) => setLocaleField('content', e.target.value)}
+                        readOnly={isPublicSelected}
+                        rows={16}
+                        placeholder="Sözleşme metni (HTML/Markdown destekli)…"
+                        className={cn(
+                          'w-full rounded-lg border border-input bg-background p-3 font-mono text-sm leading-relaxed outline-none focus:ring-2 focus:ring-ring/30 resize-none',
+                          isPublicSelected && 'opacity-70',
+                        )}
+                      />
+                    </div>
                   </div>
 
+                  {/* Aksiyonlar */}
                   {isPublicSelected ? (
                     <Button onClick={startNewVersion}>
                       <Plus className="size-4" /> Yeni Versiyon Oluştur
                     </Button>
                   ) : (
                     <div className="space-y-3 border-t border-border pt-4">
+                      {/* Çeviri butonu */}
+                      <div className="flex items-center justify-between">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleTranslate}
+                          disabled={translating || saving || publishing || !localeForms.tr?.title}
+                          className="gap-1.5"
+                        >
+                          {translating ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-3.5" />}
+                          {translating ? 'Çevriliyor…' : 'Türkçe\'den Otomatik Çevir'}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          Türkçe içerik baz alınır, 8 dil doldurulur
+                        </span>
+                      </div>
+
+                      {/* Kaydet / yayınla */}
                       <label className="flex items-center gap-2 text-sm text-foreground">
                         <input
                           type="checkbox"
@@ -363,75 +513,20 @@ export default function ContractDetailPage({ params }) {
                         />
                         Yayınlarken önceki onaylayanlara e-posta gönder
                       </label>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleTranslate}
-                          disabled={translating || saving || publishing || (!form.title.trim() && !form.summary.trim() && !form.content.trim())}
-                          className="gap-1.5"
-                        >
-                          {translating ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
-                          {translating ? 'Çevriliyor…' : translations ? 'Yeniden Çevir' : 'Otomatik Çevir'}
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" size="sm" onClick={handleSave} disabled={saving || publishing || translating}>
+                          {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                          {LOCALE_LABELS[selectedLocale]} Kaydet
                         </Button>
-                        <div className="flex gap-2">
-                          <Button variant="outline" onClick={handleSave} disabled={saving || publishing || translating}>
-                            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                            Taslağı Kaydet
-                          </Button>
-                          <Button onClick={handlePublish} disabled={saving || publishing || translating}>
-                            {publishing ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
-                            Yayınla
-                          </Button>
-                        </div>
+                        <Button variant="outline" size="sm" onClick={handleSaveAll} disabled={saving || publishing || translating}>
+                          {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                          Tümünü Kaydet ({filledLocaleCount})
+                        </Button>
+                        <Button size="sm" onClick={handlePublish} disabled={saving || publishing || translating}>
+                          {publishing ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
+                          Yayınla
+                        </Button>
                       </div>
-
-                      {/* Çeviri sonuçları */}
-                      {translations && (
-                        <div className="rounded-lg border border-border bg-muted/30">
-                          <button
-                            type="button"
-                            onClick={() => setTransOpen((v) => !v)}
-                            className="flex w-full items-center justify-between px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted/40 transition-colors"
-                          >
-                            <span className="flex items-center gap-2">
-                              <Globe className="size-3.5 text-primary" />
-                              Çeviri Sonuçları
-                              <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                                {Object.keys(translations).length} dil
-                              </span>
-                            </span>
-                            {transOpen
-                              ? <ChevronDown className="size-4 text-muted-foreground" />
-                              : <ChevronRight className="size-4 text-muted-foreground" />}
-                          </button>
-                          {transOpen && (
-                            <div className="divide-y border-t max-h-[420px] overflow-y-auto">
-                              {Object.entries(translations).map(([locale, t]) => (
-                                <div key={locale} className="px-4 py-3 space-y-2">
-                                  <p className="text-xs font-bold text-primary">
-                                    {LOCALE_LABELS[locale] ?? locale.toUpperCase()}
-                                  </p>
-                                  {t.title && (
-                                    <p className="text-sm font-semibold text-foreground">{t.title}</p>
-                                  )}
-                                  {t.summary && (
-                                    <p className="text-xs text-muted-foreground">{t.summary}</p>
-                                  )}
-                                  {t.content && (
-                                    <details className="text-xs text-muted-foreground">
-                                      <summary className="cursor-pointer text-primary hover:underline">İçeriği görüntüle</summary>
-                                      <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-2 text-[11px] leading-relaxed">
-                                        {t.content}
-                                      </pre>
-                                    </details>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   )}
                 </CardContent>
@@ -446,15 +541,13 @@ export default function ContractDetailPage({ params }) {
   );
 }
 
-/* ─── Onaylayanlar (versiyon bazında) ─── */
+/* ─── Onaylayanlar ─── */
 function AcceptancesSection({ slug, isNew, authorized }) {
   const { data, isLoading, error } = useGetAcceptancesQuery({ slug }, { skip: isNew || !authorized });
   const versions = data?.versions ?? [];
 
   if (isNew) {
-    return (
-      <SimpleEmptyCard title="Onaylayanlar" message="Sözleşme kaydedildikten sonra onaylayanlar burada görünür." />
-    );
+    return <SimpleEmptyCard title="Onaylayanlar" message="Sözleşme kaydedildikten sonra onaylayanlar burada görünür." />;
   }
 
   return (
@@ -493,7 +586,7 @@ function AcceptancesSection({ slug, isNew, authorized }) {
                   <TableBody>
                     {vg.acceptors.map((a) => (
                       <TableRow key={`${vg.version}-${a.userId}-${a.acceptedAt}`}>
-                        <TableCell className="text-sm text-foreground">{a.name}</TableCell>
+                        <TableCell className="text-sm">{a.name}</TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                           <span className="inline-flex items-center gap-1"><Clock className="size-3" />{formatTrDateTime(a.acceptedAt)}</span>
                         </TableCell>
