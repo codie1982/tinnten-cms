@@ -1,11 +1,12 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
+  SlidersHorizontal, Save, RotateCcw, Loader2, AlertTriangle, ArrowRight,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -17,12 +18,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
-import { useGetCompanyQuery } from '@/redux/services';
+import { useGetCompanyQuery, useUpdateCompanyLimitsMutation } from '@/redux/services';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
 
 /* ─── sol alt-menü ─── */
@@ -34,8 +36,33 @@ const SECTIONS = [
   { key: 'banka', label: 'Banka Hesapları', icon: Landmark },
   { key: 'calisanlar', label: 'Çalışanlar', icon: Users },
   { key: 'paketler', label: 'Hesap & Paketler', icon: Package },
-  { key: 'limit', label: 'Limit & Kullanım', icon: Gauge },
+  { key: 'limitler', label: 'Limitler', icon: SlidersHorizontal },
+  { key: 'kullanim', label: 'Kullanım', icon: Gauge },
 ];
+
+/** Flat key ("ai.images") + değer → nested obje ({ ai: { images: değer } }). */
+function keyToNested(key, value) {
+  const parts = key.split('.');
+  const root = {};
+  let cur = root;
+  parts.forEach((p, i) => {
+    if (i === parts.length - 1) cur[p] = value;
+    else { cur[p] = {}; cur = cur[p]; }
+  });
+  return root;
+}
+
+/** Birden çok nested objeyi yıkıcı olmadan birleştirir. */
+function mergeNested(target, source) {
+  for (const [k, v] of Object.entries(source)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      target[k] = mergeNested(target[k] || {}, v);
+    } else {
+      target[k] = v;
+    }
+  }
+  return target;
+}
 
 function formatTrDate(input) {
   if (!input) return '—';
@@ -83,6 +110,25 @@ export default function CmsCompanyDetailPage({ params }) {
   const [section, setSection] = useState('genel');
 
   const { data: company, isLoading, error } = useGetCompanyQuery(id, { skip: !authorized });
+  const [updateLimits, { isLoading: savingLimits }] = useUpdateCompanyLimitsMutation();
+
+  const metrics = company?.limitUsage?.metrics ?? [];
+  // Limit değerlerinin imzası — kaydedince (refetch) değişir → draft yeniden tohumlanır.
+  const limitsSig = metrics.map((m) => `${m.key}:${m.limit}`).join('|');
+
+  // Limit düzenleme state'i
+  const [limitDraft, setLimitDraft] = useState({}); // { [key]: number }
+  const [reviewing, setReviewing] = useState(false);
+  const [notice, setNotice] = useState(null); // { type, text }
+
+  useEffect(() => {
+    if (!metrics.length) return;
+    const seed = {};
+    for (const m of metrics) seed[m.key] = m.limit;
+    setLimitDraft(seed);
+    setReviewing(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?._id, limitsSig]);
 
   if (isLoading) {
     return (
@@ -120,7 +166,6 @@ export default function CmsCompanyDetailPage({ params }) {
   const employees = company.employees ?? [];
   const packages = company.account?.packages ?? [];
   const limitUsage = company.limitUsage ?? null;
-  const metrics = limitUsage?.metrics ?? [];
 
   const COUNT = {
     adresler: addresses.length,
@@ -129,7 +174,36 @@ export default function CmsCompanyDetailPage({ params }) {
     banka: banks.length,
     calisanlar: employees.length,
     paketler: packages.length,
-    limit: metrics.length,
+    limitler: metrics.length,
+    kullanim: metrics.length,
+  };
+
+  // Değişen limit metrikleri (kontrol/diff için)
+  const dirtyMetrics = metrics.filter(
+    (m) => Number(limitDraft[m.key] ?? m.limit) !== Number(m.limit),
+  );
+
+  const resetLimitDraft = () => {
+    const seed = {};
+    for (const m of metrics) seed[m.key] = m.limit;
+    setLimitDraft(seed);
+    setReviewing(false);
+    setNotice(null);
+  };
+
+  const handleSaveLimits = async () => {
+    const payload = {};
+    for (const m of metrics) {
+      const v = Number(limitDraft[m.key]);
+      if (Number.isFinite(v) && v >= 0) mergeNested(payload, keyToNested(m.key, v));
+    }
+    try {
+      await updateLimits({ id, limits: payload }).unwrap();
+      setNotice({ type: 'success', text: 'Limitler güncellendi.' });
+      setReviewing(false);
+    } catch (e) {
+      setNotice({ type: 'error', text: e?.data?.message || 'Limitler güncellenemedi.' });
+    }
   };
 
   return (
@@ -404,10 +478,10 @@ export default function CmsCompanyDetailPage({ params }) {
             </Card>
           )}
 
-          {section === 'limit' && (
+          {section === 'kullanim' && (
             <Card>
               <CardHeader>
-                <CardTitle>Limit & Kullanım</CardTitle>
+                <CardTitle>Kullanım</CardTitle>
                 <CardToolbar>
                   {limitUsage?.packageName
                     ? <Badge variant="primary">{limitUsage.packageName}</Badge>
@@ -416,7 +490,7 @@ export default function CmsCompanyDetailPage({ params }) {
               </CardHeader>
               <CardContent className="p-4">
                 {metrics.length === 0 ? (
-                  <EmptyCard icon={<Gauge className="size-5" />} message="Bu firmanın hesabına bağlı limit/kullanım verisi yok." />
+                  <EmptyCard icon={<Gauge className="size-5" />} message="Bu firmanın hesabına bağlı kullanım verisi yok." />
                 ) : (
                   <div className="space-y-3">
                     {metrics.map((m, i) => {
@@ -447,6 +521,115 @@ export default function CmsCompanyDetailPage({ params }) {
                       );
                     })}
                   </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {section === 'limitler' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Limitler</CardTitle>
+                <CardToolbar>
+                  {limitUsage?.packageName
+                    ? <Badge variant="primary">{limitUsage.packageName}</Badge>
+                    : <Badge variant="muted">Paket yok</Badge>}
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="space-y-4 p-4">
+                {metrics.length === 0 ? (
+                  <EmptyCard icon={<SlidersHorizontal className="size-5" />} message="Bu firmanın hesabına bağlı paket/limit yok." />
+                ) : (
+                  <>
+                    {notice && (
+                      <Alert variant={notice.type === 'error' ? 'destructive' : 'info'}>
+                        <AlertDescription>{notice.text}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <AlertTriangle className="size-3.5" />
+                      Değer <span className="font-mono">0</span> = sınırsız. Değişiklikler bu firmanın aktif paketine özel uygulanır.
+                    </p>
+
+                    {/* Düzenlenebilir limit alanları */}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {metrics.map((m) => {
+                        const val = limitDraft[m.key] ?? m.limit;
+                        const changed = Number(val) !== Number(m.limit);
+                        return (
+                          <div key={m.key} className={cn('rounded-lg border p-3', changed ? 'border-primary/50 bg-primary/5' : 'border-border')}>
+                            <label className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">{m.label}</span>
+                              <span className="font-mono">kullanım: {m.used}</span>
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={val}
+                              disabled={savingLimits}
+                              onChange={(e) => {
+                                setNotice(null);
+                                setReviewing(false);
+                                setLimitDraft((d) => ({ ...d, [m.key]: e.target.value === '' ? '' : Number(e.target.value) }));
+                              }}
+                              className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Kontrol (diff) paneli */}
+                    {reviewing && dirtyMetrics.length > 0 && (
+                      <div className="rounded-lg border border-primary/40 bg-primary/5 p-4">
+                        <p className="mb-2 text-sm font-semibold text-foreground">Değişiklikleri Onayla</p>
+                        <ul className="space-y-1.5">
+                          {dirtyMetrics.map((m) => {
+                            const next = Number(limitDraft[m.key]);
+                            return (
+                              <li key={m.key} className="flex items-center gap-2 text-sm">
+                                <span className="min-w-[140px] text-muted-foreground">{m.label}</span>
+                                <span className="font-mono text-muted-foreground">{m.unlimited ? '∞' : m.limit}</span>
+                                <ArrowRight className="size-3.5 text-primary" />
+                                <span className="font-mono font-semibold text-primary">{next === 0 ? '∞' : next}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        <div className="mt-3 flex gap-2">
+                          <Button size="sm" onClick={handleSaveLimits} disabled={savingLimits}>
+                            {savingLimits ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                            Güncelle
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setReviewing(false)} disabled={savingLimits}>
+                            Vazgeç
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Aksiyonlar */}
+                    {!reviewing && (
+                      <div className="flex items-center justify-between border-t border-border pt-4">
+                        <span className="text-xs text-muted-foreground">
+                          {dirtyMetrics.length > 0
+                            ? `${dirtyMetrics.length} değişiklik bekliyor`
+                            : 'Değişiklik yok'}
+                        </span>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="ghost" onClick={resetLimitDraft} disabled={dirtyMetrics.length === 0 || savingLimits}>
+                            <RotateCcw className="size-4" />
+                            Sıfırla
+                          </Button>
+                          <Button size="sm" onClick={() => setReviewing(true)} disabled={dirtyMetrics.length === 0 || savingLimits}>
+                            <SlidersHorizontal className="size-4" />
+                            Değişiklikleri Kontrol Et
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
