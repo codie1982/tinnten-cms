@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package,
-  Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink,
+  Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -34,6 +34,7 @@ const SECTIONS = [
   { key: 'banka', label: 'Banka Hesapları', icon: Landmark },
   { key: 'calisanlar', label: 'Çalışanlar', icon: Users },
   { key: 'paketler', label: 'Hesap & Paketler', icon: Package },
+  { key: 'limit', label: 'Limit & Kullanım', icon: Gauge },
 ];
 
 function formatTrDate(input) {
@@ -118,6 +119,8 @@ export default function CmsCompanyDetailPage({ params }) {
   const banks = company.bankAccounts ?? [];
   const employees = company.employees ?? [];
   const packages = company.account?.packages ?? [];
+  const limitUsage = company.limitUsage ?? null;
+  const metrics = limitUsage?.metrics ?? [];
 
   const COUNT = {
     adresler: addresses.length,
@@ -126,6 +129,7 @@ export default function CmsCompanyDetailPage({ params }) {
     banka: banks.length,
     calisanlar: employees.length,
     paketler: packages.length,
+    limit: metrics.length,
   };
 
   return (
@@ -391,6 +395,54 @@ export default function CmsCompanyDetailPage({ params }) {
                           {p.expireDate && (
                             <span className="font-mono text-xs text-muted-foreground">Bitiş: {formatTrDate(p.expireDate)}</span>
                           )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {section === 'limit' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Limit & Kullanım</CardTitle>
+                <CardToolbar>
+                  {limitUsage?.packageName
+                    ? <Badge variant="primary">{limitUsage.packageName}</Badge>
+                    : <Badge variant="muted">Paket yok</Badge>}
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="p-4">
+                {metrics.length === 0 ? (
+                  <EmptyCard icon={<Gauge className="size-5" />} message="Bu firmanın hesabına bağlı limit/kullanım verisi yok." />
+                ) : (
+                  <div className="space-y-3">
+                    {metrics.map((m, i) => {
+                      const pct = m.unlimited || m.limit === 0
+                        ? 0
+                        : Math.min(Math.round((m.used / m.limit) * 100), 100);
+                      const over = !m.unlimited && m.used > m.limit;
+                      return (
+                        <div key={i} className="space-y-1">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="font-medium text-foreground">{m.label}</span>
+                            <span className={cn('font-mono text-xs', over ? 'text-destructive' : 'text-muted-foreground')}>
+                              {m.used}{' / '}{m.unlimited ? '∞' : m.limit}
+                              {!m.unlimited && ` · %${pct}`}
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                            {m.unlimited ? (
+                              <div className="h-full w-full bg-gradient-to-r from-primary/30 to-primary/10" />
+                            ) : (
+                              <div
+                                className={cn('h-full rounded-full transition-all', over ? 'bg-destructive' : pct >= 80 ? 'bg-amber-500' : 'bg-primary')}
+                                style={{ width: `${Math.max(pct, 2)}%` }}
+                              />
+                            )}
+                          </div>
                         </div>
                       );
                     })}
