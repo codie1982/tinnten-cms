@@ -7,6 +7,7 @@ import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
   SlidersHorizontal, Save, RotateCcw, Loader2, AlertTriangle, ArrowRight,
+  Ban, ShieldCheck,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -29,6 +30,7 @@ import {
   useUpdateCompanyLimitsMutation,
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
+  useSetCompanyAdminActiveMutation,
 } from '@/redux/services';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
 
@@ -118,6 +120,7 @@ export default function CmsCompanyDetailPage({ params }) {
   const [updateLimits, { isLoading: savingLimits }] = useUpdateCompanyLimitsMutation();
   const [updateUsage, { isLoading: savingUsage }] = useUpdateCompanyUsageMutation();
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
+  const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
 
   const metrics = company?.limitUsage?.metrics ?? [];
   // Değerlerin imzası — kaydedince (refetch) değişir → draft'lar yeniden tohumlanır.
@@ -135,6 +138,11 @@ export default function CmsCompanyDetailPage({ params }) {
   const [usageReviewing, setUsageReviewing] = useState(false);
   const [usageNotice, setUsageNotice] = useState(null); // { type, text }
   const [confirmReset, setConfirmReset] = useState(false);
+
+  // Engelleme state'i
+  const [blockOpen, setBlockOpen] = useState(false); // gerekçe formu açık mı
+  const [blockReason, setBlockReason] = useState('');
+  const [blockNotice, setBlockNotice] = useState(null); // { type, text }
 
   useEffect(() => {
     if (!metrics.length) return;
@@ -272,6 +280,33 @@ export default function CmsCompanyDetailPage({ params }) {
     }
   };
 
+  // ─── Engelle / Engeli kaldır ───
+  const handleBlock = async () => {
+    if (!blockReason.trim()) {
+      setBlockNotice({ type: 'error', text: 'Engelleme için gerekçe zorunludur.' });
+      return;
+    }
+    try {
+      await setAdminActive({ id, active: false, reason: blockReason.trim() }).unwrap();
+      setBlockNotice({ type: 'success', text: 'Firma engellendi.' });
+      setBlockOpen(false);
+      setBlockReason('');
+    } catch (e) {
+      setBlockNotice({ type: 'error', text: e?.data?.message || 'Firma engellenemedi.' });
+    }
+  };
+
+  const handleUnblock = async () => {
+    try {
+      await setAdminActive({ id, active: true }).unwrap();
+      setBlockNotice({ type: 'success', text: 'Firma engeli kaldırıldı.' });
+    } catch (e) {
+      setBlockNotice({ type: 'error', text: e?.data?.message || 'Engel kaldırılamadı.' });
+    }
+  };
+
+  const isBlocked = company.adminActive === false;
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
       <PageHeader
@@ -322,6 +357,66 @@ export default function CmsCompanyDetailPage({ params }) {
 
         {/* Sağ içerik */}
         <div className="space-y-5">
+          {/* Engelleme kontrolü — her sekmede görünür */}
+          <Card className={cn(isBlocked && 'border-destructive/40')}>
+            <CardContent className="space-y-3 p-4">
+              {blockNotice && (
+                <Alert variant={blockNotice.type === 'error' ? 'destructive' : 'info'}>
+                  <AlertDescription>{blockNotice.text}</AlertDescription>
+                </Alert>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  {isBlocked ? <Ban className="size-5 text-destructive" /> : <ShieldCheck className="size-5 text-green-600" />}
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {isBlocked ? 'Firma engellendi' : 'Firma aktif'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {company.adminActiveReason || 'Standart Giriş'}
+                      {company.adminActiveAt ? ` · ${formatTrDate(company.adminActiveAt)}` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                {isBlocked ? (
+                  <Button size="sm" variant="outline" onClick={handleUnblock} disabled={savingAdminActive}>
+                    {savingAdminActive ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+                    Engeli Kaldır
+                  </Button>
+                ) : !blockOpen ? (
+                  <Button size="sm" variant="destructive" onClick={() => { setBlockNotice(null); setBlockOpen(true); }} disabled={savingAdminActive}>
+                    <Ban className="size-4" />
+                    Firmayı Engelle
+                  </Button>
+                ) : null}
+              </div>
+
+              {/* Engelleme gerekçe formu */}
+              {!isBlocked && blockOpen && (
+                <div className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                  <label className="text-xs font-medium text-foreground">Engelleme Gerekçesi *</label>
+                  <textarea
+                    value={blockReason}
+                    onChange={(e) => setBlockReason(e.target.value)}
+                    rows={2}
+                    placeholder="Örn: Şüpheli aktivite, sözleşme ihlali…"
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none"
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="destructive" onClick={handleBlock} disabled={savingAdminActive || !blockReason.trim()}>
+                      {savingAdminActive ? <Loader2 className="size-4 animate-spin" /> : <Ban className="size-4" />}
+                      Engelle
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setBlockOpen(false); setBlockReason(''); }} disabled={savingAdminActive}>
+                      Vazgeç
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {section === 'genel' && (
             <Card>
               <CardHeader><CardTitle>Genel Bilgiler</CardTitle></CardHeader>
@@ -334,6 +429,11 @@ export default function CmsCompanyDetailPage({ params }) {
                 <InfoRow icon={BadgeCheck} label="İş Modu" value={mode?.label ?? company.businessMode} />
                 <InfoRow icon={CalendarDays} label="Kuruluş" value={formatTrDate(company.foundedDate)} />
                 <InfoRow icon={CalendarDays} label="Kayıt Tarihi" value={formatTrDate(company.createdAt)} />
+                <InfoRow icon={isBlocked ? Ban : ShieldCheck} label="Admin Durumu" value={isBlocked ? 'Engelli' : 'Aktif'} />
+                <InfoRow icon={CalendarDays} label="Admin Durum Tarihi" value={formatTrDate(company.adminActiveAt)} />
+                <div className="sm:col-span-2">
+                  <InfoRow label="Admin Durum Gerekçesi" value={company.adminActiveReason} />
+                </div>
                 <div className="sm:col-span-2">
                   <InfoRow label="Açıklama" value={company.description} />
                 </div>
