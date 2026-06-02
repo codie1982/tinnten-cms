@@ -7,7 +7,10 @@ import { ENDPOINTS } from '@/config/api';
 export const newsCategoryApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
     getCategoryTree: build.query({
-      query: (params = {}) => ({ url: ENDPOINTS.newsCategories.tree, params }), // { country }
+      query: ({ countryCode = 'TR', ...rest } = {}) => ({
+        url: ENDPOINTS.newsCategories.tree(countryCode),
+        params: rest,
+      }),
       transformResponse: (res) => res?.data ?? res,
       providesTags: [{ type: 'NewsCategory', id: 'TREE' }],
     }),

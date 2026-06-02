@@ -97,7 +97,7 @@ export const ENDPOINTS = {
     socialPosts: (id) => `/news-content/${id}/social-posts`,
   },
   newsCategories: {
-    tree: '/news-categories/tree',
+    tree: (countryCode) => `/news-categories/${countryCode}/tree`,
     detail: (id) => `/news-categories/detail/${id}`,
     children: (id) => `/news-categories/children/${id}`,
     create: '/news-categories',
