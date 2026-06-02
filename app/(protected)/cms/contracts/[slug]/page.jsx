@@ -4,7 +4,7 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { FileText, Users, Save, Globe, Plus, Loader2, Lock, Clock } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Users, Save, Globe, Plus, Loader2, Lock, Clock } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/layout/page-shell';
@@ -24,7 +24,14 @@ import {
   useGetAcceptancesQuery,
   useSaveAgreementDraftMutation,
   usePublishAgreementMutation,
+  useTranslateMutation,
 } from '@/redux/services';
+
+const LOCALE_LABELS = {
+  tr: 'Türkçe', en: 'English', de: 'Deutsch',
+  ar: 'العربية', el: 'Ελληνικά', es: 'Español',
+  fr: 'Français', it: 'Italiano', ru: 'Русский',
+};
 
 const SECTIONS = [
   { key: 'icerik', label: 'İçerik', icon: FileText },
@@ -53,12 +60,15 @@ export default function ContractDetailPage({ params }) {
   const { data, isLoading, error } = useGetAgreementQuery({ slug, locale: 'tr' }, { skip: isNew || !authorized });
   const [saveDraft, { isLoading: saving }] = useSaveAgreementDraftMutation();
   const [publishAgreement, { isLoading: publishing }] = usePublishAgreementMutation();
+  const [translate, { isLoading: translating }] = useTranslateMutation();
 
   const [section, setSection] = useState('icerik');
   const [selectedId, setSelectedId] = useState(isNew ? 'NEW' : null);
   const [form, setForm] = useState({ slug: '', title: '', version: '1.0.0', summary: '', content: '' });
   const [notifyPrevious, setNotifyPrevious] = useState(false);
   const [notice, setNotice] = useState('');
+  const [translations, setTranslations] = useState(null);
+  const [transOpen, setTransOpen] = useState(false);
 
   const versions = data?.versions ?? [];
   const selected = versions.find((v) => v.id === selectedId) || null;
@@ -93,6 +103,42 @@ export default function ContractDetailPage({ params }) {
 
   function setField(k, v) {
     setForm((f) => ({ ...f, [k]: v }));
+    setTranslations(null);
+  }
+
+  async function handleTranslate() {
+    const hasText = form.title.trim() || form.summary.trim() || form.content.trim();
+    if (!hasText) return;
+    try {
+      const [titleRes, summaryRes, contentRes] = await Promise.all([
+        form.title.trim()
+          ? translate({ text: form.title.trim(), context: 'legal agreement title' }).unwrap()
+          : Promise.resolve({ translations: {} }),
+        form.summary.trim()
+          ? translate({ text: form.summary.trim(), context: 'legal agreement summary' }).unwrap()
+          : Promise.resolve({ translations: {} }),
+        form.content.trim()
+          ? translate({ text: form.content.trim(), context: 'legal agreement content, preserve HTML/Markdown formatting' }).unwrap()
+          : Promise.resolve({ translations: {} }),
+      ]);
+      const locales = Object.keys({
+        ...titleRes.translations,
+        ...summaryRes.translations,
+        ...contentRes.translations,
+      });
+      const merged = {};
+      for (const l of locales) {
+        merged[l] = {
+          title: titleRes.translations?.[l] ?? '',
+          summary: summaryRes.translations?.[l] ?? '',
+          content: contentRes.translations?.[l] ?? '',
+        };
+      }
+      setTranslations(merged);
+      setTransOpen(true);
+    } catch {
+      setNotice('Çeviri sırasında hata oluştu.');
+    }
   }
 
   async function persistDraft() {
@@ -317,16 +363,75 @@ export default function ContractDetailPage({ params }) {
                         />
                         Yayınlarken önceki onaylayanlara e-posta gönder
                       </label>
-                      <div className="flex gap-2">
-                        <Button variant="outline" onClick={handleSave} disabled={saving || publishing}>
-                          {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                          Taslağı Kaydet
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleTranslate}
+                          disabled={translating || saving || publishing || (!form.title.trim() && !form.summary.trim() && !form.content.trim())}
+                          className="gap-1.5"
+                        >
+                          {translating ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
+                          {translating ? 'Çevriliyor…' : translations ? 'Yeniden Çevir' : 'Otomatik Çevir'}
                         </Button>
-                        <Button onClick={handlePublish} disabled={saving || publishing}>
-                          {publishing ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
-                          Yayınla
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button variant="outline" onClick={handleSave} disabled={saving || publishing || translating}>
+                            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                            Taslağı Kaydet
+                          </Button>
+                          <Button onClick={handlePublish} disabled={saving || publishing || translating}>
+                            {publishing ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
+                            Yayınla
+                          </Button>
+                        </div>
                       </div>
+
+                      {/* Çeviri sonuçları */}
+                      {translations && (
+                        <div className="rounded-lg border border-border bg-muted/30">
+                          <button
+                            type="button"
+                            onClick={() => setTransOpen((v) => !v)}
+                            className="flex w-full items-center justify-between px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted/40 transition-colors"
+                          >
+                            <span className="flex items-center gap-2">
+                              <Globe className="size-3.5 text-primary" />
+                              Çeviri Sonuçları
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                {Object.keys(translations).length} dil
+                              </span>
+                            </span>
+                            {transOpen
+                              ? <ChevronDown className="size-4 text-muted-foreground" />
+                              : <ChevronRight className="size-4 text-muted-foreground" />}
+                          </button>
+                          {transOpen && (
+                            <div className="divide-y border-t max-h-[420px] overflow-y-auto">
+                              {Object.entries(translations).map(([locale, t]) => (
+                                <div key={locale} className="px-4 py-3 space-y-2">
+                                  <p className="text-xs font-bold text-primary">
+                                    {LOCALE_LABELS[locale] ?? locale.toUpperCase()}
+                                  </p>
+                                  {t.title && (
+                                    <p className="text-sm font-semibold text-foreground">{t.title}</p>
+                                  )}
+                                  {t.summary && (
+                                    <p className="text-xs text-muted-foreground">{t.summary}</p>
+                                  )}
+                                  {t.content && (
+                                    <details className="text-xs text-muted-foreground">
+                                      <summary className="cursor-pointer text-primary hover:underline">İçeriği görüntüle</summary>
+                                      <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-2 text-[11px] leading-relaxed">
+                                        {t.content}
+                                      </pre>
+                                    </details>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </CardContent>
