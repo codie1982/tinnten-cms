@@ -24,7 +24,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
-import { useGetCompanyQuery, useUpdateCompanyLimitsMutation } from '@/redux/services';
+import {
+  useGetCompanyQuery,
+  useUpdateCompanyLimitsMutation,
+  useUpdateCompanyUsageMutation,
+  useResetCompanyUsageMutation,
+} from '@/redux/services';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
 
 /* ─── sol alt-menü ─── */
@@ -111,15 +116,25 @@ export default function CmsCompanyDetailPage({ params }) {
 
   const { data: company, isLoading, error } = useGetCompanyQuery(id, { skip: !authorized });
   const [updateLimits, { isLoading: savingLimits }] = useUpdateCompanyLimitsMutation();
+  const [updateUsage, { isLoading: savingUsage }] = useUpdateCompanyUsageMutation();
+  const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
 
   const metrics = company?.limitUsage?.metrics ?? [];
-  // Limit değerlerinin imzası — kaydedince (refetch) değişir → draft yeniden tohumlanır.
+  // Değerlerin imzası — kaydedince (refetch) değişir → draft'lar yeniden tohumlanır.
   const limitsSig = metrics.map((m) => `${m.key}:${m.limit}`).join('|');
+  const usageSig = metrics.map((m) => `${m.key}:${m.used}`).join('|');
 
   // Limit düzenleme state'i
   const [limitDraft, setLimitDraft] = useState({}); // { [key]: number }
   const [reviewing, setReviewing] = useState(false);
   const [notice, setNotice] = useState(null); // { type, text }
+
+  // Kullanım düzenleme state'i
+  const [usageDraft, setUsageDraft] = useState({}); // { [key]: number }
+  const [usageEditing, setUsageEditing] = useState(false);
+  const [usageReviewing, setUsageReviewing] = useState(false);
+  const [usageNotice, setUsageNotice] = useState(null); // { type, text }
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     if (!metrics.length) return;
@@ -129,6 +144,17 @@ export default function CmsCompanyDetailPage({ params }) {
     setReviewing(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company?._id, limitsSig]);
+
+  useEffect(() => {
+    if (!metrics.length) return;
+    const seed = {};
+    for (const m of metrics) seed[m.key] = m.used;
+    setUsageDraft(seed);
+    setUsageEditing(false);
+    setUsageReviewing(false);
+    setConfirmReset(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?._id, usageSig]);
 
   if (isLoading) {
     return (
@@ -203,6 +229,46 @@ export default function CmsCompanyDetailPage({ params }) {
       setReviewing(false);
     } catch (e) {
       setNotice({ type: 'error', text: e?.data?.message || 'Limitler güncellenemedi.' });
+    }
+  };
+
+  // ─── Kullanım düzenleme/sıfırlama ───
+  const dirtyUsage = metrics.filter(
+    (m) => Number(usageDraft[m.key] ?? m.used) !== Number(m.used),
+  );
+
+  const cancelUsageEdit = () => {
+    const seed = {};
+    for (const m of metrics) seed[m.key] = m.used;
+    setUsageDraft(seed);
+    setUsageEditing(false);
+    setUsageReviewing(false);
+    setUsageNotice(null);
+  };
+
+  const handleSaveUsage = async () => {
+    const payload = {};
+    for (const m of metrics) {
+      const v = Number(usageDraft[m.key]);
+      if (Number.isFinite(v) && v >= 0) mergeNested(payload, keyToNested(m.key, v));
+    }
+    try {
+      await updateUsage({ id, usage: payload }).unwrap();
+      setUsageNotice({ type: 'success', text: 'Kullanım güncellendi.' });
+      setUsageEditing(false);
+      setUsageReviewing(false);
+    } catch (e) {
+      setUsageNotice({ type: 'error', text: e?.data?.message || 'Kullanım güncellenemedi.' });
+    }
+  };
+
+  const handleResetUsage = async () => {
+    try {
+      await resetUsage({ id }).unwrap();
+      setUsageNotice({ type: 'success', text: 'Kullanım sıfırlandı.' });
+      setConfirmReset(false);
+    } catch (e) {
+      setUsageNotice({ type: 'error', text: e?.data?.message || 'Kullanım sıfırlanamadı.' });
     }
   };
 
@@ -488,39 +554,166 @@ export default function CmsCompanyDetailPage({ params }) {
                     : <Badge variant="muted">Paket yok</Badge>}
                 </CardToolbar>
               </CardHeader>
-              <CardContent className="p-4">
+              <CardContent className="space-y-4 p-4">
                 {metrics.length === 0 ? (
                   <EmptyCard icon={<Gauge className="size-5" />} message="Bu firmanın hesabına bağlı kullanım verisi yok." />
                 ) : (
-                  <div className="space-y-3">
-                    {metrics.map((m, i) => {
-                      const pct = m.unlimited || m.limit === 0
-                        ? 0
-                        : Math.min(Math.round((m.used / m.limit) * 100), 100);
-                      const over = !m.unlimited && m.used > m.limit;
-                      return (
-                        <div key={i} className="space-y-1">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="font-medium text-foreground">{m.label}</span>
-                            <span className={cn('font-mono text-xs', over ? 'text-destructive' : 'text-muted-foreground')}>
-                              {m.used}{' / '}{m.unlimited ? '∞' : m.limit}
-                              {!m.unlimited && ` · %${pct}`}
-                            </span>
-                          </div>
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                            {m.unlimited ? (
-                              <div className="h-full w-full bg-gradient-to-r from-primary/30 to-primary/10" />
-                            ) : (
-                              <div
-                                className={cn('h-full rounded-full transition-all', over ? 'bg-destructive' : pct >= 80 ? 'bg-amber-500' : 'bg-primary')}
-                                style={{ width: `${Math.max(pct, 2)}%` }}
-                              />
-                            )}
-                          </div>
+                  <>
+                    {usageNotice && (
+                      <Alert variant={usageNotice.type === 'error' ? 'destructive' : 'info'}>
+                        <AlertDescription>{usageNotice.text}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {/* Üst aksiyon çubuğu */}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {usageEditing ? 'Kullanım miktarlarını düzenliyorsunuz' : 'Mevcut kullanım / limit oranları'}
+                      </span>
+                      {!usageEditing && !confirmReset && (
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="ghost" onClick={() => { setUsageNotice(null); setConfirmReset(true); }} disabled={resettingUsage || savingUsage}>
+                            <RotateCcw className="size-4" />
+                            Kullanımı Sıfırla
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => { setUsageNotice(null); setUsageEditing(true); }} disabled={resettingUsage || savingUsage}>
+                            <SlidersHorizontal className="size-4" />
+                            Miktarı Ayarla
+                          </Button>
                         </div>
-                      );
-                    })}
-                  </div>
+                      )}
+                    </div>
+
+                    {/* Sıfırlama onayı */}
+                    {confirmReset && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                        <p className="flex items-center gap-1.5 text-sm text-foreground">
+                          <AlertTriangle className="size-4 text-destructive" />
+                          Tüm kullanım sayaçları <span className="font-semibold">0</span>'a sıfırlanacak. Emin misiniz?
+                        </p>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="destructive" onClick={handleResetUsage} disabled={resettingUsage}>
+                            {resettingUsage ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                            Evet, Sıfırla
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)} disabled={resettingUsage}>
+                            Vazgeç
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* DÜZENLEME MODU — kullanım miktarı input'ları */}
+                    {usageEditing ? (
+                      <>
+                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <AlertTriangle className="size-3.5" />
+                          Kullanım sayaçlarını manuel ayarlıyorsunuz. Bu, faturalandırma/kota davranışını etkiler.
+                        </p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {metrics.map((m) => {
+                            const val = usageDraft[m.key] ?? m.used;
+                            const changed = Number(val) !== Number(m.used);
+                            return (
+                              <div key={m.key} className={cn('rounded-lg border p-3', changed ? 'border-primary/50 bg-primary/5' : 'border-border')}>
+                                <label className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground">{m.label}</span>
+                                  <span className="font-mono">limit: {m.unlimited ? '∞' : m.limit}</span>
+                                </label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={val}
+                                  disabled={savingUsage}
+                                  onChange={(e) => {
+                                    setUsageNotice(null);
+                                    setUsageReviewing(false);
+                                    setUsageDraft((d) => ({ ...d, [m.key]: e.target.value === '' ? '' : Number(e.target.value) }));
+                                  }}
+                                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Kontrol (diff) paneli */}
+                        {usageReviewing && dirtyUsage.length > 0 && (
+                          <div className="rounded-lg border border-primary/40 bg-primary/5 p-4">
+                            <p className="mb-2 text-sm font-semibold text-foreground">Değişiklikleri Onayla</p>
+                            <ul className="space-y-1.5">
+                              {dirtyUsage.map((m) => (
+                                <li key={m.key} className="flex items-center gap-2 text-sm">
+                                  <span className="min-w-[140px] text-muted-foreground">{m.label}</span>
+                                  <span className="font-mono text-muted-foreground">{m.used}</span>
+                                  <ArrowRight className="size-3.5 text-primary" />
+                                  <span className="font-mono font-semibold text-primary">{Number(usageDraft[m.key])}</span>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="mt-3 flex gap-2">
+                              <Button size="sm" onClick={handleSaveUsage} disabled={savingUsage}>
+                                {savingUsage ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                                Güncelle
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setUsageReviewing(false)} disabled={savingUsage}>
+                                Vazgeç
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Düzenleme aksiyonları */}
+                        {!usageReviewing && (
+                          <div className="flex items-center justify-between border-t border-border pt-4">
+                            <span className="text-xs text-muted-foreground">
+                              {dirtyUsage.length > 0 ? `${dirtyUsage.length} değişiklik bekliyor` : 'Değişiklik yok'}
+                            </span>
+                            <div className="flex gap-2">
+                              <Button size="sm" variant="ghost" onClick={cancelUsageEdit} disabled={savingUsage}>
+                                İptal
+                              </Button>
+                              <Button size="sm" onClick={() => setUsageReviewing(true)} disabled={dirtyUsage.length === 0 || savingUsage}>
+                                <SlidersHorizontal className="size-4" />
+                                Değişiklikleri Kontrol Et
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      /* SALT-OKUNUR — progress bar'lar */
+                      <div className="space-y-3">
+                        {metrics.map((m, i) => {
+                          const pct = m.unlimited || m.limit === 0
+                            ? 0
+                            : Math.min(Math.round((m.used / m.limit) * 100), 100);
+                          const over = !m.unlimited && m.used > m.limit;
+                          return (
+                            <div key={i} className="space-y-1">
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="font-medium text-foreground">{m.label}</span>
+                                <span className={cn('font-mono text-xs', over ? 'text-destructive' : 'text-muted-foreground')}>
+                                  {m.used}{' / '}{m.unlimited ? '∞' : m.limit}
+                                  {!m.unlimited && ` · %${pct}`}
+                                </span>
+                              </div>
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                                {m.unlimited ? (
+                                  <div className="h-full w-full bg-gradient-to-r from-primary/30 to-primary/10" />
+                                ) : (
+                                  <div
+                                    className={cn('h-full rounded-full transition-all', over ? 'bg-destructive' : pct >= 80 ? 'bg-amber-500' : 'bg-primary')}
+                                    style={{ width: `${Math.max(pct, 2)}%` }}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

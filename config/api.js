@@ -140,6 +140,8 @@ export const ENDPOINTS = {
     list: '/company/cms/list',
     detail: (id) => `/company/cms/${id}`,
     limits: (id) => `/company/cms/${id}/limits`,
+    usage: (id) => `/company/cms/${id}/usage`,
+    usageReset: (id) => `/company/cms/${id}/usage/reset`,
     update: (id) => `/companies/${id}`,
     approve: (id) => `/companies/${id}/approve`,
     reject: (id) => `/companies/${id}/reject`,

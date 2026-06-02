@@ -31,6 +31,16 @@ export const companiesApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { limitUsage }
       invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }],
     }),
+    updateCompanyUsage: build.mutation({
+      query: ({ id, usage }) => ({ url: ENDPOINTS.companies.usage(id), method: 'PATCH', body: { usage } }),
+      transformResponse: (res) => res?.data ?? res, // { limitUsage }
+      invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }],
+    }),
+    resetCompanyUsage: build.mutation({
+      query: ({ id }) => ({ url: ENDPOINTS.companies.usageReset(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res, // { limitUsage }
+      invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }],
+    }),
     approveCompany: build.mutation({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.companies.approve(id), method: 'POST', body }),
       invalidatesTags: (r, e, { id }) => [
@@ -55,6 +65,8 @@ export const {
   useGetCompanyQuery,
   useUpdateCompanyMutation,
   useUpdateCompanyLimitsMutation,
+  useUpdateCompanyUsageMutation,
+  useResetCompanyUsageMutation,
   useApproveCompanyMutation,
   useRejectCompanyMutation,
 } = companiesApi;
