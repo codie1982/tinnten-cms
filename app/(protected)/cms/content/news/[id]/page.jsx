@@ -419,6 +419,14 @@ export default function NewsDetailPage({ params }) {
     setPosts((p) => p.filter((s) => s.id !== pid));
   }
 
+  // Public sayfa linki: {site}/{locale}/discovery/{kategori-slug}/{haber-slug}
+  const PUBLIC_SITE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tinten.ai').replace(/\/+$/, '');
+  const catSlug = doc?.categoryId?.slug || null;
+  const publicLocale = (doc?.countryCode || country || 'tr').toLowerCase();
+  const publicUrl = !isNew && doc?.slug && catSlug
+    ? `${PUBLIC_SITE}/${publicLocale}/discovery/${catSlug}/${doc.slug}`
+    : null;
+
   /* ─── content editor based on type ─── */
   function ContentEditor() {
     switch (meta.contentType) {
@@ -518,6 +526,14 @@ export default function NewsDetailPage({ params }) {
         actions={
           <div className="flex items-center gap-2">
             <Badge variant={statusMeta[status]?.variant}>{statusMeta[status]?.label}</Badge>
+            {publicUrl && (
+              <a href={publicUrl} target="_blank" rel="noreferrer">
+                <Button variant="outline">
+                  <ExternalLink className="size-4" />
+                  Sitede Gör
+                </Button>
+              </a>
+            )}
             <Button variant="outline" onClick={handlePublish}>
               {status === 'published' ? (
                 <><FileText className="size-4" />Taslağa Al</>
@@ -578,7 +594,7 @@ export default function NewsDetailPage({ params }) {
                   <SelectContent>
                     <SelectItem value="none">Kategorisiz</SelectItem>
                     {categories.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{'— '.repeat(c.depth)}{c.name}</SelectItem>
+                      <SelectItem key={c.id} value={c.id}>{`${'— '.repeat(c.depth)}${c.name}`}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
