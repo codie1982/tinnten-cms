@@ -98,6 +98,8 @@ export const ENDPOINTS = {
     image: (id, imageId) => `/news-content/${id}/images/${imageId}`,
     cover: (id) => `/news-content/${id}/cover`,
     socialPosts: (id) => `/news-content/${id}/social-posts`,
+    socialPost: (id, postId) => `/news-content/${id}/social-posts/${postId}`,
+    socialPostRequeue: (id, postId) => `/news-content/${id}/social-posts/${postId}/requeue`,
   },
   newsCategories: {
     tree: (countryCode) => `/news-categories/${countryCode}/tree`,

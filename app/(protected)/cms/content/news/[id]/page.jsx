@@ -58,6 +58,10 @@ import {
   useDeleteNewsMutation,
   useGetCategoryTreeQuery,
   useGenerateNewsAiImageMutation,
+  useGetSocialPostsQuery,
+  useCreateSocialPostMutation,
+  useDeleteSocialPostMutation,
+  useRequeueSocialPostMutation,
 } from '@/redux/services';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
 import { statusMeta, contentTypeMeta } from '../_data';
@@ -78,15 +82,24 @@ const PLATFORMS = [
   { value: 'linkedin', label: 'LinkedIn', icon: '💼' },
   { value: 'facebook', label: 'Facebook', icon: '📘' },
   { value: 'instagram', label: 'Instagram', icon: '📷' },
+  { value: 'discord', label: 'Discord', icon: '🎮' },
   { value: 'telegram', label: 'Telegram', icon: '✈️' },
 ];
 
 const socialStatusMeta = {
   queued: { label: 'Kuyrukta', variant: 'secondary', icon: Clock },
   scheduled: { label: 'Zamanlandı', variant: 'primary', icon: Clock },
+  publishing: { label: 'Paylaşılıyor', variant: 'warning', icon: Clock },
   published: { label: 'Yayınlandı', variant: 'success', icon: CheckCircle2 },
   failed: { label: 'Hata', variant: 'destructive', icon: AlertCircle },
 };
+
+function fmtDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
 /* ─── Simple toolbar for textarea ─── */
 function EditorToolbar({ onInsert }) {
@@ -393,8 +406,16 @@ export default function NewsDetailPage({ params }) {
     setCountry(doc.countryCode || DEFAULT_COUNTRY);
   }, [doc]);
 
-  // Social posts (henüz API'ye bağlı değil — UI placeholder)
-  const [posts, setPosts] = useState([]);
+  // Social posts — gerçek API (cron'da kayıtlı zamanlanmış paylaşımlar)
+  const { data: socialData } = useGetSocialPostsQuery(id, { skip: isNew || !authorized });
+  const posts = socialData?.posts ?? [];
+  const socialCounts = posts.reduce((acc, p) => {
+    acc[p.status] = (acc[p.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const [createSocialPost, { isLoading: addingPost }] = useCreateSocialPostMutation();
+  const [deleteSocialPost] = useDeleteSocialPostMutation();
+  const [requeueSocialPost] = useRequeueSocialPostMutation();
   const [newPost, setNewPost] = useState({ platform: 'x', postText: '', scheduledAt: '' });
 
   if (!isNew && isLoading) {
@@ -469,13 +490,21 @@ export default function NewsDetailPage({ params }) {
     router.push('/cms/content/news');
   }
 
-  function addPost() {
-    if (!newPost.postText) return;
-    setPosts((p) => [...p, { id: `sp-${p.length + 1}`, ...newPost, status: 'queued' }]);
-    setNewPost({ platform: 'x', postText: '', scheduledAt: '' });
+  async function addPost() {
+    if (!newPost.postText.trim() || isNew) return;
+    const body = {
+      platform: newPost.platform,
+      postText: newPost.postText.trim(),
+      ...(newPost.scheduledAt ? { scheduledAt: new Date(newPost.scheduledAt).toISOString() } : {}),
+    };
+    const r = await createSocialPost({ id, ...body }).unwrap().catch(() => null);
+    if (r) setNewPost({ platform: 'x', postText: '', scheduledAt: '' });
   }
-  function removePost(pid) {
-    setPosts((p) => p.filter((s) => s.id !== pid));
+  function removePost(postId) {
+    deleteSocialPost({ id, postId }).unwrap().catch(() => {});
+  }
+  function requeuePost(postId) {
+    requeueSocialPost({ id, postId }).unwrap().catch(() => {});
   }
 
   // Public sayfa linki: {site}/{locale}/discovery/{kategori-slug}/{haber-slug}
@@ -738,78 +767,106 @@ export default function NewsDetailPage({ params }) {
               <CardHeader>
                 <CardTitle>Sosyal Medya Paylaşımları</CardTitle>
                 <CardToolbar>
+                  {(socialCounts.scheduled ?? 0) > 0 && (
+                    <Badge variant="primary">{socialCounts.scheduled} zamanlanmış</Badge>
+                  )}
+                  {(socialCounts.queued ?? 0) > 0 && (
+                    <Badge variant="secondary">{socialCounts.queued} kuyrukta</Badge>
+                  )}
                   <Badge variant="secondary">{posts.length} paylaşım</Badge>
                 </CardToolbar>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* New post form */}
-                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-                  <p className="text-sm font-medium">Yeni Paylaşım</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Select value={newPost.platform} onValueChange={(v) => setNewPost((p) => ({ ...p, platform: v }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {PLATFORMS.map((pl) => <SelectItem key={pl.value} value={pl.value}>{pl.icon} {pl.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    <input
-                      type="datetime-local"
-                      value={newPost.scheduledAt}
-                      onChange={(e) => setNewPost((p) => ({ ...p, scheduledAt: e.target.value }))}
-                      className="h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 text-muted-foreground"
-                    />
+                {isNew ? (
+                  <div className="rounded-xl border border-dashed border-border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+                    Sosyal medya paylaşımı eklemek için önce haberi kaydedin.
                   </div>
-                  <textarea
-                    value={newPost.postText}
-                    onChange={(e) => setNewPost((p) => ({ ...p, postText: e.target.value }))}
-                    rows={3}
-                    placeholder="Paylaşım metni…"
-                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none placeholder:text-muted-foreground"
-                  />
-                  <div className="flex justify-end">
-                    <Button size="sm" onClick={addPost} disabled={!newPost.postText}>
-                      <Send className="size-3.5" />
-                      Ekle
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Posts list */}
-                <div className="space-y-2">
-                  {posts.map((post) => {
-                    const sm = socialStatusMeta[post.status] ?? {};
-                    const pl = PLATFORMS.find((p) => p.value === post.platform);
-                    return (
-                      <div key={post.id} className="flex items-start gap-3 rounded-xl border border-border bg-background p-3">
-                        <span className="mt-0.5 text-base">{pl?.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="truncate text-sm">{post.postText}</p>
-                          {post.scheduledAt && (
-                            <p className="mt-0.5 text-xs text-muted-foreground">{post.scheduledAt}</p>
-                          )}
-                        </div>
-                        <Badge variant={sm.variant} className="shrink-0 mt-0.5">{sm.label}</Badge>
-                        <div className="flex shrink-0 gap-1">
-                          {post.status === 'failed' && (
-                            <Button variant="ghost" size="icon" className="size-7" title="Yeniden kuyruğa ekle">
-                              <RefreshCw className="size-3.5" />
-                            </Button>
-                          )}
-                          {post.platformPostUrl && (
-                            <a href={post.platformPostUrl} target="_blank" rel="noopener noreferrer">
-                              <Button variant="ghost" size="icon" className="size-7">
-                                <ExternalLink className="size-3.5" />
-                              </Button>
-                            </a>
-                          )}
-                          <Button variant="ghost" size="icon" className="size-7 hover:text-destructive" onClick={() => removePost(post.id)}>
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </div>
+                ) : (
+                  <>
+                    {/* New post form */}
+                    <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+                      <p className="text-sm font-medium">Yeni Paylaşım</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Select value={newPost.platform} onValueChange={(v) => setNewPost((p) => ({ ...p, platform: v }))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {PLATFORMS.map((pl) => <SelectItem key={pl.value} value={pl.value}>{pl.icon} {pl.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <input
+                          type="datetime-local"
+                          value={newPost.scheduledAt}
+                          onChange={(e) => setNewPost((p) => ({ ...p, scheduledAt: e.target.value }))}
+                          className="h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 text-muted-foreground"
+                        />
                       </div>
-                    );
-                  })}
-                </div>
+                      <p className="text-xs text-muted-foreground">
+                        Zaman seçilmezse paylaşım hemen kuyruğa alınır. İleri bir tarih seçilirse cron o zamanda yayınlar.
+                      </p>
+                      <textarea
+                        value={newPost.postText}
+                        onChange={(e) => setNewPost((p) => ({ ...p, postText: e.target.value }))}
+                        rows={3}
+                        placeholder="Paylaşım metni…"
+                        className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none placeholder:text-muted-foreground"
+                      />
+                      <div className="flex justify-end">
+                        <Button size="sm" onClick={addPost} disabled={!newPost.postText.trim() || addingPost}>
+                          {addingPost ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                          Ekle
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Posts list */}
+                    {posts.length === 0 ? (
+                      <p className="py-8 text-center text-sm text-muted-foreground">
+                        Bu haber için zamanlanmış paylaşım yok.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {posts.map((post) => {
+                          const sm = socialStatusMeta[post.status] ?? { label: post.status, variant: 'secondary' };
+                          const pl = PLATFORMS.find((p) => p.value === post.platform);
+                          const when = post.publishedAt || post.scheduledAt;
+                          return (
+                            <div key={post._id} className="flex items-start gap-3 rounded-xl border border-border bg-background p-3">
+                              <span className="mt-0.5 text-base">{pl?.icon ?? '📣'}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm line-clamp-2">{post.postText}</p>
+                                {when && (
+                                  <p className="mt-0.5 text-xs text-muted-foreground">
+                                    {post.publishedAt ? 'Yayınlandı: ' : 'Planlanan: '}{fmtDateTime(when)}
+                                  </p>
+                                )}
+                              </div>
+                              <Badge variant={sm.variant} className="shrink-0 mt-0.5">{sm.label}</Badge>
+                              <div className="flex shrink-0 gap-1">
+                                {post.status === 'failed' && (
+                                  <Button variant="ghost" size="icon" className="size-7" title="Yeniden kuyruğa ekle" onClick={() => requeuePost(post._id)}>
+                                    <RefreshCw className="size-3.5" />
+                                  </Button>
+                                )}
+                                {post.platformPostUrl && (
+                                  <a href={post.platformPostUrl} target="_blank" rel="noopener noreferrer">
+                                    <Button variant="ghost" size="icon" className="size-7">
+                                      <ExternalLink className="size-3.5" />
+                                    </Button>
+                                  </a>
+                                )}
+                                {post.status !== 'published' && post.status !== 'publishing' && (
+                                  <Button variant="ghost" size="icon" className="size-7 hover:text-destructive" onClick={() => removePost(post._id)}>
+                                    <Trash2 className="size-3.5" />
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
           )}

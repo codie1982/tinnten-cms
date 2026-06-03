@@ -126,6 +126,14 @@ export const newsApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: (r, e, { id }) => [{ type: 'News', id: `social-${id}` }],
     }),
+    deleteSocialPost: build.mutation({
+      query: ({ id, postId }) => ({ url: ENDPOINTS.news.socialPost(id, postId), method: 'DELETE' }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id: `social-${id}` }],
+    }),
+    requeueSocialPost: build.mutation({
+      query: ({ id, postId }) => ({ url: ENDPOINTS.news.socialPostRequeue(id, postId), method: 'POST' }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id: `social-${id}` }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -149,4 +157,6 @@ export const {
   useReorderNewsImagesMutation,
   useGetSocialPostsQuery,
   useCreateSocialPostMutation,
+  useDeleteSocialPostMutation,
+  useRequeueSocialPostMutation,
 } = newsApi;
