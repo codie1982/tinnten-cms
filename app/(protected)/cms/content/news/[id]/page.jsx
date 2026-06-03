@@ -18,6 +18,7 @@ import {
   ChevronUp,
   Loader2,
   Star,
+  Crosshair,
   Bold,
   Italic,
   List,
@@ -121,15 +122,22 @@ function moveItem(arr, idx, dir) {
   return next.map((s, i) => ({ ...s, order: i + 1 }));
 }
 
-/* ─── Bölüm görsel alanı (her bölümün üstünde) ─── */
-function SectionImageArea({ section, articleId, isCover, onSetImage, onSetCover }) {
+const ASPECTS = [['16/9', '16:9'], ['4/3', '4:3'], ['1/1', '1:1'], ['3/2', '3:2']];
+const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
+
+/* ─── Bölüm görsel alanı (her bölümün üstünde) — odak + en-boy ayarı ─── */
+function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover }) {
   const [genAiImage, { isLoading: genImaging }] = useGenerateNewsAiImageMutation();
   const [editUrl, setEditUrl] = useState(false);
   const [urlVal, setUrlVal] = useState(section.imageUrl || '');
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [focalMode, setFocalMode] = useState(false);
   const [err, setErr] = useState('');
   const img = section.imageUrl;
+  const fx = section.imageFocalX ?? 50;
+  const fy = section.imageFocalY ?? 50;
+  const aspect = section.imageAspect || '16/9';
 
   async function genAi() {
     if (!aiPrompt.trim() || !articleId) return;
@@ -137,35 +145,86 @@ function SectionImageArea({ section, articleId, isCover, onSetImage, onSetCover 
     try {
       const r = await genAiImage({ id: articleId, prompt: aiPrompt.trim() }).unwrap();
       const url = r?.url;
-      if (url) { onSetImage(url); setAiOpen(false); setAiPrompt(''); }
+      if (url) { onUpdate({ imageUrl: url }); setAiOpen(false); setAiPrompt(''); }
       else setErr('Görsel üretildi ama URL alınamadı.');
     } catch (e) {
       setErr(e?.data?.message || 'Görsel üretilemedi.');
     }
   }
 
+  function onFocalClick(e) {
+    if (!focalMode) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    onUpdate({
+      imageFocalX: clampPct(((e.clientX - r.left) / r.width) * 100),
+      imageFocalY: clampPct(((e.clientY - r.top) / r.height) * 100),
+    });
+  }
+
   return (
     <div className="space-y-2 border-b border-border bg-muted/20 p-3">
       {img ? (
-        <div className="relative overflow-hidden rounded-lg border border-border" style={{ aspectRatio: '16/9' }}>
-          <img src={img} alt={section.imageAlt || ''} className="h-full w-full object-cover" />
-          {isCover && (
-            <span className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">
-              <Star className="size-3" />Kapak
-            </span>
-          )}
-          <div className="absolute bottom-2 right-2 flex gap-1.5">
-            {!isCover && (
-              <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(img)}>
-                <Star className="size-3.5" />Kapak yap
-              </Button>
+        <>
+          <div
+            className={cn('relative overflow-hidden rounded-lg border border-border', focalMode && 'cursor-crosshair ring-2 ring-primary')}
+            style={{ aspectRatio: aspect.replace('/', ' / ') }}
+            onClick={onFocalClick}
+          >
+            <img src={img} alt={section.imageAlt || ''} className="h-full w-full object-cover" style={{ objectPosition: `${fx}% ${fy}%` }} />
+            {isCover && (
+              <span className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">
+                <Star className="size-3" />Kapak
+              </span>
             )}
-            <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => { setUrlVal(img); setEditUrl((v) => !v); }}>Değiştir</Button>
-            <Button size="sm" variant="outline" className="h-7 bg-background/90 text-destructive" onClick={() => onSetImage('')}>
-              <Trash2 className="size-3.5" />
-            </Button>
+            {/* Odak işaretçisi */}
+            {focalMode && (
+              <div
+                className="pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_2px_rgba(0,0,0,0.4)]"
+                style={{ left: `${fx}%`, top: `${fy}%` }}
+              />
+            )}
+            {!focalMode && (
+              <div className="absolute bottom-2 right-2 flex gap-1.5">
+                {!isCover && (
+                  <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(img)}>
+                    <Star className="size-3.5" />Kapak yap
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => { setUrlVal(img); setEditUrl((v) => !v); }}>Değiştir</Button>
+                <Button size="sm" variant="outline" className="h-7 bg-background/90 text-destructive" onClick={() => onUpdate({ imageUrl: '' })}>
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
-        </div>
+
+          {/* En-boy + odak araç çubuğu */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">En-boy:</span>
+            {ASPECTS.map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => onUpdate({ imageAspect: val })}
+                className={cn('rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
+                  aspect === val ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent')}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="mx-1 h-4 w-px bg-border" />
+            <Button size="sm" variant={focalMode ? 'default' : 'outline'} className="h-7" onClick={() => setFocalMode((v) => !v)}>
+              <Crosshair className="size-3.5" />
+              {focalMode ? `Odak: %${fx},%${fy} — Bitir` : 'Odak Ayarla'}
+            </Button>
+            {(fx !== 50 || fy !== 50) && (
+              <Button size="sm" variant="ghost" className="h-7" onClick={() => onUpdate({ imageFocalX: 50, imageFocalY: 50 })}>Sıfırla</Button>
+            )}
+          </div>
+          {focalMode && (
+            <p className="text-xs text-muted-foreground">Görsele tıklayarak odak noktasını (kırpmada merkez) belirleyin.</p>
+          )}
+        </>
       ) : (
         <div className="flex items-center justify-between gap-2 rounded-lg border-2 border-dashed border-border px-3 py-3 text-muted-foreground">
           <span className="flex items-center gap-2 text-sm"><ImageIcon className="size-4" />Bu bölümde görsel yok</span>
@@ -187,7 +246,7 @@ function SectionImageArea({ section, articleId, isCover, onSetImage, onSetCover 
             placeholder="https://… görsel URL'i"
             className="h-8 flex-1 rounded-lg border border-input bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring/30"
           />
-          <Button size="sm" className="h-8" onClick={() => { onSetImage(urlVal.trim()); setEditUrl(false); }}>Uygula</Button>
+          <Button size="sm" className="h-8" onClick={() => { onUpdate({ imageUrl: urlVal.trim() }); setEditUrl(false); }}>Uygula</Button>
           <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditUrl(false)}>İptal</Button>
         </div>
       )}
@@ -238,7 +297,7 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
             section={sec}
             articleId={articleId}
             isCover={!!sec.imageUrl && sec.imageUrl === coverUrl}
-            onSetImage={(url) => updateSection(idx, 'imageUrl', url)}
+            onUpdate={(patch) => onChange(sections.map((s, i) => (i === idx ? { ...s, ...patch } : s)))}
             onSetCover={onSetCover}
           />
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
