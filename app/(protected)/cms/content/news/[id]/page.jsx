@@ -46,7 +46,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import {
@@ -57,11 +56,7 @@ import {
   useUnpublishNewsMutation,
   useDeleteNewsMutation,
   useGetCategoryTreeQuery,
-  useDetachNewsImageMutation,
-  useSetNewsCoverMutation,
-  useClearNewsCoverMutation,
   useGenerateNewsAiImageMutation,
-  useReorderNewsImagesMutation,
 } from '@/redux/services';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
 import { statusMeta, contentTypeMeta } from '../_data';
@@ -126,8 +121,103 @@ function moveItem(arr, idx, dir) {
   return next.map((s, i) => ({ ...s, order: i + 1 }));
 }
 
+/* ─── Bölüm görsel alanı (her bölümün üstünde) ─── */
+function SectionImageArea({ section, articleId, isCover, onSetImage, onSetCover }) {
+  const [genAiImage, { isLoading: genImaging }] = useGenerateNewsAiImageMutation();
+  const [editUrl, setEditUrl] = useState(false);
+  const [urlVal, setUrlVal] = useState(section.imageUrl || '');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [err, setErr] = useState('');
+  const img = section.imageUrl;
+
+  async function genAi() {
+    if (!aiPrompt.trim() || !articleId) return;
+    setErr('');
+    try {
+      const r = await genAiImage({ id: articleId, prompt: aiPrompt.trim() }).unwrap();
+      const url = r?.url;
+      if (url) { onSetImage(url); setAiOpen(false); setAiPrompt(''); }
+      else setErr('Görsel üretildi ama URL alınamadı.');
+    } catch (e) {
+      setErr(e?.data?.message || 'Görsel üretilemedi.');
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-b border-border bg-muted/20 p-3">
+      {img ? (
+        <div className="relative overflow-hidden rounded-lg border border-border" style={{ aspectRatio: '16/9' }}>
+          <img src={img} alt={section.imageAlt || ''} className="h-full w-full object-cover" />
+          {isCover && (
+            <span className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">
+              <Star className="size-3" />Kapak
+            </span>
+          )}
+          <div className="absolute bottom-2 right-2 flex gap-1.5">
+            {!isCover && (
+              <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(img)}>
+                <Star className="size-3.5" />Kapak yap
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => { setUrlVal(img); setEditUrl((v) => !v); }}>Değiştir</Button>
+            <Button size="sm" variant="outline" className="h-7 bg-background/90 text-destructive" onClick={() => onSetImage('')}>
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 rounded-lg border-2 border-dashed border-border px-3 py-3 text-muted-foreground">
+          <span className="flex items-center gap-2 text-sm"><ImageIcon className="size-4" />Bu bölümde görsel yok</span>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" className="h-7" onClick={() => { setUrlVal(''); setEditUrl((v) => !v); }}>URL ekle</Button>
+            <Button size="sm" variant="outline" className="h-7" onClick={() => setAiOpen((v) => !v)} disabled={!articleId} title={!articleId ? 'Önce kaydedin' : ''}>
+              <Sparkles className="size-3.5" />AI
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* URL ile değiştir/ekle */}
+      {editUrl && (
+        <div className="flex gap-2">
+          <input
+            value={urlVal}
+            onChange={(e) => setUrlVal(e.target.value)}
+            placeholder="https://… görsel URL'i"
+            className="h-8 flex-1 rounded-lg border border-input bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring/30"
+          />
+          <Button size="sm" className="h-8" onClick={() => { onSetImage(urlVal.trim()); setEditUrl(false); }}>Uygula</Button>
+          <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditUrl(false)}>İptal</Button>
+        </div>
+      )}
+
+      {/* AI üret */}
+      {aiOpen && (
+        <div className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-2">
+          <textarea
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            rows={2}
+            placeholder="AI görsel istemi — örn. yapay zeka temalı modern haber görseli"
+            className="w-full resize-none rounded-lg border border-input bg-background px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/30"
+          />
+          <div className="flex gap-2">
+            <Button size="sm" className="h-7" onClick={genAi} disabled={genImaging || !aiPrompt.trim()}>
+              {genImaging ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              {genImaging ? 'Üretiliyor…' : 'Üret'}
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7" onClick={() => setAiOpen(false)} disabled={genImaging}>Vazgeç</Button>
+          </div>
+        </div>
+      )}
+      {err && <p className="text-xs text-destructive">{err}</p>}
+    </div>
+  );
+}
+
 /* ─── Rich Section Editor ─── */
-function RichSectionEditor({ sections, onChange }) {
+function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover }) {
   function updateSection(idx, key, val) {
     const next = sections.map((s, i) => (i === idx ? { ...s, [key]: val } : s));
     onChange(next);
@@ -142,7 +232,15 @@ function RichSectionEditor({ sections, onChange }) {
   return (
     <div className="space-y-3">
       {sections.map((sec, idx) => (
-        <div key={idx} className="rounded-xl border border-border bg-background">
+        <div key={idx} className="overflow-hidden rounded-xl border border-border bg-background">
+          {/* Bölüm görseli — içeriğin üstünde */}
+          <SectionImageArea
+            section={sec}
+            articleId={articleId}
+            isCover={!!sec.imageUrl && sec.imageUrl === coverUrl}
+            onSetImage={(url) => updateSection(idx, 'imageUrl', url)}
+            onSetCover={onSetCover}
+          />
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <div className="flex shrink-0 flex-col">
               <button onClick={() => onChange(moveItem(sections, idx, -1))} disabled={idx === 0}
@@ -204,16 +302,6 @@ export default function NewsDetailPage({ params }) {
   const [deleteNews] = useDeleteNewsMutation();
   const saving = creating || updating;
 
-  // Görsel yönetimi
-  const [detachImage] = useDetachNewsImageMutation();
-  const [setCover] = useSetNewsCoverMutation();
-  const [clearCover] = useClearNewsCoverMutation();
-  const [genAiImage, { isLoading: genImaging }] = useGenerateNewsAiImageMutation();
-  const [reorderImages] = useReorderNewsImagesMutation();
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [imgNotice, setImgNotice] = useState(null); // { type, text }
-
   const [meta, setMeta] = useState({
     title: '', subtitle: '', slug: '', categoryId: '', tags: '', contentType: 'richSections',
   });
@@ -222,8 +310,9 @@ export default function NewsDetailPage({ params }) {
   const [htmlContent, setHtmlContent] = useState('');
   const [mdContent, setMdContent] = useState('');
   const [status, setStatus] = useState('draft');
+  const [coverImageUrl, setCoverImageUrl] = useState(''); // ana kapak (top-level imageUrl)
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [activeTab, setActiveTab] = useState('content'); // content | cover | social
+  const [activeTab, setActiveTab] = useState('content'); // content | social
 
   // Mevcut haber yüklenince formu doldur
   useEffect(() => {
@@ -241,6 +330,7 @@ export default function NewsDetailPage({ params }) {
     setHtmlContent(doc.htmlContent || '');
     setMdContent(doc.markdownContent || '');
     setStatus(doc.status || 'draft');
+    setCoverImageUrl(doc.imageUrl || '');
     setCountry(doc.countryCode || DEFAULT_COUNTRY);
   }, [doc]);
 
@@ -286,6 +376,7 @@ export default function NewsDetailPage({ params }) {
       content: sections,
       htmlContent,
       markdownContent: mdContent,
+      imageUrl: coverImageUrl || null,
       countryCode: country,
       status,
     };
@@ -319,32 +410,6 @@ export default function NewsDetailPage({ params }) {
     router.push('/cms/content/news');
   }
 
-  // ─── Görsel yönetimi ───
-  const galleryImages = doc?.coverImages ?? [];
-  const mainUrl = doc?.imageUrl || null;
-
-  async function handleAiImage() {
-    if (!aiPrompt.trim()) return;
-    try {
-      await genAiImage({ id, prompt: aiPrompt.trim() }).unwrap();
-      setImgNotice({ type: 'success', text: 'AI görseli üretildi ve galeriye eklendi.' });
-      setAiOpen(false);
-      setAiPrompt('');
-    } catch (e) {
-      setImgNotice({ type: 'error', text: e?.data?.message || 'Görsel üretilemedi.' });
-    }
-  }
-  const handleSetMain = (img) => setCover({ id, imageUrl: img.path }).unwrap().catch(() => {});
-  const handleClearMain = () => clearCover({ id }).unwrap().catch(() => {});
-  const handleRemoveImg = (imageId) => detachImage({ id, imageId }).unwrap().catch(() => {});
-  function handleMoveImg(idx, dir) {
-    const ids = galleryImages.map((im) => im._id);
-    const target = idx + dir;
-    if (target < 0 || target >= ids.length) return;
-    [ids[idx], ids[target]] = [ids[target], ids[idx]];
-    reorderImages({ id, coverImages: ids }).unwrap().catch(() => {});
-  }
-
   function addPost() {
     if (!newPost.postText) return;
     setPosts((p) => [...p, { id: `sp-${p.length + 1}`, ...newPost, status: 'queued' }]);
@@ -358,7 +423,15 @@ export default function NewsDetailPage({ params }) {
   function ContentEditor() {
     switch (meta.contentType) {
       case 'richSections':
-        return <RichSectionEditor sections={richSections} onChange={setRichSections} />;
+        return (
+          <RichSectionEditor
+            sections={richSections}
+            onChange={setRichSections}
+            articleId={isNew ? null : id}
+            coverUrl={coverImageUrl}
+            onSetCover={setCoverImageUrl}
+          />
+        );
       case 'sections':
         return (
           <div className="space-y-3">
@@ -554,7 +627,6 @@ export default function NewsDetailPage({ params }) {
           <div className="flex gap-1 rounded-xl border border-border bg-muted/30 p-1">
             {[
               { key: 'content', label: 'İçerik', icon: FileText },
-              { key: 'cover', label: 'Görseller', icon: ImageIcon },
               { key: 'social', label: 'Sosyal Medya', icon: Share2 },
             ].map(({ key, label, icon: Icon }) => (
               <button
@@ -581,112 +653,6 @@ export default function NewsDetailPage({ params }) {
               </CardHeader>
               <CardContent>
                 <ContentEditor />
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Cover Tab */}
-          {activeTab === 'cover' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Kapak Görseli & Galeri</CardTitle>
-                <CardToolbar>
-                  <Button variant="outline" size="sm" onClick={() => { setImgNotice(null); setAiOpen((v) => !v); }} disabled={isNew}>
-                    <Sparkles className="size-3.5" />
-                    AI Görsel
-                  </Button>
-                </CardToolbar>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {isNew && (
-                  <Alert variant="info"><AlertDescription>Görsel eklemek için önce haberi kaydedin.</AlertDescription></Alert>
-                )}
-                {imgNotice && (
-                  <Alert variant={imgNotice.type === 'error' ? 'destructive' : 'info'}>
-                    <AlertDescription>{imgNotice.text}</AlertDescription>
-                  </Alert>
-                )}
-
-                {/* AI üretim formu */}
-                {aiOpen && !isNew && (
-                  <div className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
-                    <label className="text-xs font-medium text-foreground">AI Görsel İstemi (prompt)</label>
-                    <textarea
-                      value={aiPrompt}
-                      onChange={(e) => setAiPrompt(e.target.value)}
-                      rows={2}
-                      placeholder="örn. Modern bir ofiste yapay zeka temalı, profesyonel haber görseli"
-                      className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                    />
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={handleAiImage} disabled={genImaging || !aiPrompt.trim()}>
-                        {genImaging ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                        {genImaging ? 'Üretiliyor…' : 'Üret & Galeriye Ekle'}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setAiOpen(false)} disabled={genImaging}>Vazgeç</Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Ana kapak */}
-                <div>
-                  <p className="mb-2 text-2sm font-medium text-muted-foreground">Ana Kapak Görseli</p>
-                  {mainUrl ? (
-                    <div className="relative w-full overflow-hidden rounded-xl border border-border">
-                      <img src={mainUrl} alt="cover" className="h-48 w-full object-cover" />
-                      <div className="absolute bottom-2 right-2 flex gap-1.5">
-                        <Button size="sm" variant="outline" className="bg-background/90" onClick={handleClearMain}>
-                          <X className="size-3.5" />Kaldır
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-muted/30 text-muted-foreground">
-                      <ImageIcon className="size-7" />
-                      <p className="text-sm">Ana kapak yok — galeriden "Ana yap" ile seçin</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Galeri */}
-                <div>
-                  <p className="mb-2 text-2sm font-medium text-muted-foreground">Galeri ({galleryImages.length})</p>
-                  {galleryImages.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-border py-6 text-center text-sm text-muted-foreground">
-                      Galeri boş. AI Görsel ile üretebilirsiniz.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                      {galleryImages.map((img, idx) => {
-                        const isMain = mainUrl && img.path === mainUrl;
-                        return (
-                          <div key={img._id} className={cn('group relative overflow-hidden rounded-lg border', isMain ? 'border-primary ring-1 ring-primary' : 'border-border')}>
-                            <img src={img.path} alt={img.name || ''} className="h-28 w-full object-cover" />
-                            {isMain && (
-                              <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-                                <Star className="size-3" />Ana
-                              </span>
-                            )}
-                            {/* Sıralama okları */}
-                            <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                              <button onClick={() => handleMoveImg(idx, -1)} disabled={idx === 0}
-                                className="rounded bg-background/90 p-1 disabled:opacity-30" title="Sola"><ChevronUp className="size-3 -rotate-90" /></button>
-                              <button onClick={() => handleMoveImg(idx, 1)} disabled={idx === galleryImages.length - 1}
-                                className="rounded bg-background/90 p-1 disabled:opacity-30" title="Sağa"><ChevronDown className="size-3 -rotate-90" /></button>
-                            </div>
-                            {/* Aksiyonlar */}
-                            <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 bg-foreground/40 py-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                              {!isMain && (
-                                <button onClick={() => handleSetMain(img)} className="rounded-md bg-background/90 px-2 py-0.5 text-xs font-medium hover:bg-background">Ana yap</button>
-                              )}
-                              <button onClick={() => handleRemoveImg(img._id)} className="rounded-md bg-destructive/90 p-1 text-white hover:bg-destructive" title="Kaldır"><Trash2 className="size-3" /></button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
               </CardContent>
             </Card>
           )}
