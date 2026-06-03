@@ -15,9 +15,14 @@ import {
   Loader2,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   AlertTriangle,
   Share2,
   Radio,
+  Flame,
+  Star,
+  Zap,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -55,6 +60,32 @@ import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
 import { statusMeta } from './_data';
 
 const DEFAULT_COUNTRY = DEFAULT_NEWS_COUNTRY;
+const PAGE_SIZE = 20;
+
+const CONTENT_TYPE_META = {
+  richSections: { label: 'Zengin Bölümler', variant: 'primary' },
+  sections: { label: 'Bölümler', variant: 'secondary' },
+  markdown: { label: 'Markdown', variant: 'muted' },
+  html: { label: 'HTML', variant: 'muted' },
+};
+const CONTENT_TYPE_OPTIONS = [
+  { value: 'all', label: 'Tüm Tipler' },
+  { value: 'richSections', label: 'Zengin Bölümler' },
+  { value: 'sections', label: 'Bölümler' },
+  { value: 'markdown', label: 'Markdown' },
+  { value: 'html', label: 'HTML' },
+];
+const SORT_OPTIONS = [
+  { value: 'updatedAt:desc', label: 'Güncelleme (Yeni → Eski)' },
+  { value: 'updatedAt:asc', label: 'Güncelleme (Eski → Yeni)' },
+  { value: 'publishedAt:desc', label: 'Yayın Tarihi (Yeni → Eski)' },
+  { value: 'publishedAt:asc', label: 'Yayın Tarihi (Eski → Yeni)' },
+  { value: 'createdAt:desc', label: 'Oluşturma (Yeni → Eski)' },
+  { value: 'title:asc', label: 'Başlık (A → Z)' },
+  { value: 'title:desc', label: 'Başlık (Z → A)' },
+  { value: 'viewCount:desc', label: 'Görüntülenme (Çok → Az)' },
+  { value: 'trendScore:desc', label: 'Trend Skoru (Yüksek → Düşük)' },
+];
 
 function formatTrDate(input) {
   if (!input) return '—';
@@ -494,14 +525,23 @@ export default function NewsListPage() {
 
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
   const [search, setSearch] = useState('');
+  const [submittedSearch, setSubmittedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [contentTypeFilter, setContentTypeFilter] = useState('all');
+  const [sortValue, setSortValue] = useState('updatedAt:desc');
+  const [page, setPage] = useState(1);
   const [showAI, setShowAI] = useState(false);
 
   // Ülke değişince kategori filtresini sıfırla (kategoriler ülkeye özgü)
   useEffect(() => {
     setCategoryFilter('all');
   }, [country]);
+
+  // Filtre/arama/sıralama değişince ilk sayfaya dön
+  useEffect(() => {
+    setPage(1);
+  }, [country, submittedSearch, statusFilter, categoryFilter, contentTypeFilter, sortValue]);
 
   const { data: tree = [] } = useGetCategoryTreeQuery(
     { countryCode: country },
@@ -514,31 +554,38 @@ export default function NewsListPage() {
     return m;
   }, [categories]);
 
+  const [sortField, sortOrder] = sortValue.split(':');
+  const applySearch = () => setSubmittedSearch(search.trim());
+
   const { data, isLoading, isFetching, error } = useGetNewsListQuery(
     {
       status: statusFilter === 'all' ? undefined : statusFilter,
       categoryId: categoryFilter === 'all' ? undefined : categoryFilter,
+      contentType: contentTypeFilter === 'all' ? undefined : contentTypeFilter,
+      query: submittedSearch || undefined,
       countryCode: country,
-      limit: 100,
+      sort: sortField,
+      order: sortOrder,
+      limit: PAGE_SIZE,
+      skip: (page - 1) * PAGE_SIZE,
     },
     { skip: !authorized },
   );
 
-  const items = useMemo(() => {
-    const raw = data?.items ?? [];
-    if (!search) return raw;
-    const q = search.toLowerCase();
-    return raw.filter((n) =>
-      [n.title, n.subtitle, ...(n.tags ?? [])].filter(Boolean).some((f) => f.toLowerCase().includes(q)),
-    );
-  }, [data, search]);
-
-  const filtered = items.map((n) => ({
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+  const filtered = (data?.items ?? []).map((n) => ({
     ...n,
     id: n._id ?? n.id,
-    categoryName: n.category?.name ?? catMap[n.categoryId] ?? '—',
+    categoryName: n.category?.name ?? n.categoryId?.name ?? catMap[n.categoryId] ?? '—',
+    thumb: n.imageUrl || n.coverImages?.[0]?.path || null,
   }));
   const isEmpty = !isLoading && !error && filtered.length === 0;
+
+  const resetFilters = () => {
+    setSearch(''); setSubmittedSearch(''); setStatusFilter('all');
+    setCategoryFilter('all'); setContentTypeFilter('all'); setSortValue('updatedAt:desc');
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
@@ -567,17 +614,21 @@ export default function NewsListPage() {
       {/* Toolbar */}
       <Card className="mb-5">
         <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <div className="relative flex-1 min-w-[220px]">
+          <div className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Başlık, etiket veya içerik ara…"
+              placeholder="Başlık veya slug ara…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
               className="h-9 w-full rounded-lg border border-input bg-background ps-9 pe-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
             />
           </div>
-          <div className="w-40">
+          <Button variant="outline" onClick={applySearch} disabled={isFetching}>
+            <Search className="size-4" />Ara
+          </Button>
+          <div className="w-36">
             <Select value={country} onValueChange={setCountry}>
               <SelectTrigger><SelectValue placeholder="Ülke" /></SelectTrigger>
               <SelectContent>
@@ -587,7 +638,7 @@ export default function NewsListPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="w-36">
+          <div className="w-32">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger><SelectValue placeholder="Durum" /></SelectTrigger>
               <SelectContent>
@@ -598,12 +649,28 @@ export default function NewsListPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="w-44">
+          <div className="w-40">
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
               <SelectTrigger><SelectValue placeholder="Kategori" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tüm Kategoriler</SelectItem>
                 {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-40">
+            <Select value={contentTypeFilter} onValueChange={setContentTypeFilter}>
+              <SelectTrigger><SelectValue placeholder="İçerik Tipi" /></SelectTrigger>
+              <SelectContent>
+                {CONTENT_TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-56">
+            <Select value={sortValue} onValueChange={setSortValue}>
+              <SelectTrigger><SelectValue placeholder="Sıralama" /></SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -652,11 +719,12 @@ export default function NewsListPage() {
               <FileText className="size-6 text-muted-foreground" />
               <p className="font-semibold">Haber bulunamadı</p>
               <p className="text-sm text-muted-foreground">Filtreleri değiştirerek yeniden deneyin.</p>
-              <Button size="sm" variant="outline" onClick={() => { setSearch(''); setStatusFilter('all'); setCategoryFilter('all'); }}>
+              <Button size="sm" variant="outline" onClick={resetFilters}>
                 Filtreleri sıfırla
               </Button>
             </div>
           ) : (
+            <>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -664,8 +732,10 @@ export default function NewsListPage() {
                     <TableHead className="w-12" />
                     <TableHead>Başlık</TableHead>
                     <TableHead>Kategori</TableHead>
+                    <TableHead>İçerik Tipi</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead>Görüntülenme</TableHead>
+                    <TableHead>Süre</TableHead>
                     <TableHead>Tarih</TableHead>
                     <TableHead className="w-20" />
                   </TableRow>
@@ -675,34 +745,35 @@ export default function NewsListPage() {
                     <TableRow key={n.id}>
                       {/* Thumbnail */}
                       <TableCell className="py-2">
-                        {n.imageUrl ? (
-                          <img
-                            src={n.imageUrl}
-                            alt={n.title}
-                            className="size-11 rounded-md object-cover"
-                          />
+                        {n.thumb ? (
+                          <img src={n.thumb} alt={n.title} className="size-11 rounded-md object-cover" />
                         ) : (
                           <div className="flex size-11 items-center justify-center rounded-md bg-muted text-muted-foreground">
                             <FileText className="size-4" />
                           </div>
                         )}
                       </TableCell>
-                      {/* Title */}
+                      {/* Title + flags */}
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
-                          <Link
-                            href={`/cms/content/news/${n.id}`}
-                            className="line-clamp-1 max-w-xs font-medium text-foreground hover:text-primary"
-                          >
-                            {n.title}
-                          </Link>
-                          <span className="line-clamp-1 max-w-xs text-xs text-muted-foreground">
-                            {n.subtitle}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <Link href={`/cms/content/news/${n.id}`} className="line-clamp-1 max-w-xs font-medium text-foreground hover:text-primary">
+                              {n.title}
+                            </Link>
+                            {n.isBreaking && <Flame className="size-3.5 shrink-0 text-red-500" title="Son dakika" />}
+                            {n.isHero && <Zap className="size-3.5 shrink-0 text-amber-500" title="Hero" />}
+                            {n.isFeatured && <Star className="size-3.5 shrink-0 text-violet-500" title="Öne çıkan" />}
+                          </div>
+                          <span className="line-clamp-1 max-w-xs text-xs text-muted-foreground">{n.subtitle}</span>
                         </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary">{n.categoryName}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={CONTENT_TYPE_META[n.contentType]?.variant ?? 'muted'}>
+                          {CONTENT_TYPE_META[n.contentType]?.label ?? n.contentType ?? '—'}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusMeta[n.status]?.variant ?? 'muted'}>
@@ -713,14 +784,15 @@ export default function NewsListPage() {
                         {(n.viewCount ?? 0) > 0 ? n.viewCount.toLocaleString('tr-TR') : '—'}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
+                        {n.readingTimeMinutes ? `${n.readingTimeMinutes} dk` : '—'}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                         {formatTrDate(n.publishedAt ?? n.updatedAt)}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
                           <Link href={`/cms/content/news/${n.id}`}>
-                            <Button variant="ghost" size="icon" className="size-7">
-                              <Pencil className="size-3.5" />
-                            </Button>
+                            <Button variant="ghost" size="icon" className="size-7"><Pencil className="size-3.5" /></Button>
                           </Link>
                           <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive">
                             <Trash2 className="size-3.5" />
@@ -732,6 +804,23 @@ export default function NewsListPage() {
                 </TableBody>
               </Table>
             </div>
+
+            {/* Pagination */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+              <p className="text-xs text-muted-foreground">
+                Sayfa <span className="font-medium text-foreground">{page}</span> / {totalPages}
+                {' · '}Toplam <span className="font-medium text-foreground">{total}</span> haber
+              </p>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" disabled={page <= 1 || isFetching} onClick={() => setPage((p) => Math.max(p - 1, 1))}>
+                  <ChevronLeft className="size-4" />Önceki
+                </Button>
+                <Button size="sm" variant="outline" disabled={page >= totalPages || isFetching} onClick={() => setPage((p) => Math.min(p + 1, totalPages))}>
+                  Sonraki<ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
+            </>
           )}
         </CardContent>
       </Card>
