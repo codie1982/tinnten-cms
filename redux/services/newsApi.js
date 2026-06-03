@@ -85,6 +85,33 @@ export const newsApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { status, counts, social, indexNow, logs, ... }
     }),
 
+    /* ─── Görsel yönetimi ─── */
+    attachNewsImage: build.mutation({
+      query: ({ id, imageId }) => ({ url: ENDPOINTS.news.images(id), method: 'POST', body: { imageId } }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+    }),
+    detachNewsImage: build.mutation({
+      query: ({ id, imageId }) => ({ url: ENDPOINTS.news.image(id, imageId), method: 'DELETE' }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+    }),
+    setNewsCover: build.mutation({
+      query: ({ id, imageUrl }) => ({ url: ENDPOINTS.news.cover(id), method: 'PATCH', body: { imageUrl } }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+    }),
+    clearNewsCover: build.mutation({
+      query: ({ id }) => ({ url: ENDPOINTS.news.cover(id), method: 'DELETE' }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+    }),
+    generateNewsAiImage: build.mutation({
+      query: ({ id, prompt, size }) => ({ url: ENDPOINTS.news.aiImage(id), method: 'POST', body: { prompt, ...(size ? { size } : {}) } }),
+      transformResponse: (res) => res?.data ?? res, // { imageId, url, revisedPrompt }
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+    }),
+    reorderNewsImages: build.mutation({
+      query: ({ id, coverImages }) => ({ url: ENDPOINTS.news.update(id), method: 'PATCH', body: { coverImages } }),
+      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+    }),
+
     /* ─── Sosyal medya paylaşımları ─── */
     getSocialPosts: build.query({
       query: (id) => ENDPOINTS.news.socialPosts(id),
@@ -114,6 +141,12 @@ export const {
   useGenerateNewsMutation,
   useGetNewsJobsQuery,
   useGetNewsJobQuery,
+  useAttachNewsImageMutation,
+  useDetachNewsImageMutation,
+  useSetNewsCoverMutation,
+  useClearNewsCoverMutation,
+  useGenerateNewsAiImageMutation,
+  useReorderNewsImagesMutation,
   useGetSocialPostsQuery,
   useCreateSocialPostMutation,
 } = newsApi;

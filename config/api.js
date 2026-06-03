@@ -95,6 +95,7 @@ export const ENDPOINTS = {
     job: (id) => `/news-content/generate/jobs/${id}`,
     aiImage: (id) => `/news-content/${id}/ai-image`,
     images: (id) => `/news-content/${id}/images`,
+    image: (id, imageId) => `/news-content/${id}/images/${imageId}`,
     cover: (id) => `/news-content/${id}/cover`,
     socialPosts: (id) => `/news-content/${id}/social-posts`,
   },
