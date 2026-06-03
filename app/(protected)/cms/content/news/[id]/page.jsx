@@ -232,7 +232,7 @@ export default function NewsDetailPage({ params }) {
       title: doc.title || '',
       subtitle: doc.subtitle || '',
       slug: doc.slug || '',
-      categoryId: doc.categoryId ? String(doc.categoryId) : '',
+      categoryId: doc.categoryId ? String(doc.categoryId._id ?? doc.categoryId) : '',
       tags: (doc.tags || []).join(', '),
       contentType: doc.contentType || 'richSections',
     });
