@@ -445,6 +445,9 @@ export default function NewsDetailPage({ params }) {
   }
 
   function buildBody() {
+    // Kapak görseli odak/oran ayarları: kapak yapılan richSection'dan türet
+    // (top-level imageUrl public hero'da bu değerlerle render edilir).
+    const coverSec = richSections.find((s) => s.imageUrl && s.imageUrl === coverImageUrl);
     return {
       title: meta.title,
       subtitle: meta.subtitle,
@@ -457,6 +460,9 @@ export default function NewsDetailPage({ params }) {
       htmlContent,
       markdownContent: mdContent,
       imageUrl: coverImageUrl || null,
+      imageFocalX: coverSec?.imageFocalX ?? 50,
+      imageFocalY: coverSec?.imageFocalY ?? 50,
+      imageAspect: coverSec?.imageAspect || '16/9',
       countryCode: country,
       status,
     };
