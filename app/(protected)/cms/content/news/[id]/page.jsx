@@ -140,7 +140,7 @@ const FITS = [['cover', 'Kırp'], ['contain', 'Sığdır'], ['fill', 'Ger']];
 const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
 
 /* ─── Bölüm görsel alanı (her bölümün üstünde) — odak + en-boy ayarı ─── */
-function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover }) {
+function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover, emptyText = 'Bu bölümde görsel yok' }) {
   const [genAiImage, { isLoading: genImaging }] = useGenerateNewsAiImageMutation();
   const [editUrl, setEditUrl] = useState(false);
   const [urlVal, setUrlVal] = useState(section.imageUrl || '');
@@ -201,7 +201,7 @@ function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover })
             {!focalMode && (
               <div className="absolute bottom-2 right-2 flex gap-1.5">
                 {!isCover && (
-                  <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(img)}>
+                  <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(section)}>
                     <Star className="size-3.5" />Kapak yap
                   </Button>
                 )}
@@ -255,7 +255,7 @@ function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover })
         </>
       ) : (
         <div className="flex items-center justify-between gap-2 rounded-lg border-2 border-dashed border-border px-3 py-3 text-muted-foreground">
-          <span className="flex items-center gap-2 text-sm"><ImageIcon className="size-4" />Bu bölümde görsel yok</span>
+          <span className="flex items-center gap-2 text-sm"><ImageIcon className="size-4" />{emptyText}</span>
           <div className="flex gap-1.5">
             <Button size="sm" variant="outline" className="h-7" onClick={() => { setUrlVal(''); setEditUrl((v) => !v); }}>URL ekle</Button>
             <Button size="sm" variant="outline" className="h-7" onClick={() => setAiOpen((v) => !v)} disabled={!articleId} title={!articleId ? 'Önce kaydedin' : ''}>
@@ -398,6 +398,10 @@ export default function NewsDetailPage({ params }) {
   const [mdContent, setMdContent] = useState('');
   const [status, setStatus] = useState('draft');
   const [coverImageUrl, setCoverImageUrl] = useState(''); // ana kapak (top-level imageUrl)
+  const [coverFocalX, setCoverFocalX] = useState(50);
+  const [coverFocalY, setCoverFocalY] = useState(50);
+  const [coverAspect, setCoverAspect] = useState('16/9');
+  const [coverFit, setCoverFit] = useState('cover');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState('content'); // content | social
 
@@ -418,6 +422,10 @@ export default function NewsDetailPage({ params }) {
     setMdContent(doc.markdownContent || '');
     setStatus(doc.status || 'draft');
     setCoverImageUrl(doc.imageUrl || '');
+    setCoverFocalX(doc.imageFocalX ?? 50);
+    setCoverFocalY(doc.imageFocalY ?? 50);
+    setCoverAspect(doc.imageAspect || '16/9');
+    setCoverFit(doc.imageFit || 'cover');
     setCountry(doc.countryCode || DEFAULT_COUNTRY);
   }, [doc]);
 
@@ -459,10 +467,32 @@ export default function NewsDetailPage({ params }) {
     );
   }
 
+  // Kapak görseli — SectionImageArea'yı tüm içerik tipleri için yeniden kullanır.
+  const coverSection = {
+    imageUrl: coverImageUrl,
+    imageAlt: meta.title,
+    imageFocalX: coverFocalX,
+    imageFocalY: coverFocalY,
+    imageAspect: coverAspect,
+    imageFit: coverFit,
+  };
+  function updateCover(patch) {
+    if ('imageUrl' in patch) setCoverImageUrl(patch.imageUrl || '');
+    if ('imageFocalX' in patch) setCoverFocalX(patch.imageFocalX);
+    if ('imageFocalY' in patch) setCoverFocalY(patch.imageFocalY);
+    if ('imageAspect' in patch) setCoverAspect(patch.imageAspect);
+    if ('imageFit' in patch) setCoverFit(patch.imageFit);
+  }
+  // RichSection'dan "Kapak yap": görseli + sunum ayarlarını kapağa kopyala.
+  function handleSetCover(sec) {
+    setCoverImageUrl(sec.imageUrl || '');
+    setCoverFocalX(sec.imageFocalX ?? 50);
+    setCoverFocalY(sec.imageFocalY ?? 50);
+    setCoverAspect(sec.imageAspect || '16/9');
+    setCoverFit(sec.imageFit || 'cover');
+  }
+
   function buildBody() {
-    // Kapak görseli odak/oran ayarları: kapak yapılan richSection'dan türet
-    // (top-level imageUrl public hero'da bu değerlerle render edilir).
-    const coverSec = richSections.find((s) => s.imageUrl && s.imageUrl === coverImageUrl);
     return {
       title: meta.title,
       subtitle: meta.subtitle,
@@ -475,10 +505,10 @@ export default function NewsDetailPage({ params }) {
       htmlContent,
       markdownContent: mdContent,
       imageUrl: coverImageUrl || null,
-      imageFocalX: coverSec?.imageFocalX ?? 50,
-      imageFocalY: coverSec?.imageFocalY ?? 50,
-      imageAspect: coverSec?.imageAspect || '16/9',
-      imageFit: coverSec?.imageFit || 'cover',
+      imageFocalX: coverFocalX,
+      imageFocalY: coverFocalY,
+      imageAspect: coverAspect,
+      imageFit: coverFit,
       countryCode: country,
       status,
     };
@@ -547,7 +577,7 @@ export default function NewsDetailPage({ params }) {
             onChange={setRichSections}
             articleId={isNew ? null : id}
             coverUrl={coverImageUrl}
-            onSetCover={setCoverImageUrl}
+            onSetCover={handleSetCover}
           />
         );
       case 'sections':
@@ -773,14 +803,35 @@ export default function NewsDetailPage({ params }) {
 
           {/* Content Tab */}
           {activeTab === 'content' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>{contentTypeMeta[meta.contentType]?.label ?? 'İçerik'} Editörü</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ContentEditor />
-              </CardContent>
-            </Card>
+            <div className="space-y-4">
+              {/* Kapak / öne çıkan görsel — TÜM içerik tipleri için (richSections, sections, html, markdown) */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Kapak / Öne Çıkan Görsel</CardTitle>
+                  <CardToolbar>
+                    <span className="text-xs text-muted-foreground">Public haber detayında hero olarak gösterilir</span>
+                  </CardToolbar>
+                </CardHeader>
+                <CardContent>
+                  <SectionImageArea
+                    section={coverSection}
+                    articleId={isNew ? null : id}
+                    isCover
+                    onUpdate={updateCover}
+                    onSetCover={() => {}}
+                    emptyText="Henüz kapak görseli eklenmedi — URL ekleyin veya AI ile üretin"
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{contentTypeMeta[meta.contentType]?.label ?? 'İçerik'} Editörü</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ContentEditor />
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {/* Social Tab */}
