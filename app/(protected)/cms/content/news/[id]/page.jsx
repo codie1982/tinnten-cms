@@ -136,6 +136,7 @@ function moveItem(arr, idx, dir) {
 }
 
 const ASPECTS = [['16/9', '16:9'], ['4/3', '4:3'], ['1/1', '1:1'], ['3/2', '3:2']];
+const FITS = [['cover', 'Kırp'], ['contain', 'Sığdır'], ['fill', 'Ger']];
 const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
 
 /* ─── Bölüm görsel alanı (her bölümün üstünde) — odak + en-boy ayarı ─── */
@@ -151,6 +152,7 @@ function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover })
   const fx = section.imageFocalX ?? 50;
   const fy = section.imageFocalY ?? 50;
   const aspect = section.imageAspect || '16/9';
+  const fit = section.imageFit || 'cover';
 
   async function genAi() {
     if (!aiPrompt.trim() || !articleId) return;
@@ -183,7 +185,7 @@ function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover })
             style={{ aspectRatio: aspect.replace('/', ' / ') }}
             onClick={onFocalClick}
           >
-            <img src={img} alt={section.imageAlt || ''} className="h-full w-full object-cover" style={{ objectPosition: `${fx}% ${fy}%` }} />
+            <img src={img} alt={section.imageAlt || ''} className="h-full w-full" style={{ objectFit: fit, objectPosition: `${fx}% ${fy}%` }} />
             {isCover && (
               <span className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">
                 <Star className="size-3" />Kapak
@@ -221,6 +223,19 @@ function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover })
                 onClick={() => onUpdate({ imageAspect: val })}
                 className={cn('rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
                   aspect === val ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent')}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="mx-1 h-4 w-px bg-border" />
+            <span className="text-xs text-muted-foreground">Sığdır:</span>
+            {FITS.map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => onUpdate({ imageFit: val })}
+                className={cn('rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
+                  fit === val ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent')}
               >
                 {label}
               </button>
@@ -463,6 +478,7 @@ export default function NewsDetailPage({ params }) {
       imageFocalX: coverSec?.imageFocalX ?? 50,
       imageFocalY: coverSec?.imageFocalY ?? 50,
       imageAspect: coverSec?.imageAspect || '16/9',
+      imageFit: coverSec?.imageFit || 'cover',
       countryCode: country,
       status,
     };
