@@ -275,6 +275,13 @@ function AIGenerateModal({ onClose }) {
     }));
   }
 
+  function selectAllCountries() {
+    setForm((f) => ({ ...f, countries: [...AI_COUNTRIES] }));
+  }
+  function clearCountries() {
+    setForm((f) => ({ ...f, countries: [] }));
+  }
+
   async function handleGenerate() {
     if (!canSubmit) return;
     setErrorMsg('');
@@ -285,7 +292,8 @@ function AIGenerateModal({ onClose }) {
         mode: 'general',
         countries: form.countries,
         contentType: form.contentType,
-        maxCategories: form.maxCategories ? Number(form.maxCategories) : undefined,
+        // 'all' → 1000 (backend üst sınırı = tüm kategoriler; script ülke başına uygular)
+        maxCategories: form.maxCategories === 'all' ? 1000 : (form.maxCategories ? Number(form.maxCategories) : undefined),
       };
     } else if (mode === 'batch') {
       let jobs;
@@ -416,7 +424,18 @@ function AIGenerateModal({ onClose }) {
                     otomatik haber üretilir. Diller ülkeden türetilir. Çok sayıda LLM çağrısı yapılabilir.
                   </p>
                   <div className="space-y-1.5">
-                    <label className="text-2sm font-medium">Ülkeler (çoklu) *</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-2sm font-medium">Ülkeler / Diller (çoklu) *</label>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={selectAllCountries} className="text-xs font-medium text-primary hover:underline">
+                          Tümünü seç
+                        </button>
+                        <span className="text-muted-foreground/40">·</span>
+                        <button type="button" onClick={clearCountries} className="text-xs text-muted-foreground hover:underline">
+                          Temizle
+                        </button>
+                      </div>
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {NEWS_COUNTRIES.map((c) => {
                         const on = form.countries.includes(c.code);
@@ -445,11 +464,21 @@ function AIGenerateModal({ onClose }) {
                           {['3', '5', '10', '20', '50'].map((n) => (
                             <SelectItem key={n} value={n}>{n} kategori</SelectItem>
                           ))}
+                          <SelectItem value="all">Tüm kategoriler</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <FormatSelect value={form.contentType} onChange={(v) => setForm((f) => ({ ...f, contentType: v }))} />
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Seçim:{' '}
+                    <span className="font-medium text-foreground">{form.countries.length}</span> dil/ülke
+                    {' × '}
+                    <span className="font-medium text-foreground">{form.maxCategories === 'all' ? 'tüm' : form.maxCategories}</span> kategori
+                    {(form.maxCategories === 'all' || form.countries.length >= 5) && (
+                      <span className="text-amber-600"> — büyük üretim; uzun sürebilir ve yüksek LLM maliyeti oluşabilir.</span>
+                    )}
+                  </p>
                 </>
               )}
 
