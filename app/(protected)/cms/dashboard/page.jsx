@@ -56,11 +56,16 @@ const COMPANY_STATUS_META = [
 
 /* ─── page ─── */
 export default function DashboardPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const rawName = session?.user?.name || session?.user?.email || '';
   const firstName = rawName.split(' ')[0].split('@')[0] || 'Kullanıcı';
 
-  const { data: stats, isLoading, isFetching, error } = useGetDashboardStatsQuery();
+  const { data: stats, isLoading, isFetching, error } = useGetDashboardStatsQuery(undefined, {
+    skip: status !== 'authenticated',
+  });
+
+  // Session yüklenirken de skeleton göster
+  const showSkeleton = status === 'loading' || isLoading;
 
   const kpis = [
     { label: 'Toplam Kullanıcı', value: stats?.users?.total, icon: Users, tint: 'bg-blue-500/10 text-blue-600', href: '/cms/users/list' },
@@ -120,7 +125,7 @@ export default function DashboardPage() {
                   <span className={cn('flex size-11 items-center justify-center rounded-xl', k.tint)}>
                     <Icon className="size-5" />
                   </span>
-                  {isLoading ? (
+                  {showSkeleton ? (
                     <Skeleton className="mt-4 h-8 w-24" />
                   ) : (
                     <p className="mt-4 text-2xl font-bold tracking-tight text-foreground">{fmtNumber(k.value)}</p>
@@ -166,7 +171,7 @@ export default function DashboardPage() {
             </CardToolbar>
           </CardHeader>
           <CardContent className="p-2">
-            {isLoading ? (
+            {showSkeleton ? (
               <div className="space-y-2 p-2">
                 {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
               </div>
@@ -202,7 +207,7 @@ export default function DashboardPage() {
               </CardToolbar>
             </CardHeader>
             <CardContent className="space-y-4">
-              {isLoading ? (
+              {showSkeleton ? (
                 Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)
               ) : (
                 COMPANY_STATUS_META.map((s) => {
@@ -235,18 +240,18 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Wrench className="size-4" /><span className="text-xs">Hizmet</span>
                 </div>
-                <p className="mt-1 text-xl font-bold text-foreground">{isLoading ? '…' : fmtNumber(companies?.service)}</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{showSkeleton ? '…' : fmtNumber(companies?.service)}</p>
               </div>
               <div className="rounded-lg border border-border p-3">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Store className="size-4" /><span className="text-xs">E-ticaret</span>
                 </div>
-                <p className="mt-1 text-xl font-bold text-foreground">{isLoading ? '…' : fmtNumber(companies?.ecommerce)}</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{showSkeleton ? '…' : fmtNumber(companies?.ecommerce)}</p>
               </div>
             </CardContent>
             <CardFooter className="justify-between border-t border-dashed border-border/60 py-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5"><CreditCard className="size-3.5" />Aktif abonelik</span>
-              <span className="font-semibold text-foreground">{isLoading ? '…' : fmtNumber(stats?.subscriptions?.active)}</span>
+              <span className="font-semibold text-foreground">{showSkeleton ? '…' : fmtNumber(stats?.subscriptions?.active)}</span>
             </CardFooter>
           </Card>
         </div>
