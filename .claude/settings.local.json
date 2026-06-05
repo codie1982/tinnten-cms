@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(grep -E \"\\\\.\\(jsx|js|tsx|ts\\)$\")",
-      "Bash(xargs cat)"
+      "Bash(xargs cat)",
+      "Read(//Users/nilayerol/developer/tinnten/tinnten-server/**)",
+      "Bash(sed -n '1,60p' src/lib/Keycloak.js)",
+      "Bash(npx eslint *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git --no-pager diff \"app/\\(protected\\)/cms/content/news/[id]/page.jsx\")",
+      "Bash(node -e \"require\\('esbuild'\\).buildSync\\({entryPoints:['app/\\(protected\\)/cms/content/news/[id]/page.jsx'],bundle:false,write:false,loader:{'.jsx':'jsx'}}\\); console.log\\('parse OK'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(rg -l --files)",
+      "Bash(rg --files app)",
+      "Bash(rg \"page.jsx$\")",
+      "Read(//Users/nilayerol/developer/tinnten/**)"
     ]
   }
 }
