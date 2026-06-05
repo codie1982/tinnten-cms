@@ -105,7 +105,9 @@ export const newsApi = baseApi.injectEndpoints({
     generateNewsAiImage: build.mutation({
       query: ({ id, prompt, size }) => ({ url: ENDPOINTS.news.aiImage(id), method: 'POST', body: { prompt, ...(size ? { size } : {}) } }),
       transformResponse: (res) => res?.data ?? res, // { imageId, url, revisedPrompt }
-      invalidatesTags: (r, e, { id }) => [{ type: 'News', id }],
+      // Not: makale dokümanını değiştirmez (sadece görsel üretip URL döner; URL yerel forma uygulanır).
+      // Detay tag'ini invalidate ETMİYORUZ — yoksa getNews refetch edilip useEffect formu
+      // sunucu değerlerine resetler ve henüz kaydedilmemiş düzenlemeleri (yeni görsel dahil) siler.
     }),
     reorderNewsImages: build.mutation({
       query: ({ id, coverImages }) => ({ url: ENDPOINTS.news.update(id), method: 'PATCH', body: { coverImages } }),

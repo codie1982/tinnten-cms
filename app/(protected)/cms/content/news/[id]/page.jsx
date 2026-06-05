@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -65,6 +65,7 @@ import {
 } from '@/redux/services';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
 import { statusMeta, contentTypeMeta } from '../_data';
+import { marked } from 'marked';
 
 const DEFAULT_COUNTRY = DEFAULT_NEWS_COUNTRY;
 
@@ -102,19 +103,30 @@ function fmtDateTime(value) {
 }
 
 /* ─── Simple toolbar for textarea ─── */
-function EditorToolbar({ onInsert }) {
-  const tools = [
-    { icon: Bold, label: 'Kalın', insert: '**metin**' },
-    { icon: Italic, label: 'İtalik', insert: '_metin_' },
-    { icon: Hash, label: 'Başlık', insert: '\n## Başlık\n' },
-    { icon: List, label: 'Liste', insert: '\n- öğe\n' },
-    { icon: LinkIcon, label: 'Bağlantı', insert: '[metin](url)' },
+function EditorToolbar({ onInsert, mode = 'markdown' }) {
+  const markdownTools = [
+    { icon: Bold,      label: 'Kalın',    insert: '**metin**' },
+    { icon: Italic,    label: 'İtalik',   insert: '_metin_' },
+    { icon: Hash,      label: 'Başlık',   insert: '\n## Başlık\n' },
+    { icon: List,      label: 'Liste',    insert: '\n- öğe\n' },
+    { icon: LinkIcon,  label: 'Bağlantı', insert: '[metin](url)' },
+    { icon: ImageIcon, label: 'Görsel',   insert: '![açıklama](https://görsel-url)' },
   ];
+  const htmlTools = [
+    { icon: Bold,      label: 'Kalın',    insert: '<strong>metin</strong>' },
+    { icon: Italic,    label: 'İtalik',   insert: '<em>metin</em>' },
+    { icon: Hash,      label: 'Başlık',   insert: '\n<h2>Başlık</h2>\n' },
+    { icon: List,      label: 'Liste',    insert: '\n<ul>\n  <li>öğe</li>\n</ul>\n' },
+    { icon: LinkIcon,  label: 'Bağlantı', insert: '<a href="url">metin</a>' },
+    { icon: ImageIcon, label: 'Görsel',   insert: '<img src="https://görsel-url" alt="açıklama" style="max-width:100%" />' },
+  ];
+  const tools = mode === 'html' ? htmlTools : markdownTools;
   return (
     <div className="flex items-center gap-0.5 rounded-t-lg border border-b-0 border-input bg-muted/40 px-2 py-1.5">
       {tools.map(({ icon: Icon, label, insert }) => (
         <button
           key={label}
+          type="button"
           title={label}
           onClick={() => onInsert(insert)}
           className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
@@ -139,8 +151,32 @@ const ASPECTS = [['16/9', '16:9'], ['4/3', '4:3'], ['1/1', '1:1'], ['3/2', '3:2'
 const FITS = [['cover', 'Kırp'], ['contain', 'Sığdır'], ['fill', 'Ger']];
 const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
 
+function insertAtCursor(textareaRef, currentValue, insert) {
+  const el = textareaRef?.current;
+  if (!el) return currentValue + insert;
+  const start = el.selectionStart ?? currentValue.length;
+  const end = el.selectionEnd ?? currentValue.length;
+  const next = currentValue.slice(0, start) + insert + currentValue.slice(end);
+  requestAnimationFrame(() => {
+    el.focus();
+    el.setSelectionRange(start + insert.length, start + insert.length);
+  });
+  return next;
+}
+
+const PREVIEW_CLASSES =
+  'h-[calc(100%-22px)] min-h-[200px] overflow-y-auto rounded-lg border border-border bg-background px-4 py-3 text-sm leading-relaxed ' +
+  '[&_img]:max-w-full [&_img]:rounded-md [&_img]:my-2 ' +
+  '[&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mb-3 ' +
+  '[&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mb-2 ' +
+  '[&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mb-2 ' +
+  '[&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 ' +
+  '[&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-3 [&_li]:mb-1 ' +
+  '[&_a]:text-primary [&_a]:underline ' +
+  '[&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground';
+
 /* ─── Bölüm görsel alanı (her bölümün üstünde) — odak + en-boy ayarı ─── */
-function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover, emptyText = 'Bu bölümde görsel yok' }) {
+function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover, coverToggle = false, emptyText = 'Bu bölümde görsel yok' }) {
   const [genAiImage, { isLoading: genImaging }] = useGenerateNewsAiImageMutation();
   const [editUrl, setEditUrl] = useState(false);
   const [urlVal, setUrlVal] = useState(section.imageUrl || '');
@@ -200,10 +236,16 @@ function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover, e
             )}
             {!focalMode && (
               <div className="absolute bottom-2 right-2 flex gap-1.5">
-                {!isCover && (
-                  <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(section)}>
-                    <Star className="size-3.5" />Kapak yap
-                  </Button>
+                {coverToggle && (
+                  isCover ? (
+                    <Button size="sm" variant="default" className="h-7" onClick={() => onSetCover(null)} title="Bu görseli kapaktan kaldır">
+                      <Star className="size-3.5 fill-current" />Kapağı kaldır
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(section)} title="Bu görseli kapak yap">
+                      <Star className="size-3.5" />Kapak yap
+                    </Button>
+                  )
                 )}
                 <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => { setUrlVal(img); setEditUrl((v) => !v); }}>Değiştir</Button>
                 <Button size="sm" variant="outline" className="h-7 bg-background/90 text-destructive" onClick={() => onUpdate({ imageUrl: '' })}>
@@ -316,6 +358,10 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
     onChange(sections.filter((_, i) => i !== idx).map((s, i) => ({ ...s, order: i + 1 })));
   }
 
+  // Kapak tekildir: yalnızca URL'i kapakla eşleşen İLK bölüm "Kapak" rozeti alır
+  // (aynı URL birden çok bölümde olsa bile iki rozet görünmez).
+  const coverIdx = sections.findIndex((s) => s.imageUrl && s.imageUrl === coverUrl);
+
   return (
     <div className="space-y-3">
       {sections.map((sec, idx) => (
@@ -324,7 +370,8 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
           <SectionImageArea
             section={sec}
             articleId={articleId}
-            isCover={!!sec.imageUrl && sec.imageUrl === coverUrl}
+            isCover={idx === coverIdx}
+            coverToggle
             onUpdate={(patch) => onChange(sections.map((s, i) => (i === idx ? { ...s, ...patch } : s)))}
             onSetCover={onSetCover}
           />
@@ -393,7 +440,10 @@ export default function NewsDetailPage({ params }) {
     title: '', subtitle: '', slug: '', categoryId: '', tags: '', contentType: 'richSections',
   });
   const [richSections, setRichSections] = useState([{ heading: '', body: '', order: 1 }]);
-  const [sections, setSections] = useState([{ heading: '', text: '', order: 1 }]);
+  const [sections, setSections] = useState([{
+    heading: '', text: '', order: 1,
+    imageUrl: '', imageFocalX: 50, imageFocalY: 50, imageAspect: '16/9', imageFit: 'cover',
+  }]);
   const [htmlContent, setHtmlContent] = useState('');
   const [mdContent, setMdContent] = useState('');
   const [status, setStatus] = useState('draft');
@@ -404,6 +454,9 @@ export default function NewsDetailPage({ params }) {
   const [coverFit, setCoverFit] = useState('cover');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState('content'); // content | social
+
+  const htmlTextareaRef = useRef(null);
+  const mdTextareaRef = useRef(null);
 
   // Mevcut haber yüklenince formu doldur
   useEffect(() => {
@@ -417,7 +470,20 @@ export default function NewsDetailPage({ params }) {
       contentType: doc.contentType || 'richSections',
     });
     setRichSections(doc.richSections?.length ? doc.richSections : [{ heading: '', body: '', order: 1 }]);
-    setSections(doc.content?.length ? doc.content : [{ heading: '', text: '', order: 1 }]);
+    setSections(
+      doc.content?.length
+        ? doc.content.map((s) => ({
+            heading: s.heading || '',
+            text: s.text || '',
+            order: s.order ?? 1,
+            imageUrl: s.imageUrl || '',
+            imageFocalX: s.imageFocalX ?? 50,
+            imageFocalY: s.imageFocalY ?? 50,
+            imageAspect: s.imageAspect || '16/9',
+            imageFit: s.imageFit || 'cover',
+          }))
+        : [{ heading: '', text: '', order: 1, imageUrl: '', imageFocalX: 50, imageFocalY: 50, imageAspect: '16/9', imageFit: 'cover' }]
+    );
     setHtmlContent(doc.htmlContent || '');
     setMdContent(doc.markdownContent || '');
     setStatus(doc.status || 'draft');
@@ -483,8 +549,18 @@ export default function NewsDetailPage({ params }) {
     if ('imageAspect' in patch) setCoverAspect(patch.imageAspect);
     if ('imageFit' in patch) setCoverFit(patch.imageFit);
   }
-  // RichSection'dan "Kapak yap": görseli + sunum ayarlarını kapağa kopyala.
+  // Bölümden "Kapak yap" (toggle): sec verilirse görseli + sunum ayarlarını kapağa kopyala,
+  // null verilirse (kapağı kaldır) kapağı temizle. Kapak tekildir — yeni kapak set edilince
+  // imageUrl üzerine yazılır, böylece eski bölümün "Kapak" rozeti otomatik kalkar.
   function handleSetCover(sec) {
+    if (!sec) {
+      setCoverImageUrl('');
+      setCoverFocalX(50);
+      setCoverFocalY(50);
+      setCoverAspect('16/9');
+      setCoverFit('cover');
+      return;
+    }
     setCoverImageUrl(sec.imageUrl || '');
     setCoverFocalX(sec.imageFocalX ?? 50);
     setCoverFocalY(sec.imageFocalY ?? 50);
@@ -580,12 +656,24 @@ export default function NewsDetailPage({ params }) {
             onSetCover={handleSetCover}
           />
         );
-      case 'sections':
+      case 'sections': {
+        // Kapak tekildir: yalnızca URL'i kapakla eşleşen İLK bölüm "Kapak" rozeti alır.
+        const sectionsCoverIdx = sections.findIndex((s) => s.imageUrl && s.imageUrl === coverImageUrl);
         return (
           <div className="space-y-3">
             {sections.map((sec, idx) => (
-              <div key={idx} className="rounded-xl border border-border bg-background p-3 space-y-2">
-                <div className="flex items-center gap-2">
+              <div key={idx} className="overflow-hidden rounded-xl border border-border bg-background">
+                <SectionImageArea
+                  section={sec}
+                  articleId={isNew ? null : id}
+                  isCover={idx === sectionsCoverIdx}
+                  coverToggle
+                  onUpdate={(patch) =>
+                    setSections((s) => s.map((x, i) => i === idx ? { ...x, ...patch } : x))
+                  }
+                  onSetCover={handleSetCover}
+                />
+                <div className="flex items-center gap-2 border-b border-border px-3 py-2">
                   <div className="flex shrink-0 flex-col">
                     <button onClick={() => setSections((s) => moveItem(s, idx, -1))} disabled={idx === 0}
                       className="text-muted-foreground hover:text-foreground disabled:opacity-30" title="Yukarı"><ChevronUp className="size-3.5" /></button>
@@ -602,31 +690,48 @@ export default function NewsDetailPage({ params }) {
                   <button onClick={() => setSections((s) => s.filter((_, i) => i !== idx).map((x, i) => ({ ...x, order: i + 1 })))}
                     className="text-muted-foreground hover:text-destructive"><X className="size-4" /></button>
                 </div>
-                <textarea
-                  value={sec.text}
-                  onChange={(e) => setSections((s) => s.map((x, i) => i === idx ? { ...x, text: e.target.value } : x))}
-                  rows={3}
-                  placeholder="Bölüm metni…"
-                  className="w-full rounded-lg border border-input bg-muted/20 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
-                />
+                <div className="px-3 pb-3 pt-2">
+                  <textarea
+                    value={sec.text}
+                    onChange={(e) => setSections((s) => s.map((x, i) => i === idx ? { ...x, text: e.target.value } : x))}
+                    rows={3}
+                    placeholder="Bölüm metni…"
+                    className="w-full rounded-lg border border-input bg-muted/20 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
+                  />
+                </div>
               </div>
             ))}
-            <Button variant="outline" size="sm" onClick={() => setSections((s) => [...s, { heading: '', text: '', order: s.length + 1 }])}>
+            <Button variant="outline" size="sm" onClick={() => setSections((s) => [...s, {
+              heading: '', text: '', order: s.length + 1,
+              imageUrl: '', imageFocalX: 50, imageFocalY: 50, imageAspect: '16/9', imageFit: 'cover',
+            }])}>
               <Plus className="size-3.5" /> Bölüm Ekle
             </Button>
           </div>
         );
+      }
       case 'html':
         return (
-          <div>
-            <EditorToolbar onInsert={(txt) => setHtmlContent((c) => c + txt)} />
-            <textarea
-              value={htmlContent}
-              onChange={(e) => setHtmlContent(e.target.value)}
-              rows={16}
-              placeholder="<h2>Başlık</h2><p>İçerik buraya...</p>"
-              className="w-full rounded-b-lg rounded-t-none border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="mb-1 text-2sm font-medium text-muted-foreground">HTML Editörü</div>
+              <EditorToolbar mode="html" onInsert={(txt) => setHtmlContent((c) => insertAtCursor(htmlTextareaRef, c, txt))} />
+              <textarea
+                ref={htmlTextareaRef}
+                value={htmlContent}
+                onChange={(e) => setHtmlContent(e.target.value)}
+                rows={16}
+                placeholder="<h2>Başlık</h2><p>İçerik buraya...</p>"
+                className="w-full rounded-b-lg rounded-t-none border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-2sm font-medium text-muted-foreground">Önizleme</div>
+              <div
+                className={PREVIEW_CLASSES}
+                dangerouslySetInnerHTML={{ __html: htmlContent || '<span class="text-muted-foreground italic">Önizleme için HTML yazın…</span>' }}
+              />
+            </div>
           </div>
         );
       case 'markdown':
@@ -634,19 +739,26 @@ export default function NewsDetailPage({ params }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="mb-1 text-2sm font-medium text-muted-foreground">Markdown</div>
+              <EditorToolbar mode="markdown" onInsert={(txt) => setMdContent((c) => insertAtCursor(mdTextareaRef, c, txt))} />
               <textarea
+                ref={mdTextareaRef}
                 value={mdContent}
                 onChange={(e) => setMdContent(e.target.value)}
                 rows={16}
                 placeholder="## Başlık&#10;&#10;İçerik buraya..."
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
+                className="w-full rounded-b-lg rounded-t-none border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
               />
             </div>
             <div>
               <div className="mb-1 text-2sm font-medium text-muted-foreground">Önizleme</div>
-              <div className="h-[calc(100%-22px)] min-h-[200px] rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                {mdContent || <span className="italic">Önizleme için Markdown yazın…</span>}
-              </div>
+              <div
+                className={PREVIEW_CLASSES}
+                dangerouslySetInnerHTML={{
+                  __html: mdContent
+                    ? marked.parse(mdContent)
+                    : '<span class="text-muted-foreground italic">Önizleme için Markdown yazın…</span>',
+                }}
+              />
             </div>
           </div>
         );
