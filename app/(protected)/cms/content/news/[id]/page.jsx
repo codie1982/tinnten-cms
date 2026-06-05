@@ -39,6 +39,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/compone
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import {
   Select,
   SelectContent,
@@ -76,6 +77,22 @@ function flattenTree(nodes, depth = 0, acc = []) {
     if (n.children?.length) flattenTree(n.children, depth + 1, acc);
   }
   return acc;
+}
+
+/** Başlıktan URL-dostu slug üretir (Türkçe karakter farkında). Yazım sırasında
+ *  baştaki/sondaki tireyi KIRPMAZ — aksi halde "foo-bar" yazılamaz; kırpma kayıt
+ *  anında `cleanSlug` ile yapılır. */
+function slugify(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+    .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
+    .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+}
+
+/** Kayıt anında baştaki/sondaki tireyi kırpan son sadeleştirme. */
+function cleanSlug(text) {
+  return slugify(text).replace(/^-+|-+$/g, '');
 }
 
 const PLATFORMS = [
@@ -454,6 +471,7 @@ export default function NewsDetailPage({ params }) {
   const [coverFit, setCoverFit] = useState('cover');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState('content'); // content | social
+  const [saveError, setSaveError] = useState('');
 
   const htmlTextareaRef = useRef(null);
   const mdTextareaRef = useRef(null);
@@ -506,6 +524,7 @@ export default function NewsDetailPage({ params }) {
   const [deleteSocialPost] = useDeleteSocialPostMutation();
   const [requeueSocialPost] = useRequeueSocialPostMutation();
   const [newPost, setNewPost] = useState({ platform: 'x', postText: '', scheduledAt: '' });
+  const [socialError, setSocialError] = useState('');
 
   if (!isNew && isLoading) {
     return (
@@ -572,7 +591,7 @@ export default function NewsDetailPage({ params }) {
     return {
       title: meta.title,
       subtitle: meta.subtitle,
-      slug: meta.slug || undefined,
+      slug: (cleanSlug(meta.slug) || cleanSlug(meta.title)) || undefined,
       categoryId: meta.categoryId || undefined,
       tags: meta.tags ? meta.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
       contentType: meta.contentType,
@@ -591,48 +610,86 @@ export default function NewsDetailPage({ params }) {
   }
 
   async function handleSave() {
-    if (!meta.title.trim()) return;
+    setSaveError('');
+    const title = meta.title.trim();
+    const effectiveSlug = cleanSlug(meta.slug) || cleanSlug(title);
+    // Backend zorunlu alanlar: title, slug, countryCode, categoryId — eksikse 400 döner.
+    if (!title) { setSaveError('Başlık zorunludur.'); return; }
+    if (!effectiveSlug) { setSaveError('Slug üretilemedi — lütfen elle bir slug girin.'); return; }
+    if (!meta.categoryId) { setSaveError('Lütfen bir kategori seçin.'); return; }
+
     const body = buildBody();
-    if (isNew) {
-      const r = await createNews(body).unwrap().catch(() => null);
-      const newId = r?.data?._id ?? r?.data?.id ?? r?._id ?? r?.id;
-      if (newId) router.push(`/cms/content/news/${newId}`);
-    } else {
-      await updateNews({ id, ...body }).unwrap().catch(() => {});
+    try {
+      if (isNew) {
+        const r = await createNews(body).unwrap();
+        const newId = r?.data?._id ?? r?.data?.id ?? r?._id ?? r?.id;
+        if (newId) router.push(`/cms/content/news/${newId}`);
+        else setSaveError('Haber oluşturuldu ancak kimliği alınamadı. Haber listesinden açabilirsiniz.');
+      } else {
+        await updateNews({ id, ...body }).unwrap();
+      }
+    } catch (e) {
+      setSaveError(e?.data?.message || e?.normalizedMessage || e?.error || 'Haber kaydedilemedi.');
     }
   }
 
   async function handlePublish() {
-    if (isNew) return;
-    if (status === 'published') {
-      await unpublishNews(id).unwrap().catch(() => {});
-      setStatus('draft');
-    } else {
-      await publishNews(id).unwrap().catch(() => {});
-      setStatus('published');
+    if (isNew) { setSaveError('Yayınlamadan önce haberi kaydedin.'); return; }
+    setSaveError('');
+    try {
+      if (status === 'published') {
+        await unpublishNews(id).unwrap();
+        setStatus('draft');
+      } else {
+        await publishNews(id).unwrap();
+        setStatus('published');
+      }
+    } catch (e) {
+      setSaveError(e?.data?.message || e?.normalizedMessage || e?.error || 'İşlem başarısız oldu.');
     }
   }
 
   async function handleDelete() {
-    if (!isNew) await deleteNews(id).unwrap().catch(() => {});
-    router.push('/cms/content/news');
+    if (isNew) { router.push('/cms/content/news'); return; }
+    setSaveError('');
+    try {
+      await deleteNews(id).unwrap();
+      router.push('/cms/content/news');
+    } catch (e) {
+      setSaveError(e?.data?.message || e?.normalizedMessage || e?.error || 'Haber silinemedi.');
+    }
   }
 
   async function addPost() {
     if (!newPost.postText.trim() || isNew) return;
+    setSocialError('');
     const body = {
       platform: newPost.platform,
       postText: newPost.postText.trim(),
       ...(newPost.scheduledAt ? { scheduledAt: new Date(newPost.scheduledAt).toISOString() } : {}),
     };
-    const r = await createSocialPost({ id, ...body }).unwrap().catch(() => null);
-    if (r) setNewPost({ platform: 'x', postText: '', scheduledAt: '' });
+    try {
+      await createSocialPost({ id, ...body }).unwrap();
+      setNewPost({ platform: 'x', postText: '', scheduledAt: '' });
+    } catch (e) {
+      setSocialError(e?.data?.message || e?.normalizedMessage || e?.error || 'Paylaşım eklenemedi.');
+    }
   }
-  function removePost(postId) {
-    deleteSocialPost({ id, postId }).unwrap().catch(() => {});
+  async function removePost(postId) {
+    setSocialError('');
+    try {
+      await deleteSocialPost({ id, postId }).unwrap();
+    } catch (e) {
+      setSocialError(e?.data?.message || e?.normalizedMessage || e?.error || 'Paylaşım silinemedi.');
+    }
   }
-  function requeuePost(postId) {
-    requeueSocialPost({ id, postId }).unwrap().catch(() => {});
+  async function requeuePost(postId) {
+    setSocialError('');
+    try {
+      await requeueSocialPost({ id, postId }).unwrap();
+    } catch (e) {
+      setSocialError(e?.data?.message || e?.normalizedMessage || e?.error || 'Paylaşım yeniden kuyruğa alınamadı.');
+    }
   }
 
   // Public sayfa linki: {site}/{locale}/discovery/{kategori-slug}/{haber-slug}
@@ -801,6 +858,13 @@ export default function NewsDetailPage({ params }) {
         }
       />
 
+      {saveError && (
+        <Alert variant="destructive" className="mb-5">
+          <AlertTitle>Kaydedilemedi</AlertTitle>
+          <AlertDescription>{saveError}</AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* ─ Meta Panel ─ */}
         <div className="lg:col-span-1 space-y-5">
@@ -823,10 +887,13 @@ export default function NewsDetailPage({ params }) {
               </div>
               <div className="space-y-1.5">
                 <label className="text-2sm font-medium">Slug</label>
-                <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/30 px-3 py-2">
-                  <Hash className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="font-mono text-xs text-muted-foreground truncate">{meta.slug || 'haber-slug'}</span>
-                </div>
+                <Input
+                  value={meta.slug}
+                  onChange={(e) => setMeta((m) => ({ ...m, slug: slugify(e.target.value) }))}
+                  placeholder={slugify(meta.title) || 'haber-slug'}
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">Boş bırakılırsa başlıktan otomatik üretilir.</p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-2sm font-medium">Ülke</label>
@@ -968,6 +1035,12 @@ export default function NewsDetailPage({ params }) {
                   </div>
                 ) : (
                   <>
+                    {socialError && (
+                      <Alert variant="destructive">
+                        <AlertTitle>İşlem başarısız</AlertTitle>
+                        <AlertDescription>{socialError}</AlertDescription>
+                      </Alert>
+                    )}
                     {/* New post form */}
                     <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
                       <p className="text-sm font-medium">Yeni Paylaşım</p>
