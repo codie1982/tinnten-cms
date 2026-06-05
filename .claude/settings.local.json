@@ -13,7 +13,9 @@
       "Bash(rg -l --files)",
       "Bash(rg --files app)",
       "Bash(rg \"page.jsx$\")",
-      "Read(//Users/nilayerol/developer/tinnten/**)"
+      "Read(//Users/nilayerol/developer/tinnten/**)",
+      "Bash(rg -rn \"news-content\" --glob '!**/node_modules/**' src)",
+      "Bash(rg -rn \"success\\\\s*[=\\(]\" src/utils)"
     ]
   }
 }

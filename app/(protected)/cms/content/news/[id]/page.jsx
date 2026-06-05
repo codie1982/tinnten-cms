@@ -588,6 +588,14 @@ export default function NewsDetailPage({ params }) {
   }
 
   function buildBody() {
+    // Backend richSections.heading/body 'required' → boş bölümler 500'e yol açar.
+    // Tamamen boş bölümleri gönderme; kalanların order'ını yeniden numaralandır.
+    const cleanRichSections = richSections
+      .filter((s) => (s.heading || '').trim() || (s.body || '').trim())
+      .map((s, i) => ({ ...s, order: i + 1 }));
+    const cleanContent = sections
+      .filter((s) => (s.heading || '').trim() || (s.text || '').trim())
+      .map((s, i) => ({ ...s, order: i + 1 }));
     return {
       title: meta.title,
       subtitle: meta.subtitle,
@@ -595,8 +603,8 @@ export default function NewsDetailPage({ params }) {
       categoryId: meta.categoryId || undefined,
       tags: meta.tags ? meta.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
       contentType: meta.contentType,
-      richSections,
-      content: sections,
+      richSections: cleanRichSections,
+      content: cleanContent,
       htmlContent,
       markdownContent: mdContent,
       imageUrl: coverImageUrl || null,
@@ -619,6 +627,15 @@ export default function NewsDetailPage({ params }) {
     if (!meta.categoryId) { setSaveError('Lütfen bir kategori seçin.'); return; }
 
     const body = buildBody();
+    // Zengin bölümlerde backend hem başlık hem içerik (heading+body) zorunlu kılar.
+    // Yarım dolu bölüm varsa, anlamsız 500 yerine net uyarı göster.
+    const incompleteRich = (body.richSections || []).find(
+      (s) => !(s.heading || '').trim() || !(s.body || '').trim()
+    );
+    if (incompleteRich) {
+      setSaveError('Her zengin bölümde hem başlık hem de içerik dolu olmalı (ya da bölümü boş bırakın, otomatik atlanır).');
+      return;
+    }
     try {
       if (isNew) {
         const r = await createNews(body).unwrap();
