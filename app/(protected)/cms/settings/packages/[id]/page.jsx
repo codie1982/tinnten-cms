@@ -65,6 +65,7 @@ const DEFAULT_LIMITS = {
   llm: { token: 1024, regeneretetime: 'Daily' },
   ai: { images: 20, enrich: 50, video: 5 },
   workflow: { count: 5, totalRun: 100 },
+  assistant: { count: 5 },
   maxDevices: null,
 };
 
@@ -215,6 +216,9 @@ export default function PackageEditorPage({ params }) {
       workflow: {
         count: num(limits.workflow?.count),
         totalRun: num(limits.workflow?.totalRun),
+      },
+      assistant: {
+        count: num(limits.assistant?.count),
       },
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
@@ -628,6 +632,20 @@ export default function PackageEditorPage({ params }) {
                     unit="run"
                     onChange={(v) => setLimitField('workflow', 'totalRun', v)}
                     helper="Tüm workflow'ların toplam çalışma hakkı"
+                  />
+                </div>
+              </div>
+
+              {/* Asistan limitleri */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Asistan</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <LimitRow
+                    label="Asistan adedi"
+                    value={limits.assistant?.count}
+                    unit="adet"
+                    onChange={(v) => setLimitField('assistant', 'count', v)}
+                    helper="Kullanıcının oluşturabileceği toplam asistan sayısı"
                   />
                 </div>
               </div>
