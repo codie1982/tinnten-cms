@@ -65,7 +65,10 @@ const DEFAULT_LIMITS = {
   llm: { token: 1024, regeneretetime: 'Daily' },
   ai: { images: 20, enrich: 50, video: 5 },
   workflow: { count: 5, totalRun: 100 },
-  assistant: { count: 5 },
+  // Backend system-packages.model.js limit.assistant ile birebir — 4 alan da
+  // taşınmalı, aksi halde kaydetmede tools/libraryFiles/previewViewsPerMonth
+  // backend default'larına (5/10/100) sıfırlanır.
+  assistant: { published: 1, tools: 5, libraryFiles: 10, previewViewsPerMonth: 100 },
   maxDevices: null,
 };
 
@@ -218,7 +221,13 @@ export default function PackageEditorPage({ params }) {
         totalRun: num(limits.workflow?.totalRun),
       },
       assistant: {
-        count: num(limits.assistant?.count),
+        // published: aynı anda yayında olabilecek asistan sayısı (publish quota enforce eder)
+        published: num(limits.assistant?.published),
+        // Aşağıdakiler UI'da düzenlenmese de taşınır — yoksa backend buildLimitPayload
+        // bunları default'a (5/10/100) sıfırlar. previewViewsPerMonth enforce edilir.
+        tools: num(limits.assistant?.tools, 5),
+        libraryFiles: num(limits.assistant?.libraryFiles, 10),
+        previewViewsPerMonth: num(limits.assistant?.previewViewsPerMonth, 100),
       },
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
@@ -641,11 +650,18 @@ export default function PackageEditorPage({ params }) {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Asistan</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <LimitRow
-                    label="Asistan adedi"
-                    value={limits.assistant?.count}
+                    label="Yayında asistan limiti"
+                    value={limits.assistant?.published}
                     unit="adet"
-                    onChange={(v) => setLimitField('assistant', 'count', v)}
-                    helper="Kullanıcının oluşturabileceği toplam asistan sayısı"
+                    onChange={(v) => setLimitField('assistant', 'published', v)}
+                    helper="Aynı anda yayında (published) olabilecek asistan sayısı — asistan yayınlama kotası bunu uygular · 0 = sınırsız"
+                  />
+                  <LimitRow
+                    label="Bilgi tabanı dosya limiti"
+                    value={limits.assistant?.libraryFiles}
+                    unit="dosya"
+                    onChange={(v) => setLimitField('assistant', 'libraryFiles', v)}
+                    helper="Bir asistanın bilgi tabanına (library + file) eklenebilecek max dosya · 0 = sınırsız"
                   />
                 </div>
               </div>
