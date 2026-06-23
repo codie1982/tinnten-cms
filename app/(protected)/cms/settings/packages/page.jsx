@@ -29,6 +29,10 @@ const statusMeta = {
   inactive: { label: 'Pasif', variant: 'muted' },
   archived: { label: 'Arşivli', variant: 'muted' },
 };
+const visibilityMeta = {
+  public: { label: 'Genel', variant: 'muted' },
+  private: { label: 'Firmaya Özel', variant: 'warning' },
+};
 const intervalLabel = { month: 'Aylık', year: 'Yıllık', lifetime: 'Ömür Boyu' };
 
 function pkgTitle(p) {
@@ -49,12 +53,14 @@ export default function SettingsPackagesPage() {
 
   const [forCompany, setForCompany] = useState('all');
   const [status, setStatus] = useState('all');
+  const [visibility, setVisibility] = useState('all');
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const { data: packages = [], isLoading, error } = useGetCmsPackagesQuery(
     {
       forCompany: forCompany === 'all' ? undefined : forCompany,
       status: status === 'all' ? undefined : status,
+      visibility: visibility === 'all' ? undefined : visibility,
     },
     { skip: !authorized },
   );
@@ -103,6 +109,16 @@ export default function SettingsPackagesPage() {
               </SelectContent>
             </Select>
           </div>
+          <div className="w-48">
+            <Select value={visibility} onValueChange={setVisibility}>
+              <SelectTrigger><SelectValue placeholder="Görünürlük" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tüm Görünürlükler</SelectItem>
+                <SelectItem value="public">Genel</SelectItem>
+                <SelectItem value="private">Firmaya Özel</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardContent>
       </Card>
 
@@ -136,6 +152,7 @@ export default function SettingsPackagesPage() {
                     <TableHead>Hedef</TableHead>
                     <TableHead>Kategori</TableHead>
                     <TableHead>Fiyatlandırma</TableHead>
+                    <TableHead>Görünürlük</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead className="w-28" />
                   </TableRow>
@@ -143,6 +160,7 @@ export default function SettingsPackagesPage() {
                 <TableBody>
                   {packages.map((p) => {
                     const s = statusMeta[p.status] ?? { label: p.status, variant: 'muted' };
+                    const vis = visibilityMeta[p.visibility] ?? visibilityMeta.public;
                     return (
                       <TableRow key={p._id}>
                         <TableCell>
@@ -154,6 +172,7 @@ export default function SettingsPackagesPage() {
                         <TableCell><Badge variant="muted">{p.forCompany ? 'Business' : 'Kullanıcı'}</Badge></TableCell>
                         <TableCell className="text-sm capitalize text-muted-foreground">{p.category ?? '—'}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">{pricingSummary(p)}</TableCell>
+                        <TableCell><Badge variant={vis.variant}>{vis.label}</Badge></TableCell>
                         <TableCell><Badge variant={s.variant}>{s.label}</Badge></TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">

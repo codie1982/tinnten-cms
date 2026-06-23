@@ -125,6 +125,7 @@ export const ENDPOINTS = {
     cmsCreate: '/system-packages/cms',
     cmsUpdate: (id) => `/system-packages/cms/${id}`,
     cmsDelete: (id) => `/system-packages/cms/${id}`,
+    assignToCompany: (id) => `/system-packages/cms/${id}/assign-to-company`,
   },
   workflows: {
     cmsList: '/workflows/cms',

@@ -45,6 +45,11 @@ export const settingsApi = baseApi.injectEndpoints({
       query: (id) => ({ url: ENDPOINTS.systemPackages.cmsDelete(id), method: 'DELETE' }),
       invalidatesTags: [{ type: 'Package', id: 'LIST' }],
     }),
+    assignPrivatePackage: build.mutation({
+      query: ({ id, companyId }) => ({ url: ENDPOINTS.systemPackages.assignToCompany(id), method: 'POST', body: { companyId } }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [{ type: 'Package', id }, { type: 'Package', id: 'LIST' }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -57,4 +62,5 @@ export const {
   useCreatePackageMutation,
   useUpdatePackageMutation,
   useDeletePackageMutation,
+  useAssignPrivatePackageMutation,
 } = settingsApi;

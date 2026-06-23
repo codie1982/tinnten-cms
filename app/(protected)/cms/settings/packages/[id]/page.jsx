@@ -29,7 +29,9 @@ import {
   useCreatePackageMutation,
   useUpdatePackageMutation,
   useDeletePackageMutation,
+  useAssignPrivatePackageMutation,
 } from '@/redux/services';
+import CompanySearchSelect from './CompanySearchSelect';
 
 const CATEGORIES = ['free', 'basic', 'premium', 'enterprise'];
 const CONTENT_TYPES = ['standart', 'multisubscribe', 'student'];
@@ -104,6 +106,7 @@ export default function PackageEditorPage({ params }) {
   const [createPackage, { isLoading: creating }] = useCreatePackageMutation();
   const [updatePackage, { isLoading: updating }] = useUpdatePackageMutation();
   const [deletePackage, { isLoading: deleting }] = useDeletePackageMutation();
+  const [assignPrivatePackage, { isLoading: assigning }] = useAssignPrivatePackageMutation();
   const saving = creating || updating;
 
   const [form, setForm] = useState({
@@ -113,6 +116,9 @@ export default function PackageEditorPage({ params }) {
     package_content_type: 'standart',
     status: 'active',
     default_package: false,
+    visibility: 'public',
+    targetCompanyId: '',
+    targetDescription: '',
   });
   const [i18n, setI18n] = useState(emptyI18n);
   const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1 }]);
@@ -130,6 +136,9 @@ export default function PackageEditorPage({ params }) {
       package_content_type: pkg.package_content_type || 'standart',
       status: pkg.status || 'active',
       default_package: Boolean(pkg.default_package),
+      visibility: pkg.visibility === 'private' ? 'private' : 'public',
+      targetCompanyId: pkg.targetCompanyId ? String(pkg.targetCompanyId) : '',
+      targetDescription: pkg.targetDescription || '',
     });
     const merged = emptyI18n();
     for (const [loc, c] of Object.entries(pkg.i18n || {})) {
@@ -270,6 +279,10 @@ export default function PackageEditorPage({ params }) {
       // Backend hem `limit` (tekil) hem `limits` (çoğul) kabul ediyor;
       // canonical olan `limit`'i gönderiyoruz.
       limit: buildLimitBody(),
+      // Firmaya özel paket alanları — backend create/update whitelist'inde normalize edilir
+      visibility: form.visibility === 'private' ? 'private' : 'public',
+      targetCompanyId: form.visibility === 'private' && form.targetCompanyId ? form.targetCompanyId : null,
+      targetDescription: (form.targetDescription || '').trim(),
     };
   }
 
@@ -319,6 +332,18 @@ export default function PackageEditorPage({ params }) {
       setConfirmDelete(false);
       router.push('/cms/settings/packages');
     }
+  }
+
+  async function handleAssignToCompany() {
+    if (isNew || form.visibility !== 'private' || !form.targetCompanyId) return;
+    setNotice('');
+    const r = await assignPrivatePackage({ id, companyId: form.targetCompanyId })
+      .unwrap()
+      .catch((e) => {
+        setNotice(e?.data?.message || 'Şirkete atama başarısız.');
+        return null;
+      });
+    if (r) setNotice('Paket şirkete atandı.');
   }
 
   if (!isNew && isLoading) {
@@ -719,6 +744,58 @@ export default function PackageEditorPage({ params }) {
                 Varsayılan Paket
                 <input type="checkbox" checked={form.default_package} onChange={(e) => setField('default_package', e.target.checked)} className="size-4" />
               </label>
+
+              {/* Görünürlük — firmaya özel paket ayarları */}
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Görünürlük</label>
+                <Select value={form.visibility} onValueChange={(v) => setField('visibility', v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="public">Genel (herkes)</SelectItem>
+                    <SelectItem value="private">Firmaya Özel</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Firmaya özel paketler genel listelerde (pricing, upgrade) görünmez; sadece hedef firma satın alabilir/atanabilir.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Hedef Açıklaması</label>
+                <textarea
+                  value={form.targetDescription}
+                  onChange={(e) => setField('targetDescription', e.target.value)}
+                  rows={3}
+                  placeholder="Bu paketin kim için / neden oluşturulduğuna dair iç not"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 resize-none"
+                />
+              </div>
+
+              {form.visibility === 'private' && (
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Hedef Firma</label>
+                  <CompanySearchSelect
+                    value={form.targetCompanyId}
+                    onChange={(cid) => setField('targetCompanyId', cid ? String(cid) : '')}
+                  />
+                  {form.targetCompanyId && (
+                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                      Seçili firma: {form.targetCompanyId}
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-2 w-full"
+                    onClick={handleAssignToCompany}
+                    disabled={isNew || !form.targetCompanyId || assigning}
+                    title={isNew ? 'Önce paketi kaydedin' : 'Paketi seçili firmaya ata'}
+                  >
+                    {assigning ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                    Şirkete Ata
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
 
