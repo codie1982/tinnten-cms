@@ -10,6 +10,7 @@ export * from './newsCategoryApi';
 export * from './companiesApi';
 export * from './usersApi';
 export * from './emailApi';
+export * from './mailCampaignApi';
 export * from './fetcherApi';
 export * from './embeddingApi';
 export * from './cronApi';

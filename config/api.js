@@ -176,11 +176,26 @@ export const ENDPOINTS = {
     sessionsAll: '/users/sessions',
   },
   email: {
-    campaigns: '/email/campaigns',
+    // Eski mock uçlar (kullanılmıyor ama referansta kalsın)
     lists: '/email/lists',
-    templates: '/email/templates',
     history: '/email/history',
     send: '/email/send',
+    // Kanallar (dinamik liste)
+    channels: '/email/channels',
+    channel: (id) => `/email/channels/${id}`,
+    channelMembers: (key) => `/email/channels/${key}/members`,
+    // DB kampanya şablonları (dosya .flt editöründen AYRI)
+    templates: '/email/templates',
+    template: (id) => `/email/templates/${id}`,
+    templatePreview: (id) => `/email/templates/${id}/preview`,
+    // Kampanyalar
+    campaigns: '/email/campaigns',
+    campaign: (id) => `/email/campaigns/${id}`,
+    campaignSend: (id) => `/email/campaigns/${id}/send`,
+    campaignStats: (id) => `/email/campaigns/${id}/stats`,
+    // Yardımcı
+    mergeVariables: '/email/merge-variables',
+    recipientCount: '/email/recipient-count',
   },
   emailTemplates: {
     cmsList: '/email-templates/cms',
