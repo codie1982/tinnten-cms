@@ -23,3 +23,4 @@ export * from './settingsApi';
 export * from './translationApi';
 export * from './dashboardApi';
 export * from './faqApi';
+export * from './errorMonitoringApi';

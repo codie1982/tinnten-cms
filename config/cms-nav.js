@@ -133,6 +133,7 @@ export const CMS_NAV = [
       { title: 'Cron Servisi', path: '/cms/services/cron', roles: [CMS_ROLES.ADMIN] },
       { title: 'Mesaj Kuyruğu', path: '/cms/services/queues', roles: [CMS_ROLES.ADMIN] },
       { title: 'Sistem İzleme', path: '/cms/services/monitoring', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Hata İzleme', path: '/cms/services/errors', roles: [CMS_ROLES.ADMIN] },
       { title: 'Scraper Durumları', path: '/cms/services/scraper', roles: [CMS_ROLES.ADMIN] },
     ],
   },

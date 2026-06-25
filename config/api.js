@@ -207,6 +207,12 @@ export const ENDPOINTS = {
     cmsAlerts: '/monitoring/cms/alerts',
     cmsQueryRange: '/monitoring/cms/query_range',
   },
+  errorMonitoring: {
+    cmsStats: '/error-monitoring/cms/stats',
+    cmsIssues: '/error-monitoring/cms/issues',
+    cmsIssueDetail: (fp) => `/error-monitoring/cms/issues/${fp}`,
+    cmsResolve: (fp) => `/error-monitoring/cms/issues/${fp}`,
+  },
   mq: {
     cmsOverview: '/mq/cms/overview',
     cmsQueues: '/mq/cms/queues',
