@@ -86,6 +86,6 @@ Store veya provider'a dokunmaya gerek yok — `injectEndpoints` çalışma anın
 - **Mock data**: Sayfalar şu an mock veriyle çalışıyor. Backend ayağa kalkınca ilgili
   mock'lar yukarıdaki hook'larla değiştirilir (UI bileşenleri aynen kalır).
 - **Auth**: Backend kapalıyken istekler hata döner; geçici dev girişi için
-  `.env.local` → `DEV_MOCK_AUTH=true` (admin@tinnten.ai / cms2025) NextAuth oturumu açar.
+  `.env.local` → `DEV_MOCK_AUTH=true` (admin@tinten.ai / cms2025) NextAuth oturumu açar.
 - **Cache invalidation**: Mutasyonlar `invalidatesTags` ile ilgili query'leri otomatik
   tazeler; manuel refetch genelde gerekmez.

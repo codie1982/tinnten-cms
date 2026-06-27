@@ -257,7 +257,7 @@ export default function SignIn() {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="ornek@tinnten.ai"
+                placeholder="ornek@tinten.ai"
                 {...register('email')}
                 className={cn(
                   'w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground',

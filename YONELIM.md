@@ -14,7 +14,7 @@ masaüstü öncelikli responsive yapı.
 - **Repo:** `/Users/nilayerol/developer/tinnten/tinnten-cms`
 - **Backend:** `tinnten-server` → `http://localhost:5001/api/v10`
 - **Çalıştırma:** `npm run dev:stable -- -p 3001` (Turbopack sorun çıkarırsa stable)
-- **Dev giriş:** `.env.local` içinde `DEV_MOCK_AUTH=true` → `admin@tinnten.ai` / `cms2025`
+- **Dev giriş:** `.env.local` içinde `DEV_MOCK_AUTH=true` → `admin@tinten.ai` / `cms2025`
 
 ---
 
@@ -134,7 +134,7 @@ tamamlanacak: + Firmalar, Asistanlar, Ürün/Hizmetler, Cüzdan, Sözleşmeler, 
 cd /Users/nilayerol/developer/tinnten/tinnten-cms
 npm run dev:stable -- -p 3001          # CMS
 # (ayrı terminal) tinnten-server'ı 5001'de çalıştır
-# Giriş: admin@tinnten.ai / cms2025  (DEV_MOCK_AUTH=true ise)
+# Giriş: admin@tinten.ai / cms2025  (DEV_MOCK_AUTH=true ise)
 ```
 
 İlk iş önerisi: **Haberler sayfasını gerçek API'ye bağlamak** (`content/news/page.jsx` →

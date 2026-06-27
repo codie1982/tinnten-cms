@@ -8,7 +8,7 @@ export const usersMock = [
   {
     id: 'usr-1',
     name: 'Ayşe Demir',
-    email: 'ayse@tinnten.ai',
+    email: 'ayse@tinten.ai',
     roles: ['cms:editor'],
     status: 'active',
     blocked: false,
@@ -34,7 +34,7 @@ export const usersMock = [
   {
     id: 'usr-2',
     name: 'Mehmet Kaya',
-    email: 'mehmet@tinnten.ai',
+    email: 'mehmet@tinten.ai',
     roles: ['cms:admin'],
     status: 'active',
     blocked: false,
@@ -53,7 +53,7 @@ export const usersMock = [
   {
     id: 'usr-3',
     name: 'Zeynep Ak',
-    email: 'zeynep@tinnten.ai',
+    email: 'zeynep@tinten.ai',
     roles: ['cms:access', 'cms:editor'],
     status: 'active',
     blocked: false,
@@ -74,7 +74,7 @@ export const usersMock = [
   {
     id: 'usr-4',
     name: 'Can Yıldız',
-    email: 'can@tinnten.ai',
+    email: 'can@tinten.ai',
     roles: ['cms:access'],
     status: 'invited',
     blocked: false,
@@ -91,7 +91,7 @@ export const usersMock = [
   {
     id: 'usr-5',
     name: 'Elif Şahin',
-    email: 'elif@tinnten.ai',
+    email: 'elif@tinten.ai',
     roles: ['cms:access'],
     status: 'suspended',
     blocked: true,

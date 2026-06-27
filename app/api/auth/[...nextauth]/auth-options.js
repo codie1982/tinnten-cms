@@ -45,13 +45,13 @@ const authOptions = {
         // DEV bypass: DEV_MOCK_AUTH=true ile preview/geliştirme ortamında çalışır
         if (
           process.env.DEV_MOCK_AUTH === 'true' &&
-          email === 'admin@tinnten.ai' &&
+          email === 'admin@tinten.ai' &&
           password === 'cms2025'
         ) {
           return {
             id: 'dev-admin',
             userid: 'dev-admin',
-            email: 'admin@tinnten.ai',
+            email: 'admin@tinten.ai',
             name: 'Dev Admin',
             accessToken: 'dev-mock-token',
             refreshToken: null,
