@@ -87,6 +87,7 @@ export const baseApi = createApi({
     'Faq',
     'ErrorIssue',
     'Conversation',
+    'Product',
   ],
   // Endpoint'ler ayrı servis dosyalarında injectEndpoints ile eklenir
   endpoints: () => ({}),

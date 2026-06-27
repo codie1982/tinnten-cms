@@ -167,6 +167,10 @@ export const ENDPOINTS = {
     approve: (id) => `/companies/${id}/approve`,
     reject: (id) => `/companies/${id}/reject`,
   },
+  products: {
+    cmsList: '/products/cms/list',
+    cmsDetail: (id) => `/products/cms/${id}`,
+  },
   users: {
     list: '/users',
     detail: (id) => `/users/${id}`,

@@ -8,6 +8,7 @@ export { baseApi } from './baseApi';
 export * from './newsApi';
 export * from './newsCategoryApi';
 export * from './companiesApi';
+export * from './productsApi';
 export * from './usersApi';
 export * from './emailApi';
 export * from './mailCampaignApi';

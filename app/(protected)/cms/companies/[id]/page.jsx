@@ -4,9 +4,9 @@ import { use, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
-  Building2, MapPin, Phone, Share2, Landmark, Users, Package,
+  Building2, MapPin, Phone, Share2, Landmark, Users, Package, Boxes,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
-  SlidersHorizontal, Loader2, Ban, ShieldCheck,
+  SlidersHorizontal, Loader2, Ban, ShieldCheck, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -21,6 +21,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
@@ -30,8 +33,16 @@ import {
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
+  useGetCmsProductsQuery,
 } from '@/redux/services';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
+import {
+  typeMeta as productTypeMeta,
+  statusMeta as productStatusMeta,
+  pricetypeMeta as productPricetypeMeta,
+  sortOptions as productSortOptions,
+  formatPrice,
+} from '../../products/_data';
 import { AccountSummary, PackagesTable, LimitsPanel, UsagePanel } from '@/components/cms/account-panels';
 
 /* ─── sol alt-menü ─── */
@@ -42,6 +53,7 @@ const SECTIONS = [
   { key: 'sosyal', label: 'Sosyal Medya', icon: Share2 },
   { key: 'banka', label: 'Banka Hesapları', icon: Landmark },
   { key: 'calisanlar', label: 'Çalışanlar', icon: Users },
+  { key: 'urunler', label: 'Ürünler / Hizmetler', icon: Boxes },
   { key: 'paketler', label: 'Hesap & Paketler', icon: Package },
   { key: 'limitler', label: 'Limitler', icon: SlidersHorizontal },
   { key: 'kullanim', label: 'Kullanım', icon: Gauge },
@@ -97,6 +109,23 @@ export default function CmsCompanyDetailPage({ params }) {
   const [updateUsage, { isLoading: savingUsage }] = useUpdateCompanyUsageMutation();
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
   const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
+
+  // Ürünler / Hizmetler sekmesi — yalnız aktifken (lazy) çekilir; firma ucu değişmez.
+  const [prodSort, setProdSort] = useState('createdAt:desc');
+  const [prodPage, setProdPage] = useState(1);
+  const [prodSortField, prodSortOrder] = prodSort.split(':');
+  const {
+    data: productsData,
+    isLoading: productsLoading,
+    isFetching: productsFetching,
+    error: productsError,
+  } = useGetCmsProductsQuery(
+    { companyid: id, sort: prodSortField, order: prodSortOrder, page: prodPage, limit: 10 },
+    { skip: !authorized || section !== 'urunler' },
+  );
+  const products = productsData?.items ?? [];
+  const productsTotal = productsData?.total ?? 0;
+  const productsTotalPages = productsData?.totalPages ?? 1;
 
   // Engelleme state'i
   const [blockOpen, setBlockOpen] = useState(false); // gerekçe formu açık mı
@@ -157,6 +186,7 @@ export default function CmsCompanyDetailPage({ params }) {
     sosyal: socials.length,
     banka: banks.length,
     calisanlar: employees.length,
+    urunler: productsTotal,
     paketler: packages.length,
     limitler: metrics.length,
     kullanim: metrics.length,
@@ -508,6 +538,116 @@ export default function CmsCompanyDetailPage({ params }) {
                 <div className="border-t border-border pt-4">
                   <PackagesTable packages={normalizedPackages} />
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {section === 'urunler' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Ürünler / Hizmetler</CardTitle>
+                <CardToolbar>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="muted">{productsTotal} kayıt</Badge>
+                    <div className="w-44">
+                      <Select value={prodSort} onValueChange={(v) => { setProdSort(v); setProdPage(1); }}>
+                        <SelectTrigger><SelectValue placeholder="Sırala" /></SelectTrigger>
+                        <SelectContent>
+                          {productSortOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="relative px-0 py-0">
+                {productsFetching && !productsLoading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+                    <Loader2 className="size-6 animate-spin text-primary" />
+                  </div>
+                )}
+                {productsError ? (
+                  <div className="p-4">
+                    <Alert variant="destructive">
+                      <AlertDescription>
+                        {productsError?.data?.message || productsError?.normalizedMessage || 'Ürünler yüklenemedi.'}
+                      </AlertDescription>
+                    </Alert>
+                  </div>
+                ) : productsLoading ? (
+                  <div className="space-y-2 p-4">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <div key={i} className="grid grid-cols-5 gap-4">
+                        {Array.from({ length: 5 }).map((__, j) => <Skeleton key={j} className="h-5" />)}
+                      </div>
+                    ))}
+                  </div>
+                ) : products.length === 0 ? (
+                  <div className="p-4">
+                    <EmptyCard icon={<Package className="size-5" />} message="Bu firmaya ait ürün/hizmet kaydı yok." />
+                  </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Ürün / Hizmet</TableHead>
+                            <TableHead>Tür</TableHead>
+                            <TableHead>Durum</TableHead>
+                            <TableHead>Fiyat</TableHead>
+                            <TableHead>Oluşturulma</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {products.map((p) => {
+                            const pt = productTypeMeta[p.type];
+                            const ps = productStatusMeta[p.status];
+                            const ppt = productPricetypeMeta[p.pricetype];
+                            return (
+                              <TableRow key={p.id}>
+                                <TableCell>
+                                  <div className="flex items-center gap-3">
+                                    <Avatar name={p.title} src={p.coverImage || undefined} size="sm" />
+                                    <div className="min-w-0">
+                                      <Link href={`/cms/products/${p.id}`} className="text-sm font-medium text-foreground hover:text-primary">
+                                        {p.title}
+                                      </Link>
+                                      <p className="truncate font-mono text-xs text-muted-foreground">{p.sku}</p>
+                                    </div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>{pt ? <Badge variant={pt.variant}>{pt.label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                                <TableCell><Badge variant={ps?.variant}>{ps?.label ?? p.status}</Badge></TableCell>
+                                <TableCell className="whitespace-nowrap">
+                                  <span className="text-sm font-medium text-foreground">{formatPrice(p.priceAmount, p.currency)}</span>
+                                  {ppt && <p className="text-xs text-muted-foreground">{ppt.label}</p>}
+                                </TableCell>
+                                <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTrDate(p.createdAt)}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+                      <p className="text-xs text-muted-foreground">
+                        Sayfa <span className="font-medium text-foreground">{prodPage}</span> / {productsTotalPages}
+                        {' · '}Toplam <span className="font-medium text-foreground">{productsTotal}</span> kayıt
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" disabled={prodPage <= 1 || productsFetching} onClick={() => setProdPage((p) => Math.max(p - 1, 1))}>
+                          <ChevronLeft className="size-4" />
+                          Önceki
+                        </Button>
+                        <Button size="sm" variant="outline" disabled={prodPage >= productsTotalPages || productsFetching} onClick={() => setProdPage((p) => Math.min(p + 1, productsTotalPages))}>
+                          Sonraki
+                          <ChevronRight className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           )}

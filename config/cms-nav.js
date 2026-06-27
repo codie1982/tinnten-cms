@@ -14,6 +14,7 @@ import {
   Files,
   MoreHorizontal,
   MessagesSquare,
+  Package,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -105,6 +106,12 @@ export const CMS_NAV = [
       { title: 'Satıcı Başvuruları', path: '/cms/company-approvals/applications', roles: [CMS_ROLES.ADMIN] },
       { title: 'KYC / Evrak Kontrolü', path: '/cms/company-approvals/kyc', roles: [CMS_ROLES.ADMIN] },
     ],
+  },
+  {
+    title: 'Ürünler & Hizmetler',
+    icon: Package,
+    path: '/cms/products',
+    roles: [CMS_ROLES.ADMIN],
   },
 
   { heading: 'FİNANS' },
