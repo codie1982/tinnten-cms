@@ -118,6 +118,11 @@ export const ENDPOINTS = {
     cmsToolDefinitions: (id) => `/asistans/cms/${id}/tool-definitions`,
     cmsToolList: '/asistans/cms/tool-definitions',
   },
+  aiConversations: {
+    // CMS admin: tüm kullanıcılar arası konuşmalar (genel + asistan).
+    cmsList: '/conversation/cms',
+    cmsDetail: (id) => `/conversation/cms/${id}`,
+  },
   systemPackages: {
     list: '/system-packages',
     cmsList: '/system-packages/cms',

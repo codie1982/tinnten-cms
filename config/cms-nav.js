@@ -13,6 +13,7 @@ import {
   Compass,
   Files,
   MoreHorizontal,
+  MessagesSquare,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -37,6 +38,12 @@ export const CMS_NAV = [
     icon: Bot,
     path: '/cms/assistants',
     roles: [CMS_ROLES.ACCESS],
+  },
+  {
+    title: 'Konuşmalar',
+    icon: MessagesSquare,
+    path: '/cms/ai-conversations',
+    roles: [CMS_ROLES.ADMIN],
   },
   {
     title: 'İş Akışları',

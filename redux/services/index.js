@@ -18,6 +18,7 @@ export * from './mqApi';
 export * from './monitoringApi';
 export * from './filesApi';
 export * from './aiApi';
+export * from './aiConversationsApi';
 export * from './docsApi';
 export * from './legalApi';
 export * from './settingsApi';
