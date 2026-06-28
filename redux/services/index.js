@@ -12,6 +12,7 @@ export * from './productsApi';
 export * from './usersApi';
 export * from './emailApi';
 export * from './mailCampaignApi';
+export * from './cronListApi';
 export * from './fetcherApi';
 export * from './embeddingApi';
 export * from './cronApi';

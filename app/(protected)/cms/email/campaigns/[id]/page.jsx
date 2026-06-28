@@ -183,7 +183,11 @@ export default function CampaignEditPage() {
                     <select value={form.channelKey} onChange={(e) => set('channelKey', e.target.value)} disabled={!isDraft}
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30">
                       <option value="">— seçin —</option>
-                      {channels.map((c) => <option key={c._id} value={c.key}>{c.title} ({c.key})</option>)}
+                      {channels.map((c) => (
+                        <option key={c._id} value={c.key}>
+                          {c.title}{c.description ? ` — ${c.description}` : ''} ({c.key})
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div className="min-w-[200px] flex-1">

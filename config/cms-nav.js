@@ -172,6 +172,7 @@ export const CMS_NAV = [
       { title: 'Giden Mailler', path: '/cms/email/history', roles: [CMS_ROLES.EDITOR] },
       { title: 'Mail Abonelikleri', path: '/cms/email/lists', roles: [CMS_ROLES.EDITOR] },
       { title: 'Kanallar', path: '/cms/email/channels', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Cron Listeleri', path: '/cms/email/cron-lists', roles: [CMS_ROLES.EDITOR] },
       { title: 'Kampanyalar', path: '/cms/email/campaigns', roles: [CMS_ROLES.EDITOR] },
       { title: 'Kampanya Şablonları', path: '/cms/email/campaign-templates', roles: [CMS_ROLES.EDITOR] },
       { title: 'Şablonlar (.flt)', path: '/cms/email/templates', roles: [CMS_ROLES.EDITOR] },

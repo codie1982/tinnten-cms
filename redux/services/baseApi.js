@@ -76,6 +76,7 @@ export const baseApi = createApi({
     'EmbeddingDoc',
     'CronStatus',
     'CronJob',
+    'CronList',
     'MqStatus',
     'Monitoring',
     'FileAsset',

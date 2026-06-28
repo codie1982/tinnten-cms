@@ -205,6 +205,12 @@ export const ENDPOINTS = {
     // Yardımcı
     mergeVariables: '/email/merge-variables',
     recipientCount: '/email/recipient-count',
+    // Cron listeleri (DB sorgusu → cron-kanalı mail-list besleyen reçeteler)
+    cronLists: '/email/cron-lists',
+    cronList: (id) => `/email/cron-lists/${id}`,
+    cronListRun: (id) => `/email/cron-lists/${id}/run-now`,
+    cronListPreview: '/email/cron-lists/preview',
+    cronListSchema: '/email/cron-lists/schema',
   },
   emailTemplates: {
     cmsList: '/email-templates/cms',
