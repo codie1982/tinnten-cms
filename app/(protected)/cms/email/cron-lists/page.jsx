@@ -41,8 +41,10 @@ const emptyForm = () => ({
   name: '',
   description: '',
   source: 'company',
+  queryMode: 'builder',
   filters: [],
   relations: [],
+  pipelineText: '[\n  { "$match": {} }\n]',
   buildMode: 'append',
   maxRecipients: 5000,
   schedule: { cron: '0 9 * * *', timezone: 'Europe/Istanbul' },
@@ -84,6 +86,7 @@ export default function CronListsPage() {
       name: row.name || '',
       description: row.description || '',
       source: row.source || 'company',
+      queryMode: row.queryMode || 'builder',
       filters: (row.filters || []).map((f) => ({
         field: f.field, op: f.op,
         rel: f.value && typeof f.value === 'object' && 'relativeDays' in f.value,
@@ -92,6 +95,7 @@ export default function CronListsPage() {
           : Array.isArray(f.value) ? f.value.join(',') : f.value,
       })),
       relations: row.relations || [],
+      pipelineText: JSON.stringify(row.pipeline || [], null, 2),
       buildMode: row.buildMode || 'append',
       maxRecipients: row.maxRecipients ?? 5000,
       schedule: { cron: row.schedule?.cron || '0 9 * * *', timezone: row.schedule?.timezone || 'Europe/Istanbul' },
@@ -108,18 +112,33 @@ export default function CronListsPage() {
   const toggleRelation = (name) =>
     set('relations', form.relations.includes(name) ? form.relations.filter((r) => r !== name) : [...form.relations, name]);
 
-  const buildQuery = () => ({
-    source: form.source,
-    filters: form.filters.filter((f) => f.field && f.op).map((f) => {
-      let value;
-      if (f.op === 'exists') value = f.value === true || f.value === 'true';
-      else if (f.op === 'in' || f.op === 'nin') value = String(f.value).split(',').map((s) => s.trim()).filter(Boolean);
-      else if (f.rel) value = { relativeDays: Number(f.value) || 0 };
-      else value = f.value;
-      return { field: f.field, op: f.op, value };
-    }),
-    relations: form.relations,
-  });
+  // Aggregate modunda pipeline JSON'unu parse et (hata fırlatır → çağıran yakalar).
+  const parsePipeline = () => {
+    let p;
+    try { p = JSON.parse(form.pipelineText || '[]'); }
+    catch (e) { throw new Error('Pipeline JSON geçersiz: ' + e.message); }
+    if (!Array.isArray(p)) throw new Error('Pipeline bir dizi (array) olmalı.');
+    return p;
+  };
+
+  const buildQuery = () => {
+    if (form.queryMode === 'aggregate') {
+      return { source: form.source, queryMode: 'aggregate', pipeline: parsePipeline() };
+    }
+    return {
+      source: form.source,
+      queryMode: 'builder',
+      filters: form.filters.filter((f) => f.field && f.op).map((f) => {
+        let value;
+        if (f.op === 'exists') value = f.value === true || f.value === 'true';
+        else if (f.op === 'in' || f.op === 'nin') value = String(f.value).split(',').map((s) => s.trim()).filter(Boolean);
+        else if (f.rel) value = { relativeDays: Number(f.value) || 0 };
+        else value = f.value;
+        return { field: f.field, op: f.op, value };
+      }),
+      relations: form.relations,
+    };
+  };
 
   const buildPayload = () => ({
     name: form.name.trim(),
@@ -132,7 +151,9 @@ export default function CronListsPage() {
 
   const doPreview = async () => {
     setNotice('');
-    const r = await previewList(buildQuery()).unwrap().catch((e) => ({ __err: e?.data?.message || 'Önizleme başarısız' }));
+    let query;
+    try { query = buildQuery(); } catch (e) { setPreview(null); return setNotice(e.message); }
+    const r = await previewList(query).unwrap().catch((e) => ({ __err: e?.data?.message || 'Önizleme başarısız' }));
     if (r?.__err) { setPreview(null); return setNotice(r.__err); }
     setPreview(r);
   };
@@ -141,7 +162,8 @@ export default function CronListsPage() {
     setNotice('');
     if (!form.name.trim()) return setNotice('Liste adı zorunlu.');
     if (!form.schedule.cron.trim()) return setNotice('Zamanlama (cron) zorunlu.');
-    const payload = buildPayload();
+    let payload;
+    try { payload = buildPayload(); } catch (e) { return setNotice(e.message); }
     const action = form.id
       ? updateList({ id: form.id, ...payload })
       : createList(payload);
@@ -203,6 +225,13 @@ export default function CronListsPage() {
                   ))}
                 </select>
               </div>
+              <div className="min-w-[180px]">
+                <label className="mb-1 block text-xs text-muted-foreground">Sorgu modu</label>
+                <select className={SELECT_CLS} value={form.queryMode} onChange={(e) => set('queryMode', e.target.value)}>
+                  <option value="builder">Yapılandırılmış (filtre + ilişki)</option>
+                  <option value="aggregate">JSON Aggregate (gelişmiş)</option>
+                </select>
+              </div>
               <div className="min-w-[160px]">
                 <label className="mb-1 block text-xs text-muted-foreground">Oluşturma modu</label>
                 <select className={SELECT_CLS} value={form.buildMode} onChange={(e) => set('buildMode', e.target.value)}>
@@ -216,7 +245,30 @@ export default function CronListsPage() {
               </div>
             </div>
 
-            {/* Filtreler */}
+            {/* Aggregate (gelişmiş): ham JSON pipeline */}
+            {form.queryMode === 'aggregate' && (
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Aggregation pipeline (JSON dizi) — kaynak: <b>{sourceDef?.label || form.source}</b>
+                </label>
+                <textarea
+                  className="h-56 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30"
+                  value={form.pipelineText}
+                  onChange={(e) => set('pipelineText', e.target.value)}
+                  spellCheck={false}
+                  placeholder='[ { "$match": { "active": true } } ]'
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Sonuç dokümanları şu alanları döndürmeli (e-posta çözümü için):{' '}
+                  <code>{(sourceDef?.aggregateIdFields || []).join(', ') || '—'}</code>. Yasak operatörler:{' '}
+                  <code>{(schema?.aggregate?.forbiddenOperators || []).join(', ')}</code>. Sona otomatik <code>$limit</code> eklenir.
+                </p>
+              </div>
+            )}
+
+            {/* Filtreler (yapılandırılmış mod) */}
+            {form.queryMode === 'builder' && (
+            <>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Filtreler (DB sorgusu)</label>
               <div className="space-y-2">
@@ -269,6 +321,8 @@ export default function CronListsPage() {
                   ))}
                 </div>
               </div>
+            )}
+            </>
             )}
 
             {/* Zamanlama */}
