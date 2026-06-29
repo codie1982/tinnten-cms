@@ -79,6 +79,9 @@ import {
   typeMeta,
   typeOptions,
 } from '../_data';
+import SchedulingSection from './_sections/SchedulingSection';
+import FormsSection from './_sections/FormsSection';
+import LocationSection from './_sections/LocationSection';
 
 function formatTrDate(input) {
   if (!input) return '—';
@@ -826,6 +829,17 @@ export default function CmsProductDetailPage({ params }) {
           </DialogContent>
         </Dialog>
 
+        {/* Zamanlama & Rezervasyon (yalnızca hizmet) */}
+        {product.type === 'services' && (
+          <SchedulingSection product={product} onNotice={setNotice} />
+        )}
+
+        {/* Formlar (AI ile oluştur / mevcut formu seç) */}
+        <FormsSection product={product} onNotice={setNotice} />
+
+        {/* Konum */}
+        <LocationSection product={product} onNotice={setNotice} />
+
         {/* Genel bilgiler */}
         <Card>
           <CardHeader>
@@ -1046,85 +1060,6 @@ export default function CmsProductDetailPage({ params }) {
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Hizmet / Rezervasyon ayarları */}
-        {(timeR.enabled || reservation.enabled) && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Hizmet & Rezervasyon</CardTitle>
-              <CardToolbar>
-                <CalendarClock className="size-4 text-muted-foreground" />
-              </CardToolbar>
-            </CardHeader>
-            <CardContent className="grid gap-x-8 gap-y-1 p-6 sm:grid-cols-2">
-              {timeR.enabled && (
-                <>
-                  <InfoRow
-                    icon={CalendarClock}
-                    label="Randevu Saatleri"
-                    value={
-                      timeR.allDay
-                        ? 'Tüm gün'
-                        : [timeR.dailyStartTime, timeR.dailyEndTime]
-                            .filter(Boolean)
-                            .join(' – ') || '—'
-                    }
-                  />
-                  <InfoRow
-                    icon={CalendarClock}
-                    label="Slot Süresi (dk)"
-                    value={
-                      timeR.slotDurationMinutes != null
-                        ? String(timeR.slotDurationMinutes)
-                        : '—'
-                    }
-                  />
-                  {Array.isArray(timeR.days) && timeR.days.length > 0 && (
-                    <div className="sm:col-span-2">
-                      <InfoRow label="Günler" value={timeR.days.join(', ')} />
-                    </div>
-                  )}
-                </>
-              )}
-              {reservation.enabled && (
-                <>
-                  <InfoRow
-                    icon={CalendarClock}
-                    label="Fiyatlandırma Birimi"
-                    value={reservation.pricingUnit}
-                  />
-                  <InfoRow
-                    icon={CalendarClock}
-                    label="Kapasite"
-                    value={
-                      reservation.capacity != null
-                        ? String(reservation.capacity)
-                        : '—'
-                    }
-                  />
-                  <InfoRow
-                    icon={CalendarClock}
-                    label="Min. Süre"
-                    value={
-                      reservation.minDuration != null
-                        ? String(reservation.minDuration)
-                        : '—'
-                    }
-                  />
-                  <InfoRow
-                    icon={CalendarClock}
-                    label="Maks. Süre"
-                    value={
-                      reservation.maxDuration != null
-                        ? String(reservation.maxDuration)
-                        : '—'
-                    }
-                  />
-                </>
-              )}
             </CardContent>
           </Card>
         )}

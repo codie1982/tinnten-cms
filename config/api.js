@@ -172,6 +172,14 @@ export const ENDPOINTS = {
     cmsDetail: (id) => `/products/cms/${id}`,
     cmsUpdate: (id) => `/products/cms/${id}`,
     cmsNotifyEdited: '/products/cms/notify-edited',
+    // Alt-kaynaklar (zamanlama / rezervasyon / konum / formlar) — cms:admin
+    cmsTimeRestriction: (id) => `/products/cms/${id}/time-restriction`,
+    cmsReservationConfig: (id) => `/products/cms/${id}/reservation-config`,
+    cmsLocation: (id) => `/products/cms/${id}/location`,
+    cmsForms: (id) => `/products/cms/${id}/forms`,
+    cmsFormGenerate: (id) => `/products/cms/${id}/form/generate`,
+    cmsFormCreate: (id, slot) => `/products/cms/${id}/form/${slot}/create`,
+    cmsFormAssociate: (id, slot) => `/products/cms/${id}/form/${slot}`,
   },
   users: {
     list: '/users',

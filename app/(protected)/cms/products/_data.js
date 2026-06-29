@@ -68,6 +68,52 @@ export const sortOptions = [
   { value: 'priceAmount:asc', label: 'Fiyat (Düşük→Yüksek)' },
 ];
 
+/* ── Alt-kaynak (zamanlama / konum / form) seçenek & meta tabloları ───────── */
+
+export const locationModeMeta = {
+  fixed: { label: 'Sabit Adres', variant: 'primary' },
+  radius: { label: 'Bölgesel (Yarıçap)', variant: 'secondary' },
+  online: { label: 'Çevrimiçi', variant: 'muted' },
+};
+
+export const locationModeOptions = [
+  { value: 'fixed', label: 'Sabit Adres' },
+  { value: 'radius', label: 'Bölgesel (Yarıçap)' },
+  { value: 'online', label: 'Çevrimiçi' },
+];
+
+/** timeRestriction.days enum değerleri (model ile birebir) + kısa TR etiket. */
+export const weekDayOptions = [
+  { value: 'monday', label: 'Pzt' },
+  { value: 'tuesday', label: 'Sal' },
+  { value: 'wednesday', label: 'Çar' },
+  { value: 'thursday', label: 'Per' },
+  { value: 'friday', label: 'Cum' },
+  { value: 'saturday', label: 'Cmt' },
+  { value: 'sunday', label: 'Paz' },
+];
+
+export const reservationPricingUnitOptions = [
+  { value: 'per_night', label: 'Gecelik' },
+  { value: 'per_day', label: 'Günlük' },
+  { value: 'per_hour', label: 'Saatlik' },
+  { value: 'per_person', label: 'Kişi Başı' },
+  { value: 'flat', label: 'Sabit' },
+];
+
+/** timeRestriction.dateRanges[].type seçenekleri. */
+export const rangeModeOptions = [
+  { value: 'manual', label: 'Manuel Tarih' },
+  { value: 'weekdays', label: 'Hafta İçi' },
+  { value: 'weekends', label: 'Hafta Sonu' },
+];
+
+/** Ürün form slotları → etiket + backend dynamicform.type eşlemesi. */
+export const formSlotMeta = {
+  requestForm: { label: 'Müşteri Talep Formu', type: 'customer' },
+  productForm: { label: 'Ürün Yapılandırma Formu', type: 'product' },
+};
+
 /** tr-TR para birimi formatlayıcı — priceAmount null ise "—". */
 export function formatPrice(amount, currency) {
   if (amount == null) return '—';
