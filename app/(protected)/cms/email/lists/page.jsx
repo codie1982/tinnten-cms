@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
-  Mail, Users, Radio, Tag, Inbox, X, Search, RefreshCw, Loader2, Globe,
+  Mail, Users, Radio, Tag, Inbox, X, Search, RefreshCw, Globe,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -25,6 +26,7 @@ import {
   useGetCmsSubscribersQuery,
   useGetCmsSubscriptionStatsQuery,
   useGetCmsSubscriberQuery,
+  useGetMailChannelsQuery,
 } from '@/redux/services';
 
 const PAGE_SIZE = 25;
@@ -34,7 +36,12 @@ const STATUS_META = {
   bounced: { label: 'Bounced', variant: 'warning' },
   complained: { label: 'Şikayet', variant: 'destructive' },
 };
-const CHANNEL_LABEL = { general: 'Genel', news: 'Haber' };
+const CHANNEL_LABEL = { general: 'Genel', news: 'Haber', cron: 'Cron' };
+
+function channelTitle(channelKey, channels = []) {
+  const row = channels.find((ch) => ch.key === channelKey);
+  return row?.title || CHANNEL_LABEL[channelKey] || channelKey;
+}
 
 function formatTr(input) {
   if (!input) return '—';
@@ -44,8 +51,22 @@ function formatTr(input) {
 }
 
 const SECTIONS = [
-  { key: 'subscribers', label: 'Mail Listeleri', icon: Users, desc: 'Abone (e-posta) kayıtları' },
+  { key: 'subscribers', label: 'Alıcılar', icon: Users, desc: 'Tekil e-posta kayıtları' },
+  {
+    key: 'channels',
+    label: 'Kanal Listeleri',
+    icon: Mail,
+    desc: 'Genel, Haber, Cron, Kullanıcı',
+    href: '/cms/email/lists/channels',
+  },
   { key: 'subscriptions', label: 'Abonelikler', icon: Radio, desc: 'Kanal & kategori dağılımı' },
+  {
+    key: 'cron-lists',
+    label: 'Cron Listeleri',
+    icon: RefreshCw,
+    desc: 'DB sorgusu ile güncellenenler',
+    href: '/cms/email/lists/cron-lists',
+  },
 ];
 
 /* ── Yatay dağılım çubuğu ── */
@@ -67,7 +88,7 @@ function DistRow({ label, count, total, hint }) {
 }
 
 /* ── Abone listesi sekmesi ── */
-function SubscribersSection({ authorized }) {
+function SubscribersSection({ authorized, channels }) {
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
@@ -118,8 +139,11 @@ function SubscribersSection({ authorized }) {
               <SelectTrigger><SelectValue placeholder="Kanal" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tüm Kanallar</SelectItem>
-                <SelectItem value="general">Genel</SelectItem>
-                <SelectItem value="news">Haber</SelectItem>
+                {channels.map((ch) => (
+                  <SelectItem key={ch.key} value={ch.key}>
+                    {ch.title || ch.key}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -173,7 +197,7 @@ function SubscribersSection({ authorized }) {
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
                             {s.channels?.length
-                              ? s.channels.map((c) => <Badge key={c} variant="outline">{CHANNEL_LABEL[c] || c}</Badge>)
+                              ? s.channels.map((c) => <Badge key={c} variant="outline">{channelTitle(c, channels)}</Badge>)
                               : <span className="text-xs text-muted-foreground">—</span>}
                           </div>
                         </TableCell>
@@ -200,13 +224,13 @@ function SubscribersSection({ authorized }) {
         </CardContent>
       </Card>
 
-      {detailEmail && <SubscriberDetail email={detailEmail} onClose={() => setDetailEmail(null)} />}
+      {detailEmail && <SubscriberDetail email={detailEmail} channels={channels} onClose={() => setDetailEmail(null)} />}
     </div>
   );
 }
 
 /* ── Abone detay modalı ── */
-function SubscriberDetail({ email, onClose }) {
+function SubscriberDetail({ email, channels, onClose }) {
   const { data: doc, isFetching } = useGetCmsSubscriberQuery(email);
   const sm = STATUS_META[doc?.status] || { label: doc?.status, variant: 'muted' };
 
@@ -246,7 +270,7 @@ function SubscriberDetail({ email, onClose }) {
                   {(doc.channels || []).length === 0 && <p className="text-sm text-muted-foreground">Kanal aboneliği yok.</p>}
                   {(doc.channels || []).map((c, i) => (
                     <div key={i} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
-                      <span className="font-medium">{CHANNEL_LABEL[c.channel] || c.channel}</span>
+                      <span className="font-medium">{channelTitle(c.channel, channels)}</span>
                       <div className="flex items-center gap-2">
                         <Badge variant="muted">{c.frequency}</Badge>
                         <Badge variant={c.status === 'subscribed' ? 'success' : 'muted'}>
@@ -284,10 +308,10 @@ function SubscriberDetail({ email, onClose }) {
 }
 
 /* ── Abonelik dağılımı sekmesi ── */
-function SubscriptionsSection({ authorized }) {
+function SubscriptionsSection({ authorized, channels: channelDefinitions }) {
   const { data, isFetching, isError, refetch } = useGetCmsSubscriptionStatsQuery(undefined, { skip: !authorized });
   const total = data?.total ?? 0;
-  const channels = data?.channels ?? [];
+  const channelStats = data?.channels ?? [];
   const categories = data?.categories ?? [];
   const locales = data?.locales ?? [];
   const byStatus = data?.byStatus ?? {};
@@ -331,9 +355,9 @@ function SubscriptionsSection({ authorized }) {
           </CardHeader>
           <CardContent className="space-y-3">
             {isFetching ? <Skeleton className="h-24 w-full" />
-              : channels.length === 0 ? <p className="text-sm text-muted-foreground">Kanal aboneliği yok.</p>
-              : channels.map((c) => (
-                  <DistRow key={c.channel} label={CHANNEL_LABEL[c.channel] || c.channel} count={c.count} total={total} hint />
+              : channelStats.length === 0 ? <p className="text-sm text-muted-foreground">Kanal aboneliği yok.</p>
+              : channelStats.map((c) => (
+                  <DistRow key={c.channel} label={channelTitle(c.channel, channelDefinitions)} count={c.count} total={total} hint />
                 ))}
           </CardContent>
         </Card>
@@ -377,17 +401,18 @@ function SubscriptionsSection({ authorized }) {
 }
 
 /* ── page ── */
-export default function MailSubscriptionsPage() {
+export default function MailListsPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
   const [section, setSection] = useState('subscribers');
+  const { data: channels = [] } = useGetMailChannelsQuery({}, { skip: !authorized });
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
       <PageHeader
         section="Email"
-        title="Mail Abonelikleri"
-        description="Abone (e-posta) kayıtları ve kanal/kategori abonelik dağılımı"
+        title="Mail Listeleri"
+        description="Abone (e-posta) kayıtları, abonelik dağılımı ve zamanlı liste üretimi"
       />
 
       <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
@@ -397,21 +422,36 @@ export default function MailSubscriptionsPage() {
             <nav className="space-y-0.5 p-2">
               {SECTIONS.map((s) => {
                 const Icon = s.icon;
-                const active = section === s.key;
-                return (
-                  <button
-                    key={s.key}
-                    onClick={() => setSection(s.key)}
-                    className={cn(
-                      'flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
-                      active ? 'bg-primary/10 text-primary' : 'text-foreground/70 hover:bg-accent hover:text-foreground',
-                    )}
-                  >
+                const active = !s.href && section === s.key;
+                const className = cn(
+                  'flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
+                  active ? 'bg-primary/10 text-primary' : 'text-foreground/70 hover:bg-accent hover:text-foreground',
+                );
+                const children = (
+                  <>
                     <Icon className="mt-0.5 size-4 shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-sm font-medium">{s.label}</span>
                       <span className="block text-xs text-muted-foreground">{s.desc}</span>
                     </span>
+                  </>
+                );
+
+                if (s.href) {
+                  return (
+                    <Link key={s.key} href={s.href} className={className}>
+                      {children}
+                    </Link>
+                  );
+                }
+
+                return (
+                  <button
+                    key={s.key}
+                    onClick={() => setSection(s.key)}
+                    className={className}
+                  >
+                    {children}
                   </button>
                 );
               })}
@@ -421,8 +461,8 @@ export default function MailSubscriptionsPage() {
 
         {/* Sağ içerik */}
         <div>
-          {section === 'subscribers' && <SubscribersSection authorized={authorized} />}
-          {section === 'subscriptions' && <SubscriptionsSection authorized={authorized} />}
+          {section === 'subscribers' && <SubscribersSection authorized={authorized} channels={channels} />}
+          {section === 'subscriptions' && <SubscriptionsSection authorized={authorized} channels={channels} />}
         </div>
       </div>
     </RoleGuard>

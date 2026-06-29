@@ -75,7 +75,7 @@ export const emailApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
     }),
 
-    /* ── Mail Abonelikleri (mail_lists) ── */
+    /* ── Mail Listeleri (mail_lists) ── */
     getCmsSubscribers: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.mailList.cmsList, params }), // { q, status, channel, category, limit, skip }
       transformResponse: (res) => res?.data ?? res, // { items, total, limit, skip }
