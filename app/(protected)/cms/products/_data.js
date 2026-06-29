@@ -21,6 +21,11 @@ export const statusMeta = {
   rejected: { label: 'Reddedildi', variant: 'destructive' },
 };
 
+export const adminAproveMeta = {
+  true: { label: 'Admin Onaylı', variant: 'success' },
+  false: { label: 'Admin Durdurdu', variant: 'destructive' },
+};
+
 export const pricetypeMeta = {
   fixed: { label: 'Sabit Fiyat', variant: 'muted' },
   rental: { label: 'Kiralık', variant: 'secondary' },

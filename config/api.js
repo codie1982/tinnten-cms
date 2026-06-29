@@ -170,6 +170,8 @@ export const ENDPOINTS = {
   products: {
     cmsList: '/products/cms/list',
     cmsDetail: (id) => `/products/cms/${id}`,
+    cmsUpdate: (id) => `/products/cms/${id}`,
+    cmsNotifyEdited: '/products/cms/notify-edited',
   },
   users: {
     list: '/users',

@@ -1,7 +1,7 @@
 'use client';
 
-import { baseApi } from './baseApi';
 import { ENDPOINTS } from '@/config/api';
+import { baseApi } from './baseApi';
 
 /**
  * Ürünler & Hizmetler (CMS).
@@ -30,8 +30,33 @@ export const productsApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'Product', id }],
     }),
+    updateCmsProduct: build.mutation({
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.products.cmsUpdate(id),
+        method: 'PATCH',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'Product', id },
+        { type: 'Product', id: 'LIST' },
+      ],
+    }),
+    notifyCmsProductsEdited: build.mutation({
+      query: (body) => ({
+        url: ENDPOINTS.products.cmsNotifyEdited,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
   }),
   overrideExisting: false,
 });
 
-export const { useGetCmsProductsQuery, useGetCmsProductQuery } = productsApi;
+export const {
+  useGetCmsProductsQuery,
+  useGetCmsProductQuery,
+  useUpdateCmsProductMutation,
+  useNotifyCmsProductsEditedMutation,
+} = productsApi;
