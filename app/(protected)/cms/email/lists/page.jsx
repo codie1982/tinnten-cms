@@ -4,7 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
-  Mail, Users, Radio, Tag, Inbox, X, Search, RefreshCw, Globe,
+  Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
+  Loader2, ArrowRight,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -12,291 +13,353 @@ import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/compone
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import {
-  useGetCmsSubscribersQuery,
-  useGetCmsSubscriptionStatsQuery,
-  useGetCmsSubscriberQuery,
   useGetMailChannelsQuery,
+  useGetChannelMembersQuery,
+  useCreateMailChannelMutation,
+  useUpdateMailChannelMutation,
+  useDeleteMailChannelMutation,
+  useGetCronListsQuery,
 } from '@/redux/services';
+import { AddMembersPanel } from '@/components/email/add-members-panel';
 
-const PAGE_SIZE = 25;
+const MEMBER_PAGE = 50;
+
+const SECTIONS = [
+  { key: 'general', label: 'Genel Liste', icon: Users, desc: 'Tüm kayıtlı ve dışarıdan eklenen alıcılar' },
+  { key: 'custom', label: 'Özel Listeler', icon: ListFilter, desc: 'Oluşturduğunuz kullanıcı listeleri' },
+  { key: 'news', label: 'Haber Listesi', icon: Newspaper, desc: 'Haber akışından abone olundu' },
+  { key: 'cron', label: 'Cron Listeleri', icon: RefreshCw, desc: 'Zamanlı olarak oluşturulan listeler' },
+];
+
+const TYPE_META = {
+  custom: { label: 'Kullanıcı Listesi', variant: 'secondary' },
+  private: { label: 'Gizli Liste', variant: 'muted' },
+};
 
 const STATUS_META = {
   active: { label: 'Aktif', variant: 'success' },
-  bounced: { label: 'Bounced', variant: 'warning' },
-  complained: { label: 'Şikayet', variant: 'destructive' },
+  archived: { label: 'Arşiv', variant: 'muted' },
 };
-const CHANNEL_LABEL = { general: 'Genel', news: 'Haber', cron: 'Cron' };
 
-function channelTitle(channelKey, channels = []) {
-  const row = channels.find((ch) => ch.key === channelKey);
-  return row?.title || CHANNEL_LABEL[channelKey] || channelKey;
-}
+/* ── Genel Liste ── */
+function GeneralSection({ authorized }) {
+  const [skip, setSkip] = useState(0);
+  const [q, setQ] = useState('');
 
-function formatTr(input) {
-  if (!input) return '—';
-  const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
+  const { data, isLoading, isFetching, error } = useGetChannelMembersQuery(
+    { key: 'general', limit: MEMBER_PAGE, skip, q },
+    { skip: !authorized },
+  );
+  const members = data?.items ?? [];
 
-const SECTIONS = [
-  { key: 'subscribers', label: 'Alıcılar', icon: Users, desc: 'Tekil e-posta kayıtları' },
-  {
-    key: 'channels',
-    label: 'Kanal Listeleri',
-    icon: Mail,
-    desc: 'Genel, Haber, Cron, Kullanıcı',
-    href: '/cms/email/lists/channels',
-  },
-  { key: 'subscriptions', label: 'Abonelikler', icon: Radio, desc: 'Kanal & kategori dağılımı' },
-  {
-    key: 'cron-lists',
-    label: 'Cron Listeleri',
-    icon: RefreshCw,
-    desc: 'DB sorgusu ile güncellenenler',
-    href: '/cms/email/lists/cron-lists',
-  },
-];
-
-/* ── Yatay dağılım çubuğu ── */
-function DistRow({ label, count, total, hint }) {
-  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-sm">
-        <span className="truncate font-medium text-foreground">{label}</span>
-        <span className="shrink-0 tabular-nums text-muted-foreground">
-          {count.toLocaleString('tr-TR')}{hint ? ` · ${pct}%` : ''}
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+    <div className="space-y-4">
+      <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
+        <AddMembersPanel
+          channelKey="general"
+          authorized={authorized}
+          note="Kayıtlı kullanıcılar otomatik eklenir. Buradan kayıt olmadan dışarıdan e-posta ekleyebilirsiniz."
+        />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Üyeler</CardTitle>
+            <CardToolbar className="gap-2">
+              <Input
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setSkip(0); }}
+                placeholder="E-posta ara…"
+                className="h-8 w-48"
+              />
+              {isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+            </CardToolbar>
+          </CardHeader>
+          <CardContent className="p-0">
+            {error ? (
+              <div className="p-4">
+                <Alert variant="destructive">
+                  <AlertDescription>{error?.data?.message || 'Sunucuya ulaşılamadı.'}</AlertDescription>
+                </Alert>
+              </div>
+            ) : isLoading ? (
+              <div className="space-y-1 p-4">
+                {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+              </div>
+            ) : members.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">Genel listede üye yok.</p>
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>E-posta</TableHead>
+                      <TableHead>Ad</TableHead>
+                      <TableHead>Durum</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {members.map((m) => (
+                      <TableRow key={m._id || m.email}>
+                        <TableCell className="font-mono text-xs">{m.email}</TableCell>
+                        <TableCell>{m.profile?.name || '—'}</TableCell>
+                        <TableCell>
+                          <Badge variant={m.status === 'active' ? 'success' : 'destructive'}>{m.status}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
+                  <span className="text-muted-foreground">{skip + 1}–{skip + members.length}</span>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - MEMBER_PAGE))}>Önceki</Button>
+                    <Button size="sm" variant="outline" disabled={members.length < MEMBER_PAGE} onClick={() => setSkip(skip + MEMBER_PAGE)}>Sonraki</Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
 }
 
-/* ── Abone listesi sekmesi ── */
-function SubscribersSection({ authorized, channels }) {
-  const [q, setQ] = useState('');
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('all');
-  const [channel, setChannel] = useState('all');
-  const [page, setPage] = useState(0);
-  const [detailEmail, setDetailEmail] = useState(null);
+/* ── Özel Listeler ── */
+function CustomListsSection({ authorized }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '' });
+  const [notice, setNotice] = useState('');
+  const [confirmId, setConfirmId] = useState(null);
 
-  const params = {
-    q: search || undefined,
-    status: status === 'all' ? undefined : status,
-    channel: channel === 'all' ? undefined : channel,
-    limit: PAGE_SIZE,
-    skip: page * PAGE_SIZE,
+  const { data: channels = [], isLoading, error } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
+  const customChannels = channels
+    .filter((ch) => ch.type === 'custom' || ch.type === 'private')
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.title || '').localeCompare(String(b.title || ''), 'tr'));
+
+  const [createChannel, { isLoading: creating }] = useCreateMailChannelMutation();
+  const [updateChannel] = useUpdateMailChannelMutation();
+  const [deleteChannel] = useDeleteMailChannelMutation();
+
+  const handleCreate = async () => {
+    if (!form.title.trim()) return;
+    const r = await createChannel({ ...form, type: 'custom' })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Oluşturulamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    setShowCreate(false);
+    setForm({ title: '', description: '' });
+    setNotice('');
   };
-  const { data, isFetching, isError, refetch } = useGetCmsSubscribersQuery(params, { skip: !authorized });
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const submitSearch = () => { setPage(0); setSearch(q.trim()); };
+  const toggleArchive = async (ch) => {
+    await updateChannel({ id: ch._id, status: ch.status === 'active' ? 'archived' : 'active' })
+      .unwrap()
+      .catch((e) => setNotice(e?.data?.message || 'Güncellenemedi'));
+  };
+
+  const handleDelete = async (id) => {
+    const r = await deleteChannel(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Silinemedi' }));
+    setConfirmId(null);
+    if (r?.__err) setNotice(r.__err);
+  };
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <div className="flex min-w-[240px] flex-1 items-center gap-2">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-              placeholder="E-posta ara…"
-            />
-            <Button variant="outline" size="icon" onClick={submitSearch}><Search className="size-4" /></Button>
-          </div>
-          <div className="w-40">
-            <Select value={status} onValueChange={(v) => { setStatus(v); setPage(0); }}>
-              <SelectTrigger><SelectValue placeholder="Durum" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tüm Durumlar</SelectItem>
-                <SelectItem value="active">Aktif</SelectItem>
-                <SelectItem value="bounced">Bounced</SelectItem>
-                <SelectItem value="complained">Şikayet</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="w-40">
-            <Select value={channel} onValueChange={(v) => { setChannel(v); setPage(0); }}>
-              <SelectTrigger><SelectValue placeholder="Kanal" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tüm Kanallar</SelectItem>
-                {channels.map((ch) => (
-                  <SelectItem key={ch.key} value={ch.key}>
-                    {ch.title || ch.key}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
-            <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
-          </Button>
-        </CardContent>
-      </Card>
+      {notice && <Alert variant="destructive"><AlertDescription>{notice}</AlertDescription></Alert>}
 
       <Card>
         <CardHeader>
-          <CardTitle>Aboneler</CardTitle>
-          <CardToolbar><Badge variant="muted">{total.toLocaleString('tr-TR')} kayıt</Badge></CardToolbar>
+          <CardTitle>Özel Listeler</CardTitle>
+          <CardToolbar>
+            <Button onClick={() => setShowCreate((v) => !v)}>
+              <Plus className="size-4" /> Yeni Liste
+            </Button>
+          </CardToolbar>
         </CardHeader>
-        <CardContent className="px-0 py-0">
-          {isError ? (
+        <CardContent className="p-0">
+          {showCreate && (
+            <div className="border-b border-border p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-[200px] flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Liste adı</label>
+                  <Input
+                    value={form.title}
+                    onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                    placeholder="Örn. VIP kullanıcılar"
+                  />
+                </div>
+                <div className="min-w-[200px] flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Açıklama</label>
+                  <Input
+                    value={form.description}
+                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                  />
+                </div>
+                <Button onClick={handleCreate} disabled={creating || !form.title.trim()}>
+                  {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Oluştur
+                </Button>
+                <Button variant="outline" onClick={() => setShowCreate(false)}>İptal</Button>
+              </div>
+            </div>
+          )}
+
+          {error ? (
             <div className="p-4">
               <Alert variant="destructive">
-                <AlertTitle>Yüklenemedi</AlertTitle>
-                <AlertDescription>Abone listesi alınamadı. Backend çalışıyor mu?</AlertDescription>
+                <AlertDescription>{error?.data?.message || 'Sunucuya ulaşılamadı.'}</AlertDescription>
               </Alert>
             </div>
-          ) : isFetching && items.length === 0 ? (
-            <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-14 text-center">
-              <Inbox className="size-6 text-muted-foreground" />
-              <p className="font-semibold text-foreground">Abone yok</p>
-              <p className="text-sm text-muted-foreground">Bu kriterde abone bulunmuyor.</p>
+          ) : isLoading ? (
+            <div className="space-y-1 p-4">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
             </div>
+          ) : customChannels.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Henüz özel liste yok. Yukarıdan oluşturun.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Liste</TableHead>
+                  <TableHead>Tip</TableHead>
+                  <TableHead>Durum</TableHead>
+                  <TableHead className="text-right">İşlemler</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {customChannels.map((ch) => {
+                  const tm = TYPE_META[ch.type] || { label: ch.type, variant: 'muted' };
+                  const sm = STATUS_META[ch.status] || { label: ch.status, variant: 'muted' };
+                  return (
+                    <TableRow key={ch._id}>
+                      <TableCell className="font-medium">
+                        {ch.title}
+                        {ch.description && (
+                          <div className="mt-0.5 max-w-[360px] truncate text-xs font-normal text-muted-foreground">
+                            {ch.description}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell><Badge variant={tm.variant}>{tm.label}</Badge></TableCell>
+                      <TableCell><Badge variant={sm.variant}>{sm.label}</Badge></TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          <Link href={`/cms/email/lists/${ch.key}`}>
+                            <Button size="sm" variant="outline">
+                              <Users className="mr-1 size-3.5" /> Üyeleri Yönet
+                            </Button>
+                          </Link>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => toggleArchive(ch)}
+                            title={ch.status === 'active' ? 'Arşivle' : 'Aktifleştir'}
+                          >
+                            {ch.status === 'active'
+                              ? <Archive className="size-3.5" />
+                              : <ArchiveRestore className="size-3.5" />}
+                          </Button>
+                          {confirmId === ch._id ? (
+                            <Button size="sm" variant="destructive" onClick={() => handleDelete(ch._id)}>Emin?</Button>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => setConfirmId(ch._id)}>
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ── Haber Listesi (salt okunur) ── */
+function NewsSection({ authorized }) {
+  const [skip, setSkip] = useState(0);
+  const [q, setQ] = useState('');
+
+  const { data, isLoading, isFetching, error } = useGetChannelMembersQuery(
+    { key: 'news_content', limit: MEMBER_PAGE, skip, q },
+    { skip: !authorized },
+  );
+  const members = data?.items ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Alert>
+        <AlertDescription>
+          Haber abonelikleri haberler bölümünden yönetilir. Bu liste salt okunurdur.
+        </AlertDescription>
+      </Alert>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Haber Aboneleri</CardTitle>
+          <CardToolbar className="gap-2">
+            <Input
+              value={q}
+              onChange={(e) => { setQ(e.target.value); setSkip(0); }}
+              placeholder="E-posta ara…"
+              className="h-8 w-48"
+            />
+            {isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="p-0">
+          {error ? (
+            <div className="p-4">
+              <Alert variant="destructive">
+                <AlertDescription>{error?.data?.message || 'Sunucuya ulaşılamadı.'}</AlertDescription>
+              </Alert>
+            </div>
+          ) : isLoading ? (
+            <div className="space-y-1 p-4">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+            </div>
+          ) : members.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Haber listesinde üye yok.</p>
+          ) : (
+            <>
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>E-posta</TableHead>
+                    <TableHead>Ad</TableHead>
                     <TableHead>Durum</TableHead>
-                    <TableHead>Kanallar</TableHead>
-                    <TableHead>Kategori</TableHead>
-                    <TableHead>Kaynak</TableHead>
-                    <TableHead>Son Aktivite</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((s) => {
-                    const sm = STATUS_META[s.status] || { label: s.status, variant: 'muted' };
-                    return (
-                      <TableRow key={s.id} className="cursor-pointer" onClick={() => setDetailEmail(s.email)}>
-                        <TableCell className="max-w-[260px] truncate text-sm font-medium text-foreground">{s.email}</TableCell>
-                        <TableCell><Badge variant={sm.variant}>{sm.label}</Badge></TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-1">
-                            {s.channels?.length
-                              ? s.channels.map((c) => <Badge key={c} variant="outline">{channelTitle(c, channels)}</Badge>)
-                              : <span className="text-xs text-muted-foreground">—</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{s.categoryCount || 0}</TableCell>
-                        <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{s.source || '—'}</TableCell>
-                        <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTr(s.lastActivityAt)}</TableCell>
-                      </TableRow>
-                    );
-                  })}
+                  {members.map((m) => (
+                    <TableRow key={m._id || m.email}>
+                      <TableCell className="font-mono text-xs">{m.email}</TableCell>
+                      <TableCell>{m.profile?.name || '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant={m.status === 'active' ? 'success' : 'destructive'}>{m.status}</Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
-            </div>
-          )}
-
-          {total > PAGE_SIZE && (
-            <div className="flex items-center justify-between border-t border-border p-3">
-              <span className="text-xs text-muted-foreground">Sayfa {page + 1} / {pageCount}</span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled={page === 0 || isFetching} onClick={() => setPage((p) => p - 1)}>Önceki</Button>
-                <Button variant="outline" size="sm" disabled={page + 1 >= pageCount || isFetching} onClick={() => setPage((p) => p + 1)}>Sonraki</Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {detailEmail && <SubscriberDetail email={detailEmail} channels={channels} onClose={() => setDetailEmail(null)} />}
-    </div>
-  );
-}
-
-/* ── Abone detay modalı ── */
-function SubscriberDetail({ email, channels, onClose }) {
-  const { data: doc, isFetching } = useGetCmsSubscriberQuery(email);
-  const sm = STATUS_META[doc?.status] || { label: doc?.status, variant: 'muted' };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm" onClick={onClose}>
-      <Card className="flex max-h-[88vh] w-full max-w-2xl flex-col" onClick={(e) => e.stopPropagation()}>
-        <CardHeader>
-          <CardTitle className="truncate">{email}</CardTitle>
-          <CardToolbar>
-            {doc && <Badge variant={sm.variant}>{sm.label}</Badge>}
-            <Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button>
-          </CardToolbar>
-        </CardHeader>
-        <CardContent className="space-y-4 overflow-y-auto p-5">
-          {isFetching ? (
-            <Skeleton className="h-48 w-full" />
-          ) : !doc ? (
-            <p className="text-sm text-muted-foreground">Kayıt bulunamadı.</p>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">Locale: </span>{doc.locale || '—'}</div>
-                <div className="truncate"><span className="text-muted-foreground">Kaynak: </span>{doc.source || '—'}</div>
-                <div><span className="text-muted-foreground">Kayıt: </span>{formatTr(doc.createdAt)}</div>
-                <div><span className="text-muted-foreground">Son aktivite: </span>{formatTr(doc.lastActivityAt)}</div>
-              </div>
-
-              {doc.tags?.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {doc.tags.map((t) => <Badge key={t} variant="muted"><Tag className="me-1 size-3" />{t}</Badge>)}
-                </div>
-              )}
-
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Kanallar</p>
-                <div className="space-y-1.5">
-                  {(doc.channels || []).length === 0 && <p className="text-sm text-muted-foreground">Kanal aboneliği yok.</p>}
-                  {(doc.channels || []).map((c, i) => (
-                    <div key={i} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
-                      <span className="font-medium">{channelTitle(c.channel, channels)}</span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="muted">{c.frequency}</Badge>
-                        <Badge variant={c.status === 'subscribed' ? 'success' : 'muted'}>
-                          {c.status === 'subscribed' ? 'Abone' : 'Çıkmış'}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Haber Kategorileri</p>
-                <div className="space-y-1.5">
-                  {(doc.news?.categories || []).length === 0 && <p className="text-sm text-muted-foreground">Kategori aboneliği yok.</p>}
-                  {(doc.news?.categories || []).map((c, i) => (
-                    <div key={i} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
-                      <span className="min-w-0 truncate font-medium">{c.title || c.slug}{c.countryCode ? ` · ${c.countryCode}` : ''}</span>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Badge variant="muted">{c.frequency}</Badge>
-                        <Badge variant={c.status === 'subscribed' ? 'success' : 'muted'}>
-                          {c.status === 'subscribed' ? 'Abone' : 'Çıkmış'}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
+              <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
+                <span className="text-muted-foreground">{skip + 1}–{skip + members.length}</span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - MEMBER_PAGE))}>Önceki</Button>
+                  <Button size="sm" variant="outline" disabled={members.length < MEMBER_PAGE} onClick={() => setSkip(skip + MEMBER_PAGE)}>Sonraki</Button>
                 </div>
               </div>
             </>
@@ -307,151 +370,116 @@ function SubscriberDetail({ email, channels, onClose }) {
   );
 }
 
-/* ── Abonelik dağılımı sekmesi ── */
-function SubscriptionsSection({ authorized, channels: channelDefinitions }) {
-  const { data, isFetching, isError, refetch } = useGetCmsSubscriptionStatsQuery(undefined, { skip: !authorized });
-  const total = data?.total ?? 0;
-  const channelStats = data?.channels ?? [];
-  const categories = data?.categories ?? [];
-  const locales = data?.locales ?? [];
-  const byStatus = data?.byStatus ?? {};
-
-  if (isError) {
-    return (
-      <Alert variant="destructive">
-        <AlertTitle>Yüklenemedi</AlertTitle>
-        <AlertDescription>Abonelik dağılımı alınamadı. Backend çalışıyor mu?</AlertDescription>
-      </Alert>
-    );
-  }
+/* ── Cron Listeleri (özet, salt okunur) ── */
+function CronSection({ authorized }) {
+  const { data: lists = [], isLoading } = useGetCronListsQuery({}, { skip: !authorized });
 
   return (
     <div className="space-y-4">
-      {/* Özet kartları */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card><CardContent className="p-4">
-          <p className="text-2sm text-muted-foreground">Toplam Abone</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{isFetching ? '…' : total.toLocaleString('tr-TR')}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <p className="text-2sm text-muted-foreground">Aktif</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-green-600">{isFetching ? '…' : (byStatus.active || 0).toLocaleString('tr-TR')}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <p className="text-2sm text-muted-foreground">Bounced</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-amber-600">{isFetching ? '…' : (byStatus.bounced || 0).toLocaleString('tr-TR')}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <p className="text-2sm text-muted-foreground">Şikayet</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-destructive">{isFetching ? '…' : (byStatus.complained || 0).toLocaleString('tr-TR')}</p>
-        </CardContent></Card>
-      </div>
+      <Alert>
+        <AlertDescription>
+          Cron listeleri DB sorgusuyla otomatik güncellenir.{' '}
+          <Link href="/cms/email/cron-lists" className="font-medium underline">
+            Yeni liste oluşturmak veya düzenlemek için buraya gidin →
+          </Link>
+        </AlertDescription>
+      </Alert>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Kanal dağılımı */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Radio className="size-4 text-primary" /> Kanal Abonelikleri</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {isFetching ? <Skeleton className="h-24 w-full" />
-              : channelStats.length === 0 ? <p className="text-sm text-muted-foreground">Kanal aboneliği yok.</p>
-              : channelStats.map((c) => (
-                  <DistRow key={c.channel} label={channelTitle(c.channel, channelDefinitions)} count={c.count} total={total} hint />
-                ))}
-          </CardContent>
-        </Card>
-
-        {/* Locale dağılımı */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Globe className="size-4 text-primary" /> Dil Dağılımı</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {isFetching ? <Skeleton className="h-24 w-full" />
-              : locales.length === 0 ? <p className="text-sm text-muted-foreground">Veri yok.</p>
-              : locales.map((l) => (
-                  <DistRow key={l.locale} label={l.locale} count={l.count} total={total} hint />
-                ))}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Kategori dağılımı */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Tag className="size-4 text-primary" /> Haber Kategorisi Abonelikleri</CardTitle>
+          <CardTitle>Cron Listesi Özeti</CardTitle>
           <CardToolbar>
-            <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
-              <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
-            </Button>
+            <Link href="/cms/email/cron-lists">
+              <Button variant="outline" size="sm">
+                Tam Kurulum <ArrowRight className="ml-1 size-3.5" />
+              </Button>
+            </Link>
           </CardToolbar>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {isFetching ? <Skeleton className="h-40 w-full" />
-            : categories.length === 0 ? <p className="text-sm text-muted-foreground">Kategori aboneliği yok.</p>
-            : categories.map((c) => {
-                const max = categories[0]?.count || 1;
-                return <DistRow key={c.slug} label={c.title || c.slug} count={c.count} total={max} />;
-              })}
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="space-y-1 p-4">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+            </div>
+          ) : lists.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Henüz cron listesi yok.{' '}
+              <Link href="/cms/email/cron-lists" className="font-medium underline">Oluşturun →</Link>
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ad</TableHead>
+                  <TableHead>Zamanlama</TableHead>
+                  <TableHead>Son Üretim</TableHead>
+                  <TableHead>Durum</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lists.map((row) => (
+                  <TableRow key={row._id}>
+                    <TableCell className="font-medium">
+                      {row.name}
+                      {row.description && (
+                        <div className="text-xs text-muted-foreground">{row.description}</div>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{row.schedule?.cron}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {row.lastBuiltAt
+                        ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · ${row.lastBuiltCount ?? 0} kişi`
+                        : '—'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={row.status === 'active' ? 'secondary' : 'outline'}>{row.status}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
   );
 }
 
-/* ── page ── */
+/* ── Page ── */
 export default function MailListsPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
-  const [section, setSection] = useState('subscribers');
-  const { data: channels = [] } = useGetMailChannelsQuery({}, { skip: !authorized });
+  const [section, setSection] = useState('general');
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
       <PageHeader
         section="Email"
         title="Mail Listeleri"
-        description="Abone (e-posta) kayıtları, abonelik dağılımı ve zamanlı liste üretimi"
+        description="Genel, özel, haber ve cron tabanlı e-posta listeleri"
       />
 
       <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
-        {/* Sol alt-menü */}
         <aside className="lg:sticky lg:top-4 lg:self-start">
           <Card>
             <nav className="space-y-0.5 p-2">
               {SECTIONS.map((s) => {
                 const Icon = s.icon;
-                const active = !s.href && section === s.key;
-                const className = cn(
-                  'flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
-                  active ? 'bg-primary/10 text-primary' : 'text-foreground/70 hover:bg-accent hover:text-foreground',
-                );
-                const children = (
-                  <>
+                const active = section === s.key;
+                return (
+                  <button
+                    key={s.key}
+                    onClick={() => setSection(s.key)}
+                    className={cn(
+                      'flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
+                      active ? 'bg-primary/10 text-primary' : 'text-foreground/70 hover:bg-accent hover:text-foreground',
+                    )}
+                  >
                     <Icon className="mt-0.5 size-4 shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-sm font-medium">{s.label}</span>
                       <span className="block text-xs text-muted-foreground">{s.desc}</span>
                     </span>
-                  </>
-                );
-
-                if (s.href) {
-                  return (
-                    <Link key={s.key} href={s.href} className={className}>
-                      {children}
-                    </Link>
-                  );
-                }
-
-                return (
-                  <button
-                    key={s.key}
-                    onClick={() => setSection(s.key)}
-                    className={className}
-                  >
-                    {children}
                   </button>
                 );
               })}
@@ -459,10 +487,11 @@ export default function MailListsPage() {
           </Card>
         </aside>
 
-        {/* Sağ içerik */}
         <div>
-          {section === 'subscribers' && <SubscribersSection authorized={authorized} channels={channels} />}
-          {section === 'subscriptions' && <SubscriptionsSection authorized={authorized} channels={channels} />}
+          {section === 'general' && <GeneralSection authorized={authorized} />}
+          {section === 'custom' && <CustomListsSection authorized={authorized} />}
+          {section === 'news' && <NewsSection authorized={authorized} />}
+          {section === 'cron' && <CronSection authorized={authorized} />}
         </div>
       </div>
     </RoleGuard>
