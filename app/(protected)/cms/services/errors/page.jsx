@@ -208,11 +208,50 @@ function IssuesSection({ authorized }) {
 function IssueDetail({ fingerprint, onClose }) {
   const { data, isFetching } = useGetErrorIssueDetailQuery(fingerprint);
   const [updateIssue, { isLoading: updating }] = useUpdateErrorIssueMutation();
+  const [notice, setNotice] = useState(null);
   const issue = data?.issue;
   const events = data?.events || [];
 
   const setStatus = async (status) => {
-    await updateIssue({ fingerprint, status }).unwrap().catch(() => {});
+    setNotice(null);
+
+    try {
+      const result = await updateIssue({ fingerprint, status }).unwrap();
+      const notification = result?.data?.notification;
+
+      if (status !== 'resolved') {
+        setNotice({ variant: 'info', message: 'Issue durumu güncellendi.' });
+        return;
+      }
+
+      if (notification?.status === 'queued') {
+        setNotice({ variant: 'info', message: `Issue çözüldü ve ${notification.to} adresine bilgilendirme maili kuyruğa alındı.` });
+        return;
+      }
+
+      if (notification?.reason === 'missing_recipient') {
+        setNotice({
+          variant: 'warning',
+          message: 'Issue çözüldü, ancak kullanıcı e-postası bulunamadığı için bilgilendirme maili gönderilmedi.',
+        });
+        return;
+      }
+
+      if (notification?.reason === 'queue_error') {
+        setNotice({
+          variant: 'warning',
+          message: 'Issue çözüldü, ancak bilgilendirme maili kuyruğa alınamadı.',
+        });
+        return;
+      }
+
+      setNotice({ variant: 'info', message: 'Issue çözüldü.' });
+    } catch (error) {
+      setNotice({
+        variant: 'destructive',
+        message: error?.data?.message || error?.normalizedMessage || 'Issue durumu güncellenemedi.',
+      });
+    }
   };
 
   const sm = issue ? (STATUS_META[issue.status] || { label: issue.status, variant: 'muted' }) : null;
@@ -254,6 +293,12 @@ function IssueDetail({ fingerprint, onClose }) {
                   </Button>
                 </div>
               </div>
+
+              {notice?.message && (
+                <Alert variant={notice.variant}>
+                  <AlertDescription>{notice.message}</AlertDescription>
+                </Alert>
+              )}
 
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4">
                 <div>İlk: {formatTr(issue.firstSeen)}</div>
