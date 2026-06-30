@@ -39,7 +39,10 @@ export const mailCampaignApi = baseApi.injectEndpoints({
     }),
     addChannelMembers: build.mutation({
       query: ({ key, ...body }) => ({ url: ENDPOINTS.email.channelMembers(key), method: 'POST', body }),
-      invalidatesTags: (r, e, { key }) => [{ type: 'MailChannelMember', id: key }],
+      invalidatesTags: (r, e, { key }) => [
+        { type: 'MailChannelMember', id: key },
+        { type: 'MailChannel', id: 'LIST' },
+      ],
     }),
     removeChannelMember: build.mutation({
       query: ({ key, email }) => ({
@@ -47,7 +50,10 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         method: 'DELETE',
         body: { email },
       }),
-      invalidatesTags: (r, e, { key }) => [{ type: 'MailChannelMember', id: key }],
+      invalidatesTags: (r, e, { key }) => [
+        { type: 'MailChannelMember', id: key },
+        { type: 'MailChannel', id: 'LIST' },
+      ],
     }),
 
     // ── Şablonlar (DB kampanya) ──

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Send, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,11 +13,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Progress } from '@/components/ui/progress';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetMailCampaignQuery,
   useCreateMailCampaignMutation,
   useUpdateMailCampaignMutation,
+  useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
   useGetMailChannelsQuery,
   useGetMailTemplatesQuery,
@@ -33,6 +35,8 @@ const DEFAULT_SEND = {
 };
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+const numberFormatter = new Intl.NumberFormat('tr-TR');
+const formatCount = (value) => numberFormatter.format(Number(value) || 0);
 
 export default function CampaignEditPage() {
   const { id } = useParams();
@@ -41,12 +45,18 @@ export default function CampaignEditPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
-  const { data: campaign, isLoading } = useGetMailCampaignQuery(id, { skip: !authorized || isNew });
+  const {
+    data: campaign,
+    isLoading,
+    isFetching: campaignFetching,
+    refetch: refetchCampaign,
+  } = useGetMailCampaignQuery(id, { skip: !authorized || isNew });
   const { data: channels = [] } = useGetMailChannelsQuery({}, { skip: !authorized });
   const { data: templates = [] } = useGetMailTemplatesQuery({}, { skip: !authorized });
 
   const [createCampaign, { isLoading: creating }] = useCreateMailCampaignMutation();
   const [updateCampaign, { isLoading: saving }] = useUpdateMailCampaignMutation();
+  const [deleteCampaign, { isLoading: deleting }] = useDeleteMailCampaignMutation();
   const [sendCampaign, { isLoading: sending }] = useSendMailCampaignMutation();
 
   const [form, setForm] = useState({
@@ -59,6 +69,7 @@ export default function CampaignEditPage() {
   const [vars, setVars] = useState([]); // [{key, value}]
   const [notice, setNotice] = useState('');
   const [confirmSend, setConfirmSend] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const status = campaign?.status || 'draft';
   const isDraft = isNew || status === 'draft';
@@ -66,11 +77,25 @@ export default function CampaignEditPage() {
   const { data: recipientInfo } = useGetRecipientCountQuery(form.channelKey, {
     skip: !authorized || !form.channelKey,
   });
-  const { data: statsData } = useGetMailCampaignStatsQuery(id, {
+  const {
+    data: statsData,
+    isFetching: statsFetching,
+    refetch: refetchStats,
+  } = useGetMailCampaignStatsQuery(id, {
     skip: !authorized || isNew || status === 'draft',
     pollingInterval: ['queued', 'sending'].includes(status) ? 5000 : 0,
   });
   const stats = statsData?.stats;
+  const currentAudience = statsData?.campaign?.audience || campaign?.audience || {};
+  const progress = {
+    total: Number(stats?.total ?? currentAudience.total ?? 0) || 0,
+    sent: Number(stats?.sent ?? currentAudience.sentCount ?? 0) || 0,
+    failed: Number(stats?.failed ?? currentAudience.failedCount ?? 0) || 0,
+    pending: Number(stats?.queued ?? currentAudience.queuedCount ?? 0) || 0,
+  };
+  progress.percent = progress.total
+    ? Math.min(100, Math.round(((progress.sent + progress.failed) / progress.total) * 100))
+    : 0;
 
   useEffect(() => {
     if (campaign) {
@@ -145,7 +170,25 @@ export default function CampaignEditPage() {
     const r = await sendCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Gönderilemedi' }));
     setConfirmSend(false);
     if (r?.__err) return setNotice(r.__err);
-    setNotice(r?.paused ? `Güvenlik nedeniyle duraklatıldı: ${r.reason}` : `Gönderime alındı (${r?.queued ?? 0} alıcı).`);
+    await refetchCampaign();
+    setNotice(r?.paused ? `Güvenlik nedeniyle duraklatıldı: ${r.reason}` : `Kampanya kuyruğa alındı (${r?.queued ?? 0} alıcı).`);
+  };
+
+  const refreshCampaign = async () => {
+    if (isNew) return;
+    await refetchCampaign();
+    if (status !== 'draft') {
+      await refetchStats().catch(() => null);
+    }
+    setNotice('Kampanya durumu yenilendi.');
+  };
+
+  const removeDraft = async () => {
+    const r = await deleteCampaign(id)
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Taslak kaldırılamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    router.push('/cms/email/campaigns');
   };
 
   return (
@@ -153,14 +196,32 @@ export default function CampaignEditPage() {
       <PageHeader
         section="Email · Kampanya"
         title={isNew ? 'Yeni Kampanya' : form.name || 'Kampanya'}
-        description="Onaylı kullanıcılara toplu gönderim — taslak kaydet, sonra gönder"
+        description="Onaylı kullanıcılara toplu yayın — taslak oluştur, hazır olunca yayınla"
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link href="/cms/email/campaigns"><Button variant="outline"><ArrowLeft className="size-4" /> Liste</Button></Link>
+            {!isNew && (
+              <Button variant="outline" onClick={refreshCampaign} disabled={campaignFetching || statsFetching}>
+                {campaignFetching || statsFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                Yenile
+              </Button>
+            )}
             {isDraft && (
               <Button onClick={save} disabled={creating || saving}>
-                {creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Taslağı Kaydet
+                {creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Sonra Yayınla
               </Button>
+            )}
+            {isDraft && !isNew && (
+              confirmDelete ? (
+                <Button variant="destructive" onClick={removeDraft} disabled={deleting}>
+                  {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                  Emin?
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="size-4" /> Kaldır
+                </Button>
+              )
             )}
           </div>
         }
@@ -281,7 +342,17 @@ export default function CampaignEditPage() {
 
           {/* Sağ: özet + gönder/stats */}
           <Card className="lg:sticky lg:top-4 lg:self-start">
-            <CardHeader><CardTitle>Özet</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle>Özet</CardTitle>
+                {!isNew && (
+                  <Button variant="ghost" size="sm" onClick={refreshCampaign} disabled={campaignFetching || statsFetching}>
+                    {campaignFetching || statsFetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                    Yenile
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
             <CardContent className="space-y-3 p-4">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Durum</span>
@@ -291,6 +362,20 @@ export default function CampaignEditPage() {
                 <span className="text-muted-foreground">Alıcı sayısı</span>
                 <span className="font-medium">{form.channelKey ? (recipientCount ?? '…') : '—'}</span>
               </div>
+              {progress.total > 0 && (
+                <div className="space-y-1.5 rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">İlerleme</span>
+                    <span className="font-medium">{progress.percent}%</span>
+                  </div>
+                  <Progress value={progress.percent} indicatorClassName={progress.failed ? 'bg-amber-500' : undefined} />
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span>{formatCount(progress.sent)}/{formatCount(progress.total)} tamamlandı</span>
+                    {progress.pending > 0 && <span>Kuyrukta {formatCount(progress.pending)}</span>}
+                    {progress.failed > 0 && <span className="text-destructive">{formatCount(progress.failed)} hata</span>}
+                  </div>
+                </div>
+              )}
               {estimateMin != null && (
                 <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   ~{estimateMin} dk’da gönderilecek ({form.sendConfig.ratePerSec} mail/sn)
@@ -331,22 +416,22 @@ export default function CampaignEditPage() {
                 confirmSend ? (
                   <div className="space-y-2">
                     <p className="text-sm">
-                      {form.channelKey ? `${recipientCount ?? '?'} kişiye` : ''} gönderilsin mi?
+                      {form.channelKey ? `${recipientCount ?? '?'} kişiye` : ''} yayınlansın mı?
                     </p>
                     <div className="flex gap-2">
-                      <Button onClick={doSend} disabled={sending} className="flex-1">
-                        {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Evet, gönder
+                      <Button onClick={doSend} disabled={sending} className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
+                        {sending ? <Loader2 className="size-4 animate-spin" /> : <Megaphone className="size-4" />} Evet, yayınla
                       </Button>
                       <Button variant="outline" onClick={() => setConfirmSend(false)}>Vazgeç</Button>
                     </div>
                   </div>
                 ) : (
-                  <Button className="w-full" onClick={() => setConfirmSend(true)} disabled={!form.channelKey || !form.templateId}>
-                    <Send className="size-4" /> Gönder
+                  <Button className="w-full bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => setConfirmSend(true)} disabled={!form.channelKey || !form.templateId}>
+                    <Megaphone className="size-4" /> Yayınla
                   </Button>
                 )
               )}
-              {isNew && <p className="text-xs text-muted-foreground">Önce taslağı kaydedin, sonra gönderebilirsiniz.</p>}
+              {isNew && <p className="text-xs text-muted-foreground">Önce taslağı oluşturun, ardından yayınlayabilirsiniz.</p>}
             </CardContent>
           </Card>
         </div>

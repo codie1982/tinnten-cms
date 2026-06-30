@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
-  Loader2, ArrowRight,
+  Loader2, ArrowRight, Pencil, Save, X,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -48,6 +48,9 @@ const STATUS_META = {
   active: { label: 'Aktif', variant: 'success' },
   archived: { label: 'Arşiv', variant: 'muted' },
 };
+
+const countFormatter = new Intl.NumberFormat('tr-TR');
+const formatCount = (value) => countFormatter.format(Number(value) || 0);
 
 /* ── Genel Liste ── */
 function GeneralSection({ authorized }) {
@@ -137,8 +140,10 @@ function GeneralSection({ authorized }) {
 function CustomListsSection({ authorized }) {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ title: '', description: '' });
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ title: '', description: '' });
 
   const { data: channels = [], isLoading, error } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
   const customChannels = channels
@@ -146,35 +151,89 @@ function CustomListsSection({ authorized }) {
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.title || '').localeCompare(String(b.title || ''), 'tr'));
 
   const [createChannel, { isLoading: creating }] = useCreateMailChannelMutation();
-  const [updateChannel] = useUpdateMailChannelMutation();
-  const [deleteChannel] = useDeleteMailChannelMutation();
+  const [updateChannel, { isLoading: updating }] = useUpdateMailChannelMutation();
+  const [deleteChannel, { isLoading: deleting }] = useDeleteMailChannelMutation();
 
   const handleCreate = async () => {
     if (!form.title.trim()) return;
     const r = await createChannel({ ...form, type: 'custom' })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Oluşturulamadı' }));
-    if (r?.__err) return setNotice(r.__err);
+    if (r?.__err) return setNotice({ variant: 'destructive', message: r.__err });
     setShowCreate(false);
     setForm({ title: '', description: '' });
-    setNotice('');
+    setNotice({ variant: 'info', message: 'Liste oluşturuldu.' });
+  };
+
+  const openEdit = (ch) => {
+    setConfirmId(null);
+    setEditId(ch._id);
+    setEditForm({ title: ch.title || '', description: ch.description || '' });
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditForm({ title: '', description: '' });
+  };
+
+  const saveEdit = async (ch) => {
+    const title = editForm.title.trim();
+    if (!title) {
+      setNotice({ variant: 'destructive', message: 'Liste adı boş olamaz.' });
+      return;
+    }
+
+    const r = await updateChannel({
+      id: ch._id,
+      title,
+      description: editForm.description.trim(),
+    })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Liste güncellenemedi' }));
+
+    if (r?.__err) {
+      setNotice({ variant: 'destructive', message: r.__err });
+      return;
+    }
+    cancelEdit();
+    setNotice({ variant: 'info', message: 'Liste bilgileri güncellendi.' });
   };
 
   const toggleArchive = async (ch) => {
-    await updateChannel({ id: ch._id, status: ch.status === 'active' ? 'archived' : 'active' })
+    const nextStatus = ch.status === 'active' ? 'archived' : 'active';
+    const r = await updateChannel({ id: ch._id, status: nextStatus })
       .unwrap()
-      .catch((e) => setNotice(e?.data?.message || 'Güncellenemedi'));
+      .catch((e) => ({ __err: e?.data?.message || 'Güncellenemedi' }));
+    if (r?.__err) {
+      setNotice({ variant: 'destructive', message: r.__err });
+      return;
+    }
+    setNotice({
+      variant: 'info',
+      message: nextStatus === 'archived' ? 'Liste arşivlendi.' : 'Liste aktifleştirildi.',
+    });
   };
 
   const handleDelete = async (id) => {
     const r = await deleteChannel(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Silinemedi' }));
     setConfirmId(null);
-    if (r?.__err) setNotice(r.__err);
+    if (r?.__err) {
+      setNotice({ variant: 'destructive', message: r.__err });
+      return;
+    }
+    setNotice({
+      variant: 'info',
+      message: r?.message || 'Liste kaldırıldı.',
+    });
   };
 
   return (
     <div className="space-y-4">
-      {notice && <Alert variant="destructive"><AlertDescription>{notice}</AlertDescription></Alert>}
+      {notice?.message && (
+        <Alert variant={notice.variant || 'info'}>
+          <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
@@ -229,6 +288,7 @@ function CustomListsSection({ authorized }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Liste</TableHead>
+                  <TableHead className="text-right">Üye</TableHead>
                   <TableHead>Tip</TableHead>
                   <TableHead>Durum</TableHead>
                   <TableHead className="text-right">İşlemler</TableHead>
@@ -238,20 +298,64 @@ function CustomListsSection({ authorized }) {
                 {customChannels.map((ch) => {
                   const tm = TYPE_META[ch.type] || { label: ch.type, variant: 'muted' };
                   const sm = STATUS_META[ch.status] || { label: ch.status, variant: 'muted' };
+                  const editing = editId === ch._id;
                   return (
                     <TableRow key={ch._id}>
                       <TableCell className="font-medium">
-                        {ch.title}
-                        {ch.description && (
-                          <div className="mt-0.5 max-w-[360px] truncate text-xs font-normal text-muted-foreground">
-                            {ch.description}
+                        {editing ? (
+                          <div className="max-w-[420px] space-y-2">
+                            <Input
+                              value={editForm.title}
+                              onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                              className="h-8"
+                              autoFocus
+                            />
+                            <Input
+                              value={editForm.description}
+                              onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                              className="h-8"
+                              placeholder="Açıklama"
+                            />
                           </div>
+                        ) : (
+                          <>
+                            {ch.title}
+                            {ch.description && (
+                              <div className="mt-0.5 max-w-[360px] truncate text-xs font-normal text-muted-foreground">
+                                {ch.description}
+                              </div>
+                            )}
+                          </>
                         )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="inline-flex items-center justify-end gap-1.5 font-medium">
+                          <Users className="size-3.5 text-muted-foreground" />
+                          {formatCount(ch.memberCount)}
+                        </span>
                       </TableCell>
                       <TableCell><Badge variant={tm.variant}>{tm.label}</Badge></TableCell>
                       <TableCell><Badge variant={sm.variant}>{sm.label}</Badge></TableCell>
                       <TableCell>
                         <div className="flex items-center justify-end gap-1">
+                          {editing ? (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => saveEdit(ch)}
+                                disabled={updating || !editForm.title.trim()}
+                              >
+                                {updating ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={updating}>
+                                <X className="size-3.5" />
+                              </Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => openEdit(ch)} title="Liste adını düzenle">
+                              <Pencil className="size-3.5" />
+                            </Button>
+                          )}
                           <Link href={`/cms/email/lists/${ch.key}`}>
                             <Button size="sm" variant="outline">
                               <Users className="mr-1 size-3.5" /> Üyeleri Yönet
@@ -268,9 +372,16 @@ function CustomListsSection({ authorized }) {
                               : <ArchiveRestore className="size-3.5" />}
                           </Button>
                           {confirmId === ch._id ? (
-                            <Button size="sm" variant="destructive" onClick={() => handleDelete(ch._id)}>Emin?</Button>
+                            <Button size="sm" variant="destructive" onClick={() => handleDelete(ch._id)} disabled={deleting}>
+                              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : 'Emin?'}
+                            </Button>
                           ) : (
-                            <Button size="sm" variant="ghost" onClick={() => setConfirmId(ch._id)}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => { setEditId(null); setConfirmId(ch._id); }}
+                              title="Listeyi kaldır"
+                            >
                               <Trash2 className="size-3.5" />
                             </Button>
                           )}
