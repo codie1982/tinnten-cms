@@ -3,8 +3,58 @@
 import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { Bold, Italic, List, ListOrdered, Heading2, Undo, Redo } from 'lucide-react';
+import TiptapLink from '@tiptap/extension-link';
+import { Bold, Italic, Link2, List, ListOrdered, Heading2, MousePointerClick, Undo, Redo } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+const sanitizeTrackingLabel = (value) =>
+  String(value || '')
+    .trim()
+    .slice(0, 80)
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+const escapeHtml = (value) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+const escapeAttr = (value) =>
+  escapeHtml(value)
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const normalizeHref = (value) => {
+  const href = String(value || '').trim();
+  if (!href) return '';
+  if (/^(https?:\/\/|\/)/i.test(href)) return href;
+  return `https://${href}`;
+};
+
+const TrackedLink = TiptapLink.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      dataTrack: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-track'),
+        renderHTML: (attributes) => {
+          const value = sanitizeTrackingLabel(attributes.dataTrack);
+          return value ? { 'data-track': value } : {};
+        },
+      },
+      style: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('style'),
+        renderHTML: (attributes) => (attributes.style ? { style: attributes.style } : {}),
+      },
+    };
+  },
+}).configure({
+  openOnClick: false,
+  HTMLAttributes: { rel: 'noopener' },
+});
 
 /**
  * Kampanya şablonu için Tiptap WYSIWYG editör.
@@ -18,7 +68,7 @@ import { cn } from '@/lib/utils';
  */
 export function MailTemplateEditor({ value, onChange, variables = [] }) {
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [StarterKit, TrackedLink],
     content: value || '',
     immediatelyRender: false,
     editorProps: {
@@ -43,6 +93,54 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
   if (!editor) return null;
 
   const insertVar = (token) => editor.chain().focus().insertContent(`{{${token}}}`).run();
+
+  const insertOrSetLink = () => {
+    const currentHref = editor.getAttributes('link')?.href || '';
+    const href = normalizeHref(globalThis.prompt?.('Bağlantı URL', currentHref) || '');
+    if (!href) return;
+
+    const rawTrack = globalThis.prompt?.('İzleme etiketi (opsiyonel)', '') || '';
+    const dataTrack = sanitizeTrackingLabel(rawTrack);
+
+    if (editor.state.selection.empty) {
+      const text = globalThis.prompt?.('Bağlantı metni', href) || href;
+      const trackAttr = dataTrack ? ` data-track="${escapeAttr(dataTrack)}"` : '';
+      editor
+        .chain()
+        .focus()
+        .insertContent(`<a href="${escapeAttr(href)}"${trackAttr}>${escapeHtml(text)}</a>`)
+        .run();
+      return;
+    }
+
+    editor
+      .chain()
+      .focus()
+      .extendMarkRange('link')
+      .setLink({ href, dataTrack: dataTrack || null })
+      .run();
+  };
+
+  const insertCtaButton = () => {
+    const text = globalThis.prompt?.('Buton metni', 'Hemen Başla') || '';
+    const href = normalizeHref(globalThis.prompt?.('Buton URL', 'https://tinten.ai/register') || '');
+    if (!text.trim() || !href) return;
+
+    const fallbackLabel = sanitizeTrackingLabel(text) || 'cta';
+    const dataTrack =
+      sanitizeTrackingLabel(globalThis.prompt?.('İzleme etiketi', fallbackLabel) || fallbackLabel) ||
+      fallbackLabel;
+    const style =
+      'display:inline-block;padding:10px 18px;background:#1F2937;color:#fff;border-radius:6px;text-decoration:none;font-weight:600';
+
+    editor
+      .chain()
+      .focus()
+      .insertContent(
+        `<a href="${escapeAttr(href)}" data-track="${escapeAttr(dataTrack)}" style="${escapeAttr(style)}">${escapeHtml(text)}</a>`
+      )
+      .run();
+  };
 
   const Btn = ({ active, onClick, title, children }) => (
     <button
@@ -75,6 +173,13 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
         </Btn>
         <Btn title="Sıralı liste" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
           <ListOrdered className="size-4" />
+        </Btn>
+        <span className="mx-1 h-5 w-px bg-border" />
+        <Btn title="Bağlantı ekle" active={editor.isActive('link')} onClick={insertOrSetLink}>
+          <Link2 className="size-4" />
+        </Btn>
+        <Btn title="Buton ekle (CTA)" onClick={insertCtaButton}>
+          <MousePointerClick className="size-4" />
         </Btn>
         <span className="mx-1 h-5 w-px bg-border" />
         <Btn title="Geri al" onClick={() => editor.chain().focus().undo().run()}>

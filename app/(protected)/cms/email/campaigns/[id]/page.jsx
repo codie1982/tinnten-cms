@@ -32,6 +32,8 @@ const DEFAULT_SEND = {
   circuitBreaker: { enabled: true, bounceRatePct: 3, complaintRatePct: 0.08 },
 };
 
+const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+
 export default function CampaignEditPage() {
   const { id } = useParams();
   const router = useRouter();
@@ -66,7 +68,9 @@ export default function CampaignEditPage() {
   });
   const { data: statsData } = useGetMailCampaignStatsQuery(id, {
     skip: !authorized || isNew || status === 'draft',
+    pollingInterval: ['queued', 'sending'].includes(status) ? 5000 : 0,
   });
+  const stats = statsData?.stats;
 
   useEffect(() => {
     if (campaign) {
@@ -297,11 +301,29 @@ export default function CampaignEditPage() {
                 <Alert variant="destructive"><AlertTitle>Duraklatıldı</AlertTitle><AlertDescription>{campaign.pausedReason}</AlertDescription></Alert>
               )}
 
-              {statsData?.stats && (
+              {stats && (
                 <div className="space-y-1 rounded-md border border-border p-3 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Gönderildi</span><span>{statsData.stats.sent}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Başarısız</span><span>{statsData.stats.failed}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Kuyrukta</span><span>{statsData.stats.queued}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Gönderildi</span><span>{stats.sent}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Başarısız</span><span>{stats.failed}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Kuyrukta</span><span>{stats.queued}</span></div>
+                  <div className="mt-2 border-t border-border pt-2" />
+                  <div className="flex justify-between"><span className="text-muted-foreground">Açılma</span><span>{stats.opened ?? 0} · {formatPercent(stats.openRate)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Tıklama</span><span>{stats.clicked ?? 0} · {formatPercent(stats.clickRate)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Kayıt dönüşümü</span><span>{stats.conversions?.registrations ?? 0}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Firma dönüşümü</span><span>{stats.conversions?.companies ?? 0}</span></div>
+                  {stats.buttons?.length > 0 && (
+                    <div className="mt-2 space-y-1 border-t border-border pt-2">
+                      <div className="text-xs font-medium text-muted-foreground">Butonlar</div>
+                      {stats.buttons.map((button) => (
+                        <div key={button.buttonId || 'unknown'} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 truncate font-mono">{button.buttonId || 'unknown'}</span>
+                          <span className="shrink-0 text-muted-foreground">
+                            {button.clicks ?? 0} tık · {button.uniqueClicks ?? 0} kişi · {formatPercent(button.ctr)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
