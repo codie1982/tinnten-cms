@@ -17,15 +17,23 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseCSVEmails(text) {
   const emails = new Set();
+  let totalRows = 0; // boş olmayan satır sayısı (başlık dahil)
+  let matchedRows = 0; // en az bir e-posta içeren satır
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) continue;
+    totalRows++;
+    let matched = false;
     const cells = line.split(/[,;\t]/).map((c) => c.trim().replace(/^["']|["']$/g, ''));
     for (const cell of cells) {
-      if (EMAIL_RE.test(cell)) emails.add(cell.toLowerCase());
+      if (EMAIL_RE.test(cell)) {
+        emails.add(cell.toLowerCase());
+        matched = true;
+      }
     }
+    if (matched) matchedRows++;
   }
-  return [...emails];
+  return { emails: [...emails], totalRows, matchedRows, skippedRows: totalRows - matchedRows };
 }
 
 export function AddMembersPanel({ channelKey, authorized, note }) {
@@ -45,6 +53,7 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
   // CSV sekmesi
   const [csvEmails, setCsvEmails] = useState([]);
   const [csvError, setCsvError] = useState('');
+  const [csvStats, setCsvStats] = useState(null);
   const fileRef = useRef(null);
 
   const toggleSelect = (email) => {
@@ -62,9 +71,16 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
     setCsvError('');
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const emails = parseCSVEmails(ev.target.result);
+      const { emails, totalRows, matchedRows, skippedRows } = parseCSVEmails(ev.target.result);
       setCsvEmails(emails);
-      if (!emails.length) setCsvError('Dosyada geçerli e-posta bulunamadı.');
+      setCsvStats({ totalRows, matchedRows, skippedRows });
+      if (!emails.length) {
+        setCsvError(
+          totalRows
+            ? `Dosyada geçerli e-posta bulunamadı (${totalRows.toLocaleString('tr-TR')} satır tarandı). Her satırda bir e-posta adresi olmalı.`
+            : 'Dosya boş görünüyor.',
+        );
+      }
     };
     reader.readAsText(file);
   };
@@ -72,6 +88,7 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
   const clearCsv = () => {
     setCsvEmails([]);
     setCsvError('');
+    setCsvStats(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -172,9 +189,17 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
         {/* CSV yükle */}
         {tab === 'csv' && (
           <>
-            <p className="text-xs text-muted-foreground">
-              CSV dosyasındaki e-posta içeren herhangi bir sütun otomatik algılanır.
-            </p>
+            <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2.5 text-xs text-muted-foreground">
+              <p>
+                <span className="font-medium text-foreground">Gerekli format:</span> her satırda bir e-posta adresi.
+                İlk satır başlık olabilir; virgül (,), noktalı virgül (;) veya tab ile ayrılmış sütunlar desteklenir,
+                e-posta hangi sütunda olursa olsun bulunur.
+              </p>
+              <p>
+                Yalnızca ad-soyad içeren (e-postasız) satırlar atlanır — ör. Google Ads / LinkedIn dışa
+                aktarımlarında kişilerin çoğunda e-posta bulunmaz.
+              </p>
+            </div>
             <input
               ref={fileRef}
               type="file"
@@ -191,6 +216,12 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
                     Temizle
                   </button>
                 </div>
+                {csvStats?.skippedRows > 0 && (
+                  <p className="mb-1 text-xs text-muted-foreground">
+                    {csvStats.totalRows.toLocaleString('tr-TR')} satır tarandı ·{' '}
+                    {csvStats.skippedRows.toLocaleString('tr-TR')} satır e-posta içermediği için atlandı.
+                  </p>
+                )}
                 <div className="max-h-48 overflow-y-auto rounded-md border border-border">
                   {csvEmails.slice(0, 30).map((e) => (
                     <div key={e} className="px-3 py-1 font-mono text-xs odd:bg-muted/30">{e}</div>
