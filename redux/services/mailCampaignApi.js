@@ -140,6 +140,37 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       query: (channelKey) => ({ url: ENDPOINTS.email.recipientCount, params: { channelKey } }),
       transformResponse: (res) => res?.data ?? res,
     }),
+
+    // ── Merge değişken katalogu (admin) ──
+    getMergeSources: build.query({
+      query: () => ENDPOINTS.email.mergeSources,
+      transformResponse: (res) => res?.data?.sources ?? [],
+    }),
+    getMergeDefs: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.email.mergeDefs, params }),
+      transformResponse: (res) => res?.data?.items ?? res?.data ?? [],
+      providesTags: [{ type: 'MergeVar', id: 'LIST' }],
+    }),
+    getMergeDef: build.query({
+      query: (id) => ENDPOINTS.email.mergeDef(id),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, id) => [{ type: 'MergeVar', id }],
+    }),
+    createMergeDef: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.mergeDefs, method: 'POST', body }),
+      invalidatesTags: [{ type: 'MergeVar', id: 'LIST' }],
+    }),
+    updateMergeDef: build.mutation({
+      query: ({ id, ...body }) => ({ url: ENDPOINTS.email.mergeDef(id), method: 'PATCH', body }),
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'MergeVar', id },
+        { type: 'MergeVar', id: 'LIST' },
+      ],
+    }),
+    deleteMergeDef: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.mergeDef(id), method: 'DELETE' }),
+      invalidatesTags: [{ type: 'MergeVar', id: 'LIST' }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -168,4 +199,10 @@ export const {
   useGetMergeVariablesQuery,
   useGetRecipientCountQuery,
   useLazyGetRecipientCountQuery,
+  useGetMergeSourcesQuery,
+  useGetMergeDefsQuery,
+  useGetMergeDefQuery,
+  useCreateMergeDefMutation,
+  useUpdateMergeDefMutation,
+  useDeleteMergeDefMutation,
 } = mailCampaignApi;

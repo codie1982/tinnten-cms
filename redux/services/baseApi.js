@@ -67,6 +67,7 @@ export const baseApi = createApi({
     'MailChannel',
     'MailChannelMember',
     'MailTemplate',
+    'MergeVar',
     'FetcherStatus',
     'FetcherDomain',
     'FetcherUrl',

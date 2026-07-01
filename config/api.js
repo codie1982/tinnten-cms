@@ -214,6 +214,10 @@ export const ENDPOINTS = {
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
     // Yardımcı
     mergeVariables: '/email/merge-variables',
+    // Merge değişken katalogu (admin)
+    mergeSources: '/email/merge-variables/sources',
+    mergeDefs: '/email/merge-variables/defs',
+    mergeDef: (id) => `/email/merge-variables/defs/${id}`,
     recipientCount: '/email/recipient-count',
     // Cron listeleri (DB sorgusu → cron-kanalı mail-list besleyen reçeteler)
     cronLists: '/email/cron-lists',
