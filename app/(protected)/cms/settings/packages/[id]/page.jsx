@@ -71,6 +71,9 @@ const DEFAULT_LIMITS = {
   // taşınmalı, aksi halde kaydetmede tools/libraryFiles/previewViewsPerMonth
   // backend default'larına (5/10/100) sıfırlanır.
   assistant: { published: 1, tools: 5, libraryFiles: 10, previewViewsPerMonth: 100 },
+  // Firma oluşturma limiti — yalnız Kullanıcı Paketi (forCompany:false) için anlamlı.
+  // Kayıtta kullanıcının account snapshot'ına kopyalanır. 0 = sınırsız.
+  company: { count: 1 },
   maxDevices: null,
 };
 
@@ -237,6 +240,11 @@ export default function PackageEditorPage({ params }) {
         tools: num(limits.assistant?.tools, 5),
         libraryFiles: num(limits.assistant?.libraryFiles, 10),
         previewViewsPerMonth: num(limits.assistant?.previewViewsPerMonth, 100),
+      },
+      // Firma oluşturma limiti — bireysel pakette anlamlı; backend buildLimitPayload
+      // company.count'u whitelist eder, gönderilmezse default 1'e döner.
+      company: {
+        count: num(limits.company?.count, 1),
       },
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
@@ -690,6 +698,23 @@ export default function PackageEditorPage({ params }) {
                   />
                 </div>
               </div>
+
+              {/* Firma limitleri — yalnız Kullanıcı Paketi (forCompany:false).
+                  Business paketlerde firma oluşturma limiti kavramı yok. */}
+              {!form.forCompany && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Firma</p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <LimitRow
+                      label="Firma oluşturma limiti"
+                      value={limits.company?.count}
+                      unit="firma"
+                      onChange={(v) => setLimitField('company', 'count', v)}
+                      helper="Kullanıcının oluşturabileceği toplam firma sayısı · 0 = sınırsız"
+                    />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
