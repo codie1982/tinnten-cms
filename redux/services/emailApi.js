@@ -18,9 +18,20 @@ export const emailApi = baseApi.injectEndpoints({
       providesTags: [{ type: 'EmailList', id: 'LIST' }],
     }),
 
-    /* Mail gönder */
+    /* Mail gönder (legacy mock uç) */
     sendEmail: build.mutation({
       query: (body) => ({ url: ENDPOINTS.email.send, method: 'POST', body }),
+      invalidatesTags: [{ type: 'EmailHistory', id: 'LIST' }],
+    }),
+
+    /* Tek seferlik (ad-hoc) mail gönder — from/to/subject/html/attachments.
+       Dosya ekleri önce /email/attachments/upload'a yüklenir (bkz.
+       lib/mail-attachment-upload.js), dönen { filename, url } burada gönderilir.
+       Not: attachment upload multipart olduğu için baseApi'nin json Content-Type
+       davranışını atlamak adına RTK Query yerine düz fetch helper'ı kullanılır. */
+    sendDirectMail: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.sendDirect, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
       invalidatesTags: [{ type: 'EmailHistory', id: 'LIST' }],
     }),
 
@@ -98,6 +109,7 @@ export const emailApi = baseApi.injectEndpoints({
 export const {
   useGetEmailListsQuery,
   useSendEmailMutation,
+  useSendDirectMailMutation,
   useGetEmailTemplatesQuery,
   useGetEmailTemplateQuery,
   useSaveEmailTemplateMutation,

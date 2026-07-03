@@ -199,6 +199,9 @@ export const ENDPOINTS = {
     lists: '/email/lists',
     history: '/email/history',
     send: '/email/send',
+    // Tek seferlik (ad-hoc) mail gönderimi + dosya eki upload'ı
+    sendDirect: '/email/send-direct',
+    attachmentUpload: '/email/attachments/upload',
     // Kanallar (dinamik liste)
     channels: '/email/channels',
     channel: (id) => `/email/channels/${id}`,

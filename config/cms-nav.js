@@ -168,6 +168,7 @@ export const CMS_NAV = [
     icon: Mail,
     roles: [CMS_ROLES.EDITOR],
     children: [
+      { title: 'Yeni Mail', path: '/cms/email/compose', roles: [CMS_ROLES.EDITOR] },
       { title: 'Gelen Mailler', path: '/cms/email/inbox', roles: [CMS_ROLES.EDITOR] },
       { title: 'Giden Mailler', path: '/cms/email/history', roles: [CMS_ROLES.EDITOR] },
       { title: 'Mail Listeleri', path: '/cms/email/lists', roles: [CMS_ROLES.EDITOR] },
