@@ -35,6 +35,13 @@ export const emailApi = baseApi.injectEndpoints({
       invalidatesTags: [{ type: 'EmailHistory', id: 'LIST' }],
     }),
 
+    /* Ad-hoc mail önizleme — gövdeyi FTL header/footer ile sarılmış tam HTML
+       olarak döndürür (gönderimle aynı çıktı). Modal iframe'de gösterilir. */
+    previewDirectMail: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.previewDirect, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res, // { html }
+    }),
+
     /* ── Şablonlar (dosya bazlı, çok dil) ── */
     getEmailTemplates: build.query({
       query: () => ENDPOINTS.emailTemplates.cmsList,
@@ -110,6 +117,7 @@ export const {
   useGetEmailListsQuery,
   useSendEmailMutation,
   useSendDirectMailMutation,
+  usePreviewDirectMailMutation,
   useGetEmailTemplatesQuery,
   useGetEmailTemplateQuery,
   useSaveEmailTemplateMutation,

@@ -3,11 +3,11 @@
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import {
-  Send, Loader2, Paperclip, X, Upload, File as FileIcon, AlertCircle,
+  Send, Loader2, Paperclip, X, Upload, File as FileIcon, AlertCircle, Eye,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
@@ -19,11 +19,16 @@ import { useFileUpload, formatBytes } from '@/hooks/use-file-upload';
 import { uploadMailAttachment } from '@/lib/mail-attachment-upload';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
-import { useGetMergeVariablesQuery, useSendDirectMailMutation } from '@/redux/services';
+import {
+  useGetMergeVariablesQuery,
+  useSendDirectMailMutation,
+  usePreviewDirectMailMutation,
+} from '@/redux/services';
 
 // Sabit gönderen adresleri — yeni adres için bu diziye satır ekleyin.
+// no-reply@tinten.ai (tireli) backend'in doğrulanmış SES gönderenidir (MAIL_FROM).
 const FROM_ADDRESSES = [
-  { value: 'noreply@tinten.ai', label: 'Bildirim · noreply@tinten.ai' },
+  { value: 'no-reply@tinten.ai', label: 'Bildirim · no-reply@tinten.ai' },
   { value: 'engin.erol@tinten.ai', label: 'Engin Erol · engin.erol@tinten.ai' },
 ];
 
@@ -44,20 +49,35 @@ const isHtmlEmpty = (html) =>
     .replace(/&nbsp;/g, ' ')
     .trim();
 
+// RTK Query hatası → kullanıcı mesajı. Backend güncel değilse (yeni /email/* uçları
+// yüklü değil) HTML 404 döner → RTK Query PARSING_ERROR; ham "Unexpected token '<'"
+// yerine net, yönlendirici bir mesaj göster.
+const errorMessage = (e, fallback) => {
+  if (e?.status === 'PARSING_ERROR' || e?.originalStatus === 404 || e?.status === 404) {
+    return 'Backend ucu bulunamadı (404). Yeni mail uçları için backend servisini yeniden başlatın.';
+  }
+  if (e?.status === 'FETCH_ERROR') {
+    return 'Backend servisine ulaşılamadı. Servisin çalıştığından emin olun.';
+  }
+  return e?.normalizedMessage || e?.data?.message || fallback;
+};
+
 export default function ComposeMailPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
   const { data: variables = [] } = useGetMergeVariablesQuery(undefined, { skip: !authorized });
   const [sendDirectMail, { isLoading: sending }] = useSendDirectMailMutation();
+  const [previewDirectMail, { isLoading: previewing }] = usePreviewDirectMailMutation();
 
   const [from, setFrom] = useState(FROM_ADDRESSES[0].value);
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
-  const [uploads, setUploads] = useState({}); // fileId -> { status, url?, filename?, size?, mimeType?, error? }
+  const [uploads, setUploads] = useState({}); // fileId -> { status, url?, filename?, key?, size?, mimeType?, error? }
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null); // { html: string|null } | null (null=kapalı, html=null=yükleniyor)
 
   // Dosya eklenince otomatik upload başlat; sonucu id bazlı sakla.
   const startUpload = async ({ id, file }) => {
@@ -113,7 +133,7 @@ export default function ComposeMailPage() {
     const attachments = files
       .map((f) => uploads[f.id])
       .filter((u) => u?.status === 'done')
-      .map((u) => ({ filename: u.filename, url: u.url }));
+      .map((u) => ({ filename: u.filename, url: u.url, key: u.key }));
 
     const r = await sendDirectMail({
       from,
@@ -123,11 +143,24 @@ export default function ComposeMailPage() {
       attachments,
     })
       .unwrap()
-      .catch((e) => ({ __err: e?.normalizedMessage || e?.data?.message || 'Mail gönderilemedi.' }));
+      .catch((e) => ({ __err: errorMessage(e, 'Mail gönderilemedi.') }));
 
     if (r?.__err) { setError(r.__err); return; }
     setNotice(`Mail gönderildi → ${recipients.join(', ')}`);
     reset();
+  };
+
+  // Önizleme: gövdeyi backend'e gönderip FTL header/footer ile sarılmış tam HTML'i
+  // modal iframe'de gösterir (gönderilecek mail'in birebir görünümü).
+  const openPreview = async () => {
+    setError('');
+    if (isHtmlEmpty(bodyHtml)) { setError('Önizleme için önce içerik girin.'); return; }
+    setPreview({ html: null }); // modalı aç, yükleniyor durumunu göster
+    const r = await previewDirectMail({ html: bodyHtml, locale: 'tr' })
+      .unwrap()
+      .catch((e) => ({ __err: errorMessage(e, 'Önizleme alınamadı.') }));
+    if (r?.__err) { setPreview(null); setError(r.__err); return; }
+    setPreview({ html: r?.html || '' });
   };
 
   return (
@@ -137,9 +170,14 @@ export default function ComposeMailPage() {
         title="Yeni Mail"
         description="@tinten.ai adreslerinden zengin içerikli, ekli e-posta gönderin"
         actions={
-          <Button onClick={submit} disabled={sending || uploading}>
-            {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Gönder
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={openPreview} disabled={previewing || sending}>
+              {previewing ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />} Önizle
+            </Button>
+            <Button onClick={submit} disabled={sending || uploading}>
+              {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Gönder
+            </Button>
+          </div>
         }
       />
 
@@ -253,6 +291,39 @@ export default function ComposeMailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Önizleme modalı — header + body + footer birleşmiş tam mail */}
+      {preview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm"
+          onClick={() => setPreview(null)}
+        >
+          <Card className="flex max-h-[88vh] w-full max-w-3xl flex-col" onClick={(e) => e.stopPropagation()}>
+            <CardHeader>
+              <CardTitle>Önizleme · header + içerik + footer</CardTitle>
+              <CardToolbar>
+                <Button variant="ghost" size="icon" onClick={() => setPreview(null)}>
+                  <X className="size-4" />
+                </Button>
+              </CardToolbar>
+            </CardHeader>
+            <CardContent className="overflow-y-auto p-4">
+              {preview.html === null ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="size-6 animate-spin text-primary" />
+                </div>
+              ) : (
+                <iframe
+                  title="mail-onizleme"
+                  srcDoc={preview.html}
+                  className="h-[72vh] w-full rounded-lg border border-border bg-white"
+                  sandbox=""
+                />
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </RoleGuard>
   );
 }
