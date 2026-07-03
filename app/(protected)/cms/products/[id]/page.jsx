@@ -11,6 +11,7 @@ import {
   Boxes,
   Building2,
   CalendarClock,
+  Check,
   Edit3,
   ExternalLink,
   Hash,
@@ -72,6 +73,7 @@ import { EmptyState } from '@/components/layout/page-shell';
 import {
   adminAproveMeta,
   formatPrice,
+  periodMeta,
   pricetypeMeta,
   statusMeta,
   statusOptions,
@@ -103,7 +105,7 @@ function resolveImageUrl(path) {
 
 const priceTypeOptions = [
   { value: 'fixed', label: 'Sabit Fiyat' },
-  { value: 'rental', label: 'Kiralık' },
+  { value: 'recurring', label: 'Tekrarlı' },
   { value: 'offer_based', label: 'Teklife Bağlı' },
 ];
 
@@ -275,6 +277,12 @@ export default function CmsProductDetailPage({ params }) {
       return;
     }
 
+    // Tekrarlı (recurring) ürünler CMS'te düzenlenemez — pricetype kilitli:
+    // admin yanlışlıkla planı bozup fixed/offer_based'e çeviremesin diye
+    // pricetype PATCH payload'ına DAHİL EDİLMEZ. Eski 'rental' da tekrarlı sayılır.
+    const isRecurringProduct =
+      product?.pricetype === 'recurring' || product?.pricetype === 'rental';
+
     const payload = {
       id,
       title,
@@ -282,7 +290,6 @@ export default function CmsProductDetailPage({ params }) {
       brand: editForm.brand.trim(),
       type: editForm.type,
       status: editForm.status,
-      pricetype: editForm.pricetype,
       priceAmount: parseOptionalNumber(editForm.priceAmount),
       currency: editForm.currency.trim().toUpperCase() || 'TRY',
       categories: splitCategories(editForm.categories),
@@ -292,6 +299,10 @@ export default function CmsProductDetailPage({ params }) {
       reason,
       notifyOwner: editForm.notifyOwner,
     };
+
+    if (!isRecurringProduct) {
+      payload.pricetype = editForm.pricetype;
+    }
 
     if (editForm.type === 'product') {
       payload.stock = {
@@ -372,7 +383,12 @@ export default function CmsProductDetailPage({ params }) {
 
   const t = typeMeta[product.type];
   const s = statusMeta[product.status];
-  const pt = pricetypeMeta[product.pricetype];
+  // Eski kayıtlar hâlâ 'rental' taşıyabilir → 'recurring' olarak ele al.
+  const pricetypeKey =
+    product.pricetype === 'rental' ? 'recurring' : product.pricetype;
+  const pt = pricetypeMeta[pricetypeKey];
+  // Tekrarlı ürünlerde fiyat tipi CMS'te değiştirilemez (edit dialog kilidi).
+  const isRecurringProduct = pricetypeKey === 'recurring';
   const adminApproved = product.admin_aprove !== false;
   const adminMeta = adminAproveMeta[String(adminApproved)];
   const company =
@@ -592,6 +608,7 @@ export default function CmsProductDetailPage({ params }) {
                     <Select
                       value={editForm.pricetype}
                       onValueChange={(value) => setField('pricetype', value)}
+                      disabled={isRecurringProduct}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Fiyat tipi" />
@@ -604,6 +621,11 @@ export default function CmsProductDetailPage({ params }) {
                         ))}
                       </SelectContent>
                     </Select>
+                    {isRecurringProduct && (
+                      <span className="text-xs text-muted-foreground">
+                        Tekrarlı ürünlerin fiyat tipi değiştirilemez.
+                      </span>
+                    )}
                   </label>
                   <label className="space-y-1.5">
                     <span className="text-xs font-medium text-muted-foreground">
@@ -930,6 +952,8 @@ export default function CmsProductDetailPage({ params }) {
                       <TableHead>İndirim</TableHead>
                       <TableHead>İndirimli</TableHead>
                       <TableHead>Para Birimi</TableHead>
+                      <TableHead>Periyot</TableHead>
+                      <TableHead>Varsayılan</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -946,6 +970,19 @@ export default function CmsProductDetailPage({ params }) {
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {bp.currency || 'TRY'}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {bp.period ? periodMeta[bp.period] ?? bp.period : '—'}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {bp.isDefault ? (
+                            <Check
+                              className="size-4 text-emerald-600"
+                              aria-label="Varsayılan"
+                            />
+                          ) : (
+                            '—'
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

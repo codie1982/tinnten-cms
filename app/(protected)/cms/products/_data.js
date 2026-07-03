@@ -28,8 +28,19 @@ export const adminAproveMeta = {
 
 export const pricetypeMeta = {
   fixed: { label: 'Sabit Fiyat', variant: 'muted' },
-  rental: { label: 'Kiralık', variant: 'secondary' },
+  recurring: { label: 'Tekrarlı', variant: 'secondary' },
   offer_based: { label: 'Teklife Bağlı', variant: 'warning' },
+};
+
+/** basePrice[].period enum → kısa TR etiket (fiyat tablosu / rozet). */
+export const periodMeta = {
+  hourly: 'Saatlik',
+  daily: 'Günlük',
+  weekly: 'Haftalık',
+  monthly: 'Aylık',
+  quarterly: '3 Aylık',
+  yearly: 'Yıllık',
+  custom: 'Özel',
 };
 
 export const stockStatusMeta = {
