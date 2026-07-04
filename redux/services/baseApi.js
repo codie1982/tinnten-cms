@@ -2,7 +2,8 @@
 
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { API_BASE_URL } from '@/config/api';
-import { getAuthToken } from '@/lib/authToken';
+import { getAuthToken, setAuthToken } from '@/lib/authToken';
+import { refreshSessionToken } from '@/lib/sessionRefresh';
 
 /**
  * Merkezi RTK Query base API.
@@ -34,7 +35,24 @@ const rawBaseQuery = fetchBaseQuery({
  * Backend `{ status: { description } }` veya `{ message }` döndürebilir → tek tip mesaj.
  */
 const baseQueryWithNormalize = async (args, api, extraOptions) => {
-  const result = await rawBaseQuery(args, api, extraOptions);
+  let result = await rawBaseQuery(args, api, extraOptions);
+
+  // 401 güvenlik ağı: access token süresi dolmuşsa NextAuth session'ını tazele
+  // (jwt callback → backend refresh), in-memory token'ı güncelle ve isteği TEK
+  // sefer retry et. prepareHeaders güncel token'ı otomatik alır. Oturum kalıcı
+  // ölüyse (refreshSessionToken → null) retry yok; useSyncAuthToken signOut eder.
+  if (
+    result.error?.status === 401 &&
+    typeof window !== 'undefined' &&
+    !extraOptions?._retry
+  ) {
+    const newToken = await refreshSessionToken();
+    if (newToken) {
+      setAuthToken(newToken);
+      result = await rawBaseQuery(args, api, { ...extraOptions, _retry: true });
+    }
+  }
+
   if (result.error) {
     const d = result.error.data;
     const message =

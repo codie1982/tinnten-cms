@@ -8,6 +8,67 @@ const BACKEND_URL = normalizeApiBaseUrl(
 );
 const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
 
+// Access token süresi dolmadan bu kadar önce (ms) proaktif yenile — clock skew
+// ve istek gecikmesine karşı tampon.
+const ACCESS_TOKEN_REFRESH_BUFFER_MS = 30_000;
+const FALLBACK_ACCESS_TTL_MS = 5 * 60 * 1000; // exp okunamazsa varsayılan 5 dk
+
+/** Access token JWT'sinin `exp` claim'ini (ms) döndürür; okunamazsa null. */
+const decodeJwtExpMs = (jwt) => {
+  try {
+    const part = String(jwt || '').split('.')[1];
+    if (!part) return null;
+    const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const payload = JSON.parse(json);
+    return payload?.exp ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Backend /auth/refresh-token ile access token'ı yeniler. Refresh token, CMS'in
+ * kendi şifreli NextAuth JWT'sinde durur (cross-domain cookie sorunu YOK); backend'e
+ * body + X-Refresh-Token header ile iletilir. Backend rotation yaptığından yeni
+ * refresh token'ı da saklarız. Başarısızlıkta token'a `error` işaretlenir →
+ * session.error → client signOut.
+ */
+const refreshAccessTokenViaBackend = async (token) => {
+  try {
+    if (!token?.refreshToken) {
+      return { ...token, error: 'RefreshAccessTokenError' };
+    }
+    const res = await fetch(`${BACKEND_URL}/auth/refresh-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Refresh-Token': token.refreshToken,
+      },
+      body: JSON.stringify({ refresh_token: token.refreshToken }),
+    });
+    const payload = await res.json().catch(() => null);
+    const data = payload?.data || payload || {};
+    const newAccess = data.access_token;
+
+    if (!res.ok || !newAccess) {
+      return { ...token, error: 'RefreshAccessTokenError' };
+    }
+
+    return {
+      ...token,
+      accessToken: newAccess,
+      // Rotation: backend yeni refresh token döndürürse onu sakla, yoksa mevcut kalsın.
+      refreshToken: data.refresh_token || token.refreshToken,
+      accessTokenExpires:
+        decodeJwtExpMs(newAccess) ||
+        Date.now() + (Number(data.expires_in) > 0 ? Number(data.expires_in) * 1000 : FALLBACK_ACCESS_TTL_MS),
+      error: undefined,
+    };
+  } catch {
+    return { ...token, error: 'RefreshAccessTokenError' };
+  }
+};
+
 const normalizeBoolean = (value, defaultValue = false) => {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
@@ -225,16 +286,36 @@ const authOptions = {
         token = { ...token, ...session.user };
         return token;
       }
-      if (user?.accessToken) token.accessToken = user.accessToken;
-      if (user?.refreshToken) token.refreshToken = user.refreshToken;
-      if (user?.email) token.email = user.email;
-      if (user?.name) token.name = user.name;
-      if (user?.id) token.id = user.id;
-      if (user?.userid) token.userid = user.userid;
-      if (user?.company) token.company = user.company;
-      if (user?.lang) token.lang = user.lang;
-      if (user?.roles) token.roles = user.roles;
-      return token;
+
+      // İlk giriş (authorize'dan user gelir): token alanlarını + expiry'yi yaz.
+      if (user?.accessToken) {
+        token.accessToken = user.accessToken;
+        token.refreshToken = user.refreshToken || null;
+        token.accessTokenExpires =
+          decodeJwtExpMs(user.accessToken) || Date.now() + FALLBACK_ACCESS_TTL_MS;
+        token.error = undefined;
+        if (user.email) token.email = user.email;
+        if (user.name) token.name = user.name;
+        if (user.id) token.id = user.id;
+        if (user.userid) token.userid = user.userid;
+        if (user.company) token.company = user.company;
+        if (user.lang) token.lang = user.lang;
+        if (user.roles) token.roles = user.roles;
+        return token;
+      }
+
+      // Sonraki her session okumasında bu callback çalışır. refreshToken yoksa
+      // (örn. DEV_MOCK_AUTH) yenileme yapma. Access token hâlâ geçerliyse dokunma.
+      if (!token.refreshToken) return token;
+      if (
+        token.accessTokenExpires &&
+        Date.now() < token.accessTokenExpires - ACCESS_TOKEN_REFRESH_BUFFER_MS
+      ) {
+        return token;
+      }
+
+      // Süresi doldu (veya expiry bilinmiyor) → backend'den yenile.
+      return await refreshAccessTokenViaBackend(token);
     },
     async session({ session, token }) {
       if (session.user) {
@@ -247,6 +328,8 @@ const authOptions = {
       if (token.company) session.company = token.company;
       if (token.lang) session.lang = token.lang;
       if (token.roles) session.roles = token.roles;
+      // Yenileme kalıcı olarak başarısızsa client'a bildir → signOut (login'e yönlendir).
+      if (token.error) session.error = token.error;
       return session;
     },
   },
