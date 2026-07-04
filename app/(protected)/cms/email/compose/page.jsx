@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   Send, Loader2, Paperclip, X, Upload, File as FileIcon, AlertCircle, Eye,
@@ -17,6 +17,7 @@ import {
 import { MailTemplateEditor } from '@/components/cms/mail-template-editor';
 import { useFileUpload, formatBytes } from '@/hooks/use-file-upload';
 import { uploadMailAttachment } from '@/lib/mail-attachment-upload';
+import { takeComposePrefill } from '@/lib/mail-compose-handoff';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import {
@@ -78,6 +79,17 @@ export default function ComposeMailPage() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null); // { html: string|null } | null (null=kapalı, html=null=yükleniyor)
+
+  // Gelen kutusundan Cevapla/İlet devri (sessionStorage) — bir kerelik doldurma.
+  useEffect(() => {
+    const draft = takeComposePrefill();
+    if (!draft) return;
+    if (draft.to != null) setTo(String(draft.to));
+    if (draft.subject != null) setSubject(String(draft.subject));
+    if (draft.html != null) setBodyHtml(String(draft.html));
+    // Yalnızca izinli (SES doğrulanmış) gönderen adreslerini kabul et.
+    if (draft.from && FROM_ADDRESSES.some((a) => a.value === draft.from)) setFrom(draft.from);
+  }, []);
 
   // Dosya eklenince otomatik upload başlat; sonucu id bazlı sakla.
   const startUpload = async ({ id, file }) => {
