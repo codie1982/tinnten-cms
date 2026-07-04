@@ -290,6 +290,9 @@ export const ENDPOINTS = {
     domain: (d) => `/fetcher/domains/${encodeURIComponent(d)}`,
     domainStats: (d) => `/fetcher/domains/${encodeURIComponent(d)}/stats`,
     domainUrls: (d) => `/fetcher/domains/${encodeURIComponent(d)}/urls`,
+    domainUrl: (d, id) => `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}`,
+    domainUrlContent: (d, id) => `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}/content`,
+    domainVerification: (d) => `/fetcher/domains/${encodeURIComponent(d)}/verification`,
     scrapingStart: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/start`,
     scrapingStop: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/stop`,
     scrapingRestart: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/restart`,
@@ -298,6 +301,16 @@ export const ENDPOINTS = {
     nodes: '/fetcher/scraper-nodes',
     node: (id) => `/fetcher/scraper-nodes/${encodeURIComponent(id)}`,
     nodeAction: (id, action) => `/fetcher/scraper-nodes/${encodeURIComponent(id)}/${action}`,
+    // Abonelikler (admin: izle + yönet)
+    subscriptions: '/fetcher/subscriptions',
+    subscription: (id) => `/fetcher/subscriptions/${encodeURIComponent(id)}`,
+    subscriptionReindex: (id) => `/fetcher/subscriptions/${encodeURIComponent(id)}/reindex`,
+    // Raporlar & sağlık
+    restrictedDomains: '/fetcher/reports/restricted-domains',
+    rabbitmqHealth: '/fetcher/health/rabbitmq',
+    // Scraping config + reset
+    scrapingConfig: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping-config`,
+    scrapingReset: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/reset`,
   },
   inbox: {
     cmsList: '/inbox/cms',
