@@ -90,6 +90,17 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       }),
       transformResponse: (res) => res?.data ?? res,
     }),
+    // Demo/test gönderimi — şablonu her alıcı için gerçek token değerleriyle
+    // ({{USER_NAME}} = profil ad+soyad) render edip gönderir. Kampanya gönderimiyle
+    // aynı çözümleyici; kayıtlı şablon üzerinden çalışır.
+    testSendMailTemplate: build.mutation({
+      query: ({ id, to, from, sampleVars }) => ({
+        url: ENDPOINTS.email.templateTestSend(id),
+        method: 'POST',
+        body: { to, ...(from ? { from } : {}), ...(sampleVars ? { sampleVars } : {}) },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
 
     // ── Kampanyalar ──
     getMailCampaigns: build.query({
@@ -189,6 +200,7 @@ export const {
   useUpdateMailTemplateMutation,
   useDeleteMailTemplateMutation,
   usePreviewMailTemplateMutation,
+  useTestSendMailTemplateMutation,
   useGetMailCampaignsQuery,
   useGetMailCampaignQuery,
   useCreateMailCampaignMutation,

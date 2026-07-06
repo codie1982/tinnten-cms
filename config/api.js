@@ -211,6 +211,7 @@ export const ENDPOINTS = {
     templates: '/email/templates',
     template: (id) => `/email/templates/${id}`,
     templatePreview: (id) => `/email/templates/${id}/preview`,
+    templateTestSend: (id) => `/email/templates/${id}/test-send`,
     // Kampanyalar
     campaigns: '/email/campaigns',
     campaign: (id) => `/email/campaigns/${id}`,

@@ -21,7 +21,7 @@ import {
   useUpdateMailTemplateMutation,
   usePreviewMailTemplateMutation,
   useGetMergeVariablesQuery,
-  useSendDirectMailMutation,
+  useTestSendMailTemplateMutation,
 } from '@/redux/services';
 import {
   getDemoRecipients,
@@ -35,8 +35,6 @@ const STATUSES = [
   { value: 'archived', label: 'Arşiv' },
 ];
 
-// Demo/test gönderimlerinin geldiği doğrulanmış SES gönderen adresi (compose ile aynı).
-const DEMO_FROM = 'no-reply@tinten.ai';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // "a@b.com, c@d.com" → ['a@b.com', 'c@d.com']
@@ -55,7 +53,7 @@ export default function CampaignTemplateEditPage() {
   const { data: variables = [] } = useGetMergeVariablesQuery(undefined, { skip: !authorized });
   const [updateTemplate, { isLoading: saving }] = useUpdateMailTemplateMutation();
   const [previewTemplate, { isLoading: previewing }] = usePreviewMailTemplateMutation();
-  const [sendDirectMail] = useSendDirectMailMutation();
+  const [testSendTemplate] = useTestSendMailTemplateMutation();
 
   const [form, setForm] = useState({ name: '', subject: '', bodyHtml: '', locale: 'tr', status: 'draft' });
   const [preview, setPreview] = useState(null);
@@ -99,9 +97,9 @@ export default function CampaignTemplateEditPage() {
     if (r) setPreview(r);
   };
 
-  // Şablonu örnek değerlerle render edip (Önizle ile aynı çıktı) girilen adres(ler)e
-  // ad-hoc mail olarak gönderir. Backend gövdeyi header/footer ile sarar. Kayıtlı sürüm
-  // gönderilir — kaydedilmemiş değişiklikler yansımaz.
+  // Kayıtlı şablonu, girilen adres(ler)le eşleşen kullanıcının GERÇEK değerleriyle
+  // ({{USER_NAME}} = profil ad+soyad) render edip demo/test maili olarak gönderir.
+  // Token çözümü backend'de kampanya gönderimiyle aynı çözümleyiciyle yapılır.
   const sendDemo = async () => {
     setDemoNotice('');
     setDemoError('');
@@ -112,22 +110,17 @@ export default function CampaignTemplateEditPage() {
 
     setDemoBusy(true);
     try {
-      const rendered = await previewTemplate({ id, sampleVars: {} }).unwrap().catch(() => null);
-      if (!rendered?.html) { setDemoError('Şablon render edilemedi. Önce “Kaydet”e basın.'); return; }
-      setPreview(rendered);
-
-      const r = await sendDirectMail({
-        from: DEMO_FROM,
-        to: recipients,
-        subject: rendered.subject,
-        html: rendered.html,
-      })
+      const r = await testSendTemplate({ id, to: recipients })
         .unwrap()
         .catch((e) => ({ __err: e?.data?.message || e?.normalizedMessage || 'Demo mail gönderilemedi.' }));
 
       if (r?.__err) { setDemoError(r.__err); return; }
       setRecent(addDemoRecipients(recipients));
-      setDemoNotice(`Demo mail gönderildi → ${recipients.join(', ')}`);
+      setDemoNotice(
+        r?.failed
+          ? `Kısmi gönderim: ${r.sent} başarılı, ${r.failed} başarısız → ${recipients.join(', ')}`
+          : `Demo mail gönderildi → ${recipients.join(', ')}`,
+      );
     } finally {
       setDemoBusy(false);
     }
@@ -224,8 +217,9 @@ export default function CampaignTemplateEditPage() {
                   <Send className="size-3.5" /> Demo / Test gönder
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Kayıtlı şablonu örnek değerlerle girdiğiniz adrese gönderir. Kaydedilmemiş
-                  değişiklikleri görmek için önce “Kaydet”e basın.
+                  Kampanyanın gerçek mailini gönderir: {`{{USER_NAME}}`} gibi token’lar
+                  adresle eşleşen kullanıcının profilinden (ad + soyad) çözülür. Kaydedilmemiş
+                  değişiklikler için önce “Kaydet”e basın.
                 </p>
                 <div className="flex gap-2">
                   <Input
