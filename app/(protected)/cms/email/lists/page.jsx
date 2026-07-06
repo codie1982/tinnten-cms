@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
-  Loader2, ArrowRight, Pencil, Save, X,
+  Loader2, Pencil, Save, X,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -26,9 +27,11 @@ import {
   useCreateMailChannelMutation,
   useUpdateMailChannelMutation,
   useDeleteMailChannelMutation,
-  useGetCronListsQuery,
 } from '@/redux/services';
 import { AddMembersPanel } from '@/components/email/add-members-panel';
+import { CronListsManager } from '@/components/email/cron-lists-manager';
+
+const SECTION_KEYS = ['general', 'custom', 'news', 'cron'];
 
 const MEMBER_PAGE = 50;
 
@@ -319,7 +322,14 @@ function CustomListsSection({ authorized }) {
                           </div>
                         ) : (
                           <>
-                            {ch.title}
+                            <span className="inline-flex items-center gap-1.5">
+                              {ch.title}
+                              {ch.metadata?.generatedFromCron && (
+                                <Badge variant="muted" className="gap-1 font-normal">
+                                  <RefreshCw className="size-3" /> Cron
+                                </Badge>
+                              )}
+                            </span>
                             {ch.description && (
                               <div className="mt-0.5 max-w-[360px] truncate text-xs font-normal text-muted-foreground">
                                 {ch.description}
@@ -481,86 +491,24 @@ function NewsSection({ authorized }) {
   );
 }
 
-/* ── Cron Listeleri (özet, salt okunur) ── */
+/* ── Cron Listeleri (tam kurulum: oluştur/düzenle/üyeler) ── */
 function CronSection({ authorized }) {
-  const { data: lists = [], isLoading } = useGetCronListsQuery({}, { skip: !authorized });
-
-  return (
-    <div className="space-y-4">
-      <Alert>
-        <AlertDescription>
-          Cron listeleri DB sorgusuyla otomatik güncellenir.{' '}
-          <Link href="/cms/email/cron-lists" className="font-medium underline">
-            Yeni liste oluşturmak veya düzenlemek için buraya gidin →
-          </Link>
-        </AlertDescription>
-      </Alert>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Cron Listesi Özeti</CardTitle>
-          <CardToolbar>
-            <Link href="/cms/email/cron-lists">
-              <Button variant="outline" size="sm">
-                Tam Kurulum <ArrowRight className="ml-1 size-3.5" />
-              </Button>
-            </Link>
-          </CardToolbar>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="space-y-1 p-4">
-              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
-            </div>
-          ) : lists.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              Henüz cron listesi yok.{' '}
-              <Link href="/cms/email/cron-lists" className="font-medium underline">Oluşturun →</Link>
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Ad</TableHead>
-                  <TableHead>Zamanlama</TableHead>
-                  <TableHead>Son Üretim</TableHead>
-                  <TableHead>Durum</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lists.map((row) => (
-                  <TableRow key={row._id}>
-                    <TableCell className="font-medium">
-                      {row.name}
-                      {row.description && (
-                        <div className="text-xs text-muted-foreground">{row.description}</div>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{row.schedule?.cron}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {row.lastBuiltAt
-                        ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · ${row.lastBuiltCount ?? 0} kişi`
-                        : '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={row.status === 'active' ? 'secondary' : 'outline'}>{row.status}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
+  return <CronListsManager authorized={authorized} />;
 }
 
 /* ── Page ── */
-export default function MailListsPage() {
+function MailListsPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
+  const searchParams = useSearchParams();
   const [section, setSection] = useState('general');
+
+  // Sekme URL ile eşitlenir → /cms/email/lists?tab=cron (nav + eski Cron Listeleri
+  // yönlendirmesi). Parametre değişince (aynı sayfada bile) doğru sekme açılır.
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    setSection(tab && SECTION_KEYS.includes(tab) ? tab : 'general');
+  }, [searchParams]);
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
@@ -606,5 +554,14 @@ export default function MailListsPage() {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function MailListsPage() {
+  return (
+    <Suspense fallback={null}>
+      <MailListsPageInner />
+    </Suspense>
   );
 }

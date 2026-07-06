@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Trash2, Loader2, ArrowLeft } from 'lucide-react';
+import { Trash2, Loader2, ArrowLeft, Clock, Database, Play, RefreshCw, Settings2 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
@@ -19,11 +19,25 @@ import {
   useGetMailChannelsQuery,
   useGetChannelMembersQuery,
   useRemoveChannelMemberMutation,
+  useGetCronListsQuery,
+  useRunCronListMutation,
 } from '@/redux/services';
 import { AddMembersPanel } from '@/components/email/add-members-panel';
 
 const PAGE = 50;
 const isManualList = (channel) => channel?.type === 'custom' || channel?.type === 'private';
+
+const SOURCE_LABELS = { company: 'Firmalar', users: 'Kullanıcılar', products: 'Ürünler' };
+const RECIPE_STATUS_META = {
+  active: { label: 'Aktif', variant: 'success' },
+  paused: { label: 'Duraklatıldı', variant: 'muted' },
+  provisioning: { label: 'Hazırlanıyor', variant: 'muted' },
+};
+const BUILD_MODE_LABELS = {
+  append: 'Biriktir (aynı liste)',
+  replace: 'Yenile (aynı liste)',
+  new: 'Her döngüde yeni tarihli liste',
+};
 
 export default function ListMembersPage() {
   const { key } = useParams();
@@ -32,6 +46,12 @@ export default function ListMembersPage() {
   const { data: channels = [] } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
   const channel = channels.find((ch) => ch.key === String(key || '').toLowerCase());
   const canEditMembers = isManualList(channel);
+  const isCron = channel?.type === 'cron';
+
+  // Cron kanalı ise bağlı "reçete" (cron listesi) tanımını bul → zamanlama/kaynak özeti + şimdi çalıştır.
+  const { data: cronLists = [] } = useGetCronListsQuery({}, { skip: !authorized || !isCron });
+  const recipe = isCron ? cronLists.find((r) => r.channelKey === String(key || '').toLowerCase()) : null;
+  const [runCron, { isLoading: running }] = useRunCronListMutation();
 
   const [skip, setSkip] = useState(0);
   const [q, setQ] = useState('');
@@ -48,6 +68,18 @@ export default function ListMembersPage() {
     await removeMember({ key, email }).unwrap().catch((e) => setNotice(e?.data?.message || 'Çıkarılamadı'));
   };
 
+  const handleRunCron = async () => {
+    if (!recipe?._id) return;
+    const r = await runCron(recipe._id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Tetiklenemedi' }));
+    setNotice(r?.__err || 'Cron listesi tetiklendi — üyeler arka planda güncelleniyor.');
+  };
+
+  const description = isCron
+    ? 'Bu liste, zamanlanmış cron sorgusuyla otomatik güncellenir'
+    : canEditMembers
+      ? 'Bu kullanıcı listesine bağlı alıcılar'
+      : 'Bu liste kaynak akış tarafından güncellenir';
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
       <PageHeader
@@ -57,15 +89,97 @@ export default function ListMembersPage() {
           { label: channel?.title || String(key) },
         ]}
         title={channel?.title || String(key)}
-        description={canEditMembers ? 'Bu kullanıcı listesine bağlı alıcılar' : 'Bu liste kaynak akış tarafından güncellenir'}
+        description={description}
         actions={
-          <Link href="/cms/email/lists">
+          <Link href={isCron ? '/cms/email/lists?tab=cron' : '/cms/email/lists'}>
             <Button variant="outline">
-              <ArrowLeft className="size-4" /> Mail Listeleri
+              <ArrowLeft className="size-4" /> {isCron ? 'Cron Listeleri' : 'Mail Listeleri'}
             </Button>
           </Link>
         }
       />
+
+      {isCron && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <RefreshCw className="size-4 text-muted-foreground" /> Cron Listesi
+            </CardTitle>
+            <CardToolbar className="gap-2">
+              {recipe && (
+                <Button size="sm" variant="outline" onClick={handleRunCron} disabled={running}>
+                  {running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />} Şimdi çalıştır
+                </Button>
+              )}
+              <Link href="/cms/email/lists?tab=cron">
+                <Button size="sm" variant="ghost">
+                  <Settings2 className="size-3.5" /> Ayarları düzenle
+                </Button>
+              </Link>
+            </CardToolbar>
+          </CardHeader>
+          <CardContent>
+            {recipe ? (
+              <>
+              <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <dt className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Clock className="size-3.5" /> Zamanlama
+                  </dt>
+                  <dd className="font-mono text-xs">{recipe.schedule?.cron}</dd>
+                  <dd className="text-xs text-muted-foreground">{recipe.schedule?.timezone}</dd>
+                </div>
+                <div>
+                  <dt className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Database className="size-3.5" /> Kaynak
+                  </dt>
+                  <dd>{SOURCE_LABELS[recipe.source] || recipe.source}</dd>
+                </div>
+                <div>
+                  <dt className="mb-1 text-xs text-muted-foreground">Son üretim</dt>
+                  <dd className="text-xs">
+                    {recipe.lastBuiltAt
+                      ? `${new Date(recipe.lastBuiltAt).toLocaleString('tr-TR')} · ${recipe.lastBuiltCount ?? 0} kişi`
+                      : 'Henüz oluşturulmadı'}
+                  </dd>
+                  {recipe.lastError && <dd className="text-xs text-destructive">{recipe.lastError}</dd>}
+                </div>
+                <div>
+                  <dt className="mb-1 text-xs text-muted-foreground">Mod</dt>
+                  <dd className="text-xs">{BUILD_MODE_LABELS[recipe.buildMode] || recipe.buildMode}</dd>
+                </div>
+                <div>
+                  <dt className="mb-1 text-xs text-muted-foreground">Durum</dt>
+                  <dd>
+                    <Badge variant={(RECIPE_STATUS_META[recipe.status] || {}).variant || 'muted'}>
+                      {(RECIPE_STATUS_META[recipe.status] || {}).label || recipe.status}
+                    </Badge>
+                  </dd>
+                </div>
+              </dl>
+              {recipe.buildMode === 'new' && (
+                <p className="mt-4 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                  Bu liste her çalıştırmada tarihe göre <b>yeni bir liste</b> üretir; bu anahtar (taban)
+                  boş kalabilir. Üretilen tarihli listeler <b>Mail Listeleri → Özel Listeler</b> altında görünür.
+                  {recipe.lastBuiltChannelKey && (
+                    <>
+                      {' '}Son üretilen:{' '}
+                      <Link href={`/cms/email/lists/${recipe.lastBuiltChannelKey}`} className="font-medium underline">
+                        {recipe.lastBuiltChannelKey}
+                      </Link>
+                    </>
+                  )}
+                </p>
+              )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Bu cron kanalının reçete tanımı bulunamadı. Üyeler aşağıda listelenir.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {notice && (
         <Alert variant="info" className="mb-4">
