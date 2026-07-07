@@ -74,6 +74,9 @@ const DEFAULT_LIMITS = {
   // Firma oluşturma limiti — yalnız Kullanıcı Paketi (forCompany:false) için anlamlı.
   // Kayıtta kullanıcının account snapshot'ına kopyalanır. 0 = sınırsız.
   company: { count: 1 },
+  // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
+  // snapshot'ına kopyalanır. 0 = sınırsız. Backend limit.web_search ile birebir.
+  web_search: { count: 100, regeneretetime: 'monthly' },
   maxDevices: null,
 };
 
@@ -245,6 +248,11 @@ export default function PackageEditorPage({ params }) {
       // company.count'u whitelist eder, gönderilmezse default 1'e döner.
       company: {
         count: num(limits.company?.count, 1),
+      },
+      // Aylık web araması kotası — backend buildLimitPayload web_search'ü whitelist eder.
+      web_search: {
+        count: num(limits.web_search?.count, 100),
+        regeneretetime: limits.web_search?.regeneretetime || 'monthly',
       },
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
@@ -695,6 +703,21 @@ export default function PackageEditorPage({ params }) {
                     unit="dosya"
                     onChange={(v) => setLimitField('assistant', 'libraryFiles', v)}
                     helper="Bir asistanın bilgi tabanına (library + file) eklenebilecek max dosya · 0 = sınırsız"
+                  />
+                </div>
+              </div>
+
+              {/* Web arama limitleri — tüm paketlerde (bireysel + firma) anlamlı;
+                  hesap başına aylık Brave araması kotası. */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Web Arama</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <LimitRow
+                    label="Aylık web arama limiti"
+                    value={limits.web_search?.count}
+                    unit="arama"
+                    onChange={(v) => setLimitField('web_search', 'count', v)}
+                    helper="Her web araması (Brave) çağrısı 1 hak harcar; aylık sıfırlanır · 0 = sınırsız"
                   />
                 </div>
               </div>
