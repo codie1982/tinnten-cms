@@ -49,19 +49,40 @@ const CURRENCIES = ['USD', 'TRY', 'EUR'];
 // Backend systemPackagesController.buildLimitPayload ile birebir uyumlu birimler
 const SIZE_UNITS = ['kb', 'mb', 'gb', 'tb'];
 const STREAM_UNITS = ['mb', 'gb', 'tb'];
-// UYARI — bu liste backend ile UYUMSUZ. system-packages.model.js'te offer/llm/
-// token_limit.regeneretetime enum'u yalnız ['Daily','montly','monthly','month'].
-// Buradaki 'Hourly'/'Weekly'/'Monthly' enum'da YOK; update yolu findByIdAndUpdate
-// (runValidators kapalı) olduğu için sessizce yazılır ve usageResetScheduler
-// _calcNextReset switch'inde eşleşmeyip default'a → GÜNLÜK sıfırlamaya düşer.
-// Yani "Aylık" seçmek aslında günlük reset üretir. Yeni bir limit alanını buna
-// bağlamadan önce enum'u doğrula (web_search bu yüzden bağlanmadı).
+// Backend system-packages.model.js'te offer/llm/token_limit/web_search
+// `regeneretetime` enum'u ['Daily','montly','monthly','month'] — yani backend
+// yalnız İKİ ayrı periyot tanır: günlük ve aylık. ('montly' eski bir yazım
+// hatası; kayıtlı veri olduğu için enum'da KORUNUYOR — silmeden önce DB'yi kontrol et.)
+//
+// Bu liste eskiden 'Hourly'/'Weekly'/'Monthly' de sunuyordu. Üçü de enum'da YOKTU:
+// updateById findByIdAndUpdate'i runValidators olmadan çağırdığı için sessizce
+// yazılıyor, sonra usageResetScheduler._calcNextReset (ve AccountManager.
+// _calcNextResetDate) switch'inde eşleşmeyip `default:` → +1 GÜN'e düşüyorlardı.
+// Yani "Aylık" seçmek kotayı ayda bir değil GÜNDE bir sıfırlıyordu (~30x cömert).
+// Artık yalnız backend'in gerçekten onurlandırdığı iki değer sunuluyor.
+// Yeni periyot eklemek backend'de hem enum'u hem İKİ switch'i değiştirmeyi gerektirir.
 const REGEN_PERIODS = [
-  { value: 'Hourly', label: 'Saatlik' },
   { value: 'Daily', label: 'Günlük' },
-  { value: 'Weekly', label: 'Haftalık' },
-  { value: 'Monthly', label: 'Aylık' },
+  { value: 'monthly', label: 'Aylık' },
 ];
+
+// Backend'in "aylık" saydığı enum varyantları — üçü de _calcNextReset /
+// _calcNextResetDate switch'inde aynı `case`'e, yani +1 ay'a düşer.
+const MONTHLY_REGEN_ALIASES = new Set(['monthly', 'montly', 'month']);
+
+// Kayıtlı bir regeneretetime'ı REGEN_PERIODS'taki bir option'a indirger:
+//   'montly' | 'month'  → 'monthly' : legacy, zaten aylık davranıyor; select "Aylık" göstersin.
+//   'Monthly'           → 'monthly' : enum dışı, ama niyet aylıktı ve UI hep "Aylık"
+//                                     gösteriyordu; kaydedince backend artık gerçekten
+//                                     aylık resetler (bkz. repairRegeneretetimeEnum.js).
+//   'Hourly' | 'Weekly' → 'Daily'   : backend bunları hiç desteklemedi, fiilen günlük
+//                                     resetleniyorlardı; temsil edilebilir tek karşılık.
+//   yok / tanınmayan    → 'Daily'   : model default'u.
+// Hem okuma (mergeLimits) hem yazma (buildLimitBody) sınırında uygulanır: updateById
+// artık runValidators:true ile enum dışı değeri reddediyor, dolayısıyla form state'ine
+// geçersiz bir değer ne girmeli ne de çıkmalı.
+const canonicalRegen = (value) =>
+  MONTHLY_REGEN_ALIASES.has(String(value ?? '').toLowerCase()) ? 'monthly' : 'Daily';
 
 // Backend default değerleri ile birebir aynı (buildLimitPayload)
 const DEFAULT_LIMITS = {
@@ -83,12 +104,10 @@ const DEFAULT_LIMITS = {
   company: { count: 1 },
   // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
   // snapshot'ına kopyalanır. 0 = sınırsız.
-  // NOT: `regeneretetime` bilinçli olarak YOK — periyot aylık SABİT. Backend
-  // buildLimitPayload zaten `|| "monthly"` ile dolduruyor. Buraya eklenip
-  // LimitPeriodRow'a bağlanırsa REGEN_PERIODS'un 'Monthly' değeri yazılır; bu
-  // değer backend enum'unda ('Daily'|'montly'|'monthly'|'month') YOK ve
-  // usageResetScheduler switch'inde karşılığı olmadığı için default'a (GÜNLÜK)
-  // düşer → kota ayda bir yerine günde bir sıfırlanır. Detay: LimitPeriodRow.
+  // NOT: `regeneretetime` bilinçli olarak YOK — periyot aylık SABİT ve backend
+  // buildLimitPayload zaten `|| "monthly"` ile dolduruyor. Alan gönderilmediği
+  // için dokümandan DÜŞMEZ. Periyot kullanıcıya açılacaksa LimitPeriodRow'a
+  // bağlamak yeterli (REGEN_PERIODS artık backend enum'u ile uyumlu).
   web_search: { count: 100 },
   maxDevices: null,
 };
@@ -109,6 +128,17 @@ const mergeLimits = (incoming) => {
       out[k] = { ...out[k], ...v };
     } else if (v !== undefined) {
       out[k] = v;
+    }
+  }
+  // OKUMA SINIRI — kayıtlı legacy/geçersiz periyotları select'in tanıdığı bir
+  // değere indirge. Aksi halde 'montly' veya 'Monthly' tutan bir paket açıldığında
+  // native select'in value'su hiçbir option ile eşleşmez (selectedIndex = -1) ve
+  // alan BOŞ render eder. Tip kontrolü şart: bozuk kayıtta `incoming.offer` nesne
+  // olmayabilir ve yukarıdaki döngü onu ham atar — primitive'e alan yazmak strict
+  // mode'da TypeError fırlatır, editör sayfası komple çökerdi.
+  for (const section of ['offer', 'llm']) {
+    if (out[section] && typeof out[section] === 'object') {
+      out[section].regeneretetime = canonicalRegen(out[section].regeneretetime);
     }
   }
   return out;
@@ -231,13 +261,16 @@ export default function PackageEditorPage({ params }) {
         stream: num(limits.video?.stream),
         stream_unit: limits.video?.stream_unit || 'gb',
       },
+      // YAZMA SINIRI — canonicalRegen son savunma hattı. updateById artık
+      // runValidators:true; enum dışı bir değer sessizce yazılmak yerine
+      // ValidationError fırlatır, dolayısıyla buradan asla çıkmamalı.
       offer: {
         max: num(limits.offer?.max),
-        regeneretetime: limits.offer?.regeneretetime || 'Daily',
+        regeneretetime: canonicalRegen(limits.offer?.regeneretetime),
       },
       llm: {
         token: num(limits.llm?.token),
-        regeneretetime: limits.llm?.regeneretetime || 'Daily',
+        regeneretetime: canonicalRegen(limits.llm?.regeneretetime),
       },
       ai: {
         images: num(limits.ai?.images),
@@ -959,11 +992,13 @@ function LimitRowWithUnit({ label, value, unit, unitOptions, onChange, onUnitCha
   );
 }
 
+// `value` daima REGEN_PERIODS'taki bir option olmalı — mergeLimits okuma sınırında
+// canonicalRegen'den geçiriyor. Eşleşmeyen bir değer Select trigger'ını boş bırakır.
 function LimitPeriodRow({ label, value, onChange }) {
   return (
     <div>
       <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
-      <Select value={value || 'Daily'} onValueChange={onChange}>
+      <Select value={canonicalRegen(value)} onValueChange={onChange}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
           {REGEN_PERIODS.map((p) => (
