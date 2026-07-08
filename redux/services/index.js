@@ -27,4 +27,5 @@ export * from './settingsApi';
 export * from './translationApi';
 export * from './dashboardApi';
 export * from './faqApi';
+export * from './connectorsApi';
 export * from './errorMonitoringApi';

@@ -160,6 +160,7 @@ export const CMS_NAV = [
       { title: 'Eklenen Dosyalar', path: '/cms/settings/files', roles: [CMS_ROLES.ADMIN] },
       { title: 'Tool Listesi', path: '/cms/settings/tools', roles: [CMS_ROLES.ADMIN] },
       { title: 'Paketler', path: '/cms/settings/packages', roles: [CMS_ROLES.ADMIN] },
+      { title: 'Bağlantılar (MCP)', path: '/cms/settings/connectors', roles: [CMS_ROLES.ADMIN] },
       { title: 'Log & Denetim', path: '/cms/settings/logs', roles: [CMS_ROLES.ADMIN] },
     ],
   },

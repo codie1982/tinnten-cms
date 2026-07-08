@@ -112,6 +112,9 @@ export const baseApi = createApi({
     'ErrorIssue',
     'Conversation',
     'Product',
+    'ConnectorCatalog',
+    'ConnectorCategory',
+    'OAuthProvider',
   ],
   // Endpoint'ler ayrı servis dosyalarında injectEndpoints ile eklenir
   endpoints: () => ({}),

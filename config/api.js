@@ -132,6 +132,28 @@ export const ENDPOINTS = {
     cmsDelete: (id) => `/system-packages/cms/${id}`,
     assignToCompany: (id) => `/system-packages/cms/${id}/assign-to-company`,
   },
+  // MCP connector kataloğu — admin'in yayınladığı, kullanıcıya "Bağla" olarak
+  // görünen şablonlar. Secret tutmaz (backend .env'de yaşar).
+  connectorCatalog: {
+    list: '/connector-catalog',
+    cmsList: '/connector-catalog/cms',
+    cmsDetail: (id) => `/connector-catalog/cms/${id}`,
+    cmsCreate: '/connector-catalog/cms',
+    cmsUpdate: (id) => `/connector-catalog/cms/${id}`,
+    cmsDelete: (id) => `/connector-catalog/cms/${id}`,
+  },
+  connectorCategories: {
+    list: '/connector-categories',
+    cmsList: '/connector-categories/cms',
+    cmsCreate: '/connector-categories/cms',
+    cmsUpdate: (id) => `/connector-categories/cms/${id}`,
+    cmsDelete: (id) => `/connector-categories/cms/${id}`,
+  },
+  // Salt-okunur: provider.config.js'te tanımlı VE env'de CLIENT_ID/SECRET'ı olan
+  // provider'lar. Katalog formunun oauthProviderKey dropdown'ını doldurur.
+  oauthProviders: {
+    list: '/oauth/providers',
+  },
   workflows: {
     cmsList: '/workflows/cms',
   },
