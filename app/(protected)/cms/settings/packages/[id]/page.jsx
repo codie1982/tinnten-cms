@@ -49,6 +49,13 @@ const CURRENCIES = ['USD', 'TRY', 'EUR'];
 // Backend systemPackagesController.buildLimitPayload ile birebir uyumlu birimler
 const SIZE_UNITS = ['kb', 'mb', 'gb', 'tb'];
 const STREAM_UNITS = ['mb', 'gb', 'tb'];
+// UYARI — bu liste backend ile UYUMSUZ. system-packages.model.js'te offer/llm/
+// token_limit.regeneretetime enum'u yalnız ['Daily','montly','monthly','month'].
+// Buradaki 'Hourly'/'Weekly'/'Monthly' enum'da YOK; update yolu findByIdAndUpdate
+// (runValidators kapalı) olduğu için sessizce yazılır ve usageResetScheduler
+// _calcNextReset switch'inde eşleşmeyip default'a → GÜNLÜK sıfırlamaya düşer.
+// Yani "Aylık" seçmek aslında günlük reset üretir. Yeni bir limit alanını buna
+// bağlamadan önce enum'u doğrula (web_search bu yüzden bağlanmadı).
 const REGEN_PERIODS = [
   { value: 'Hourly', label: 'Saatlik' },
   { value: 'Daily', label: 'Günlük' },
@@ -75,8 +82,14 @@ const DEFAULT_LIMITS = {
   // Kayıtta kullanıcının account snapshot'ına kopyalanır. 0 = sınırsız.
   company: { count: 1 },
   // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
-  // snapshot'ına kopyalanır. 0 = sınırsız. Backend limit.web_search ile birebir.
-  web_search: { count: 100, regeneretetime: 'monthly' },
+  // snapshot'ına kopyalanır. 0 = sınırsız.
+  // NOT: `regeneretetime` bilinçli olarak YOK — periyot aylık SABİT. Backend
+  // buildLimitPayload zaten `|| "monthly"` ile dolduruyor. Buraya eklenip
+  // LimitPeriodRow'a bağlanırsa REGEN_PERIODS'un 'Monthly' değeri yazılır; bu
+  // değer backend enum'unda ('Daily'|'montly'|'monthly'|'month') YOK ve
+  // usageResetScheduler switch'inde karşılığı olmadığı için default'a (GÜNLÜK)
+  // düşer → kota ayda bir yerine günde bir sıfırlanır. Detay: LimitPeriodRow.
+  web_search: { count: 100 },
   maxDevices: null,
 };
 
@@ -250,9 +263,11 @@ export default function PackageEditorPage({ params }) {
         count: num(limits.company?.count, 1),
       },
       // Aylık web araması kotası — backend buildLimitPayload web_search'ü whitelist eder.
+      // Yalnız `count` gönderilir: periyot aylık sabit ve backend `regeneretetime`'ı
+      // `|| "monthly"` ile kendisi yazar (hem create hem update buildLimitPayload'dan
+      // geçer), dolayısıyla göndermemek dokümandan alanı DÜŞÜRMEZ.
       web_search: {
         count: num(limits.web_search?.count, 100),
-        regeneretetime: limits.web_search?.regeneretetime || 'monthly',
       },
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
@@ -708,7 +723,8 @@ export default function PackageEditorPage({ params }) {
               </div>
 
               {/* Web arama limitleri — tüm paketlerde (bireysel + firma) anlamlı;
-                  hesap başına aylık Brave araması kotası. */}
+                  hesap başına aylık Brave araması kotası. Periyot SABİT (aylık),
+                  bu yüzden LimitPeriodRow değil salt-okunur metin gösteriliyor. */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Web Arama</p>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -719,6 +735,13 @@ export default function PackageEditorPage({ params }) {
                     onChange={(v) => setLimitField('web_search', 'count', v)}
                     helper="Her web araması (Brave) çağrısı 1 hak harcar; aylık sıfırlanır · 0 = sınırsız"
                   />
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Yenileme periyodu</label>
+                    <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                      Aylık (sabit)
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">Web arama kotasının periyodu paket bazında değiştirilemez.</p>
+                  </div>
                 </div>
               </div>
 
