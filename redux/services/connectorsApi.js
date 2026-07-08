@@ -33,12 +33,17 @@ export const connectorsApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'ConnectorCatalog', id }],
     }),
+    // Backend ApiResponse zarfı döner: { status, success, message, data: <girdi> }.
+    // transformResponse olmadan `.unwrap()` zarfın tamamını verir ve çağıran
+    // `created.id` diye okuyunca undefined bulur — girdi oluşur ama yönlendirme olmaz.
     createConnectorCatalogEntry: build.mutation({
       query: (body) => ({ url: ENDPOINTS.connectorCatalog.cmsCreate, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
       invalidatesTags: [{ type: 'ConnectorCatalog', id: 'LIST' }],
     }),
     updateConnectorCatalogEntry: build.mutation({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.connectorCatalog.cmsUpdate(id), method: 'PUT', body }),
+      transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, { id }) => [
         { type: 'ConnectorCatalog', id },
         { type: 'ConnectorCatalog', id: 'LIST' },
