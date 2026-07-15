@@ -26,12 +26,14 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { CONTENT_LOCALES } from '@/config/api';
 import {
   useGetCmsPackageQuery,
+  useGetCreditConfigQuery,
   useCreatePackageMutation,
   useUpdatePackageMutation,
   useDeletePackageMutation,
   useAssignPrivatePackageMutation,
 } from '@/redux/services';
 import CompanySearchSelect from './CompanySearchSelect';
+import PackageProfitAnalysis from './PackageProfitAnalysis';
 
 const CATEGORIES = ['free', 'basic', 'premium', 'enterprise'];
 const CONTENT_TYPES = ['standart', 'multisubscribe', 'student'];
@@ -92,7 +94,7 @@ const DEFAULT_LIMITS = {
   image: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
   video: { download: 1024, upload: 1024, maxfileupload: 100, maxfileDownload: 100, unit: 'mb', stream: 50, stream_unit: 'gb' },
   offer: { max: 10, regeneretetime: 'Daily' },
-  llm: { token: 1024, regeneretetime: 'Daily' },
+  llm: { token: 1024, credit: 1000, regeneretetime: 'Daily' },
   ai: { images: 20, enrich: 50, video: 5 },
   workflow: { count: 5, totalRun: 100 },
   // Backend system-packages.model.js limit.assistant ile birebir — 4 alan da
@@ -100,10 +102,10 @@ const DEFAULT_LIMITS = {
   // backend default'larına (5/10/100) sıfırlanır.
   assistant: { published: 1, tools: 5, libraryFiles: 10, previewViewsPerMonth: 100 },
   // Firma oluşturma limiti — yalnız Kullanıcı Paketi (forCompany:false) için anlamlı.
-  // Kayıtta kullanıcının account snapshot'ına kopyalanır. 0 = sınırsız.
+  // Kayıtta kullanıcının account snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok.
   company: { count: 1 },
   // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
-  // snapshot'ına kopyalanır. 0 = sınırsız.
+  // snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok.
   // NOT: `regeneretetime` bilinçli olarak YOK — periyot aylık SABİT ve backend
   // buildLimitPayload zaten `|| "monthly"` ile dolduruyor. Alan gönderilmediği
   // için dokümandan DÜŞMEZ. Periyot kullanıcıya açılacaksa LimitPeriodRow'a
@@ -152,6 +154,8 @@ export default function PackageEditorPage({ params }) {
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
 
   const { data: pkg, isLoading, error } = useGetCmsPackageQuery(id, { skip: isNew || !authorized });
+  // Kredi maliyet tabanı backend'den (Cost.creditPerUsd) — kâr/zarar analizi hardcode etmez.
+  const { data: creditConfig } = useGetCreditConfigQuery(undefined, { skip: !authorized });
   const [createPackage, { isLoading: creating }] = useCreatePackageMutation();
   const [updatePackage, { isLoading: updating }] = useUpdatePackageMutation();
   const [deletePackage, { isLoading: deleting }] = useDeletePackageMutation();
@@ -170,7 +174,7 @@ export default function PackageEditorPage({ params }) {
     targetDescription: '',
   });
   const [i18n, setI18n] = useState(emptyI18n);
-  const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1 }]);
+  const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1, discount: 0, localPrices: {} }]);
   const [limits, setLimits] = useState(() => JSON.parse(JSON.stringify(DEFAULT_LIMITS)));
   const [activeLocale, setActiveLocale] = useState('tr');
   const [notice, setNotice] = useState('');
@@ -206,6 +210,8 @@ export default function PackageEditorPage({ params }) {
         isDefault: Boolean(p.isDefault),
         isRenewable: Boolean(p.isRenewable),
         durationTime: p.durationTime ?? 1,
+        discount: p.discount ?? 0,
+        localPrices: p.localPrices ?? {},
       })),
     );
     // Backend `limit` (tekil) ya da eski kayıtlarda `limits` (çoğul) tutabilir
@@ -215,7 +221,7 @@ export default function PackageEditorPage({ params }) {
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setLocaleField = (loc, k, v) => setI18n((s) => ({ ...s, [loc]: { ...s[loc], [k]: v } }));
   const setPriceRow = (i, k, v) => setPricing((rows) => rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
-  const addPriceRow = () => setPricing((rows) => [...rows, { interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false, durationTime: 1 }]);
+  const addPriceRow = () => setPricing((rows) => [...rows, { interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false, durationTime: 1, discount: 0, localPrices: {} }]);
   const removePriceRow = (i) => setPricing((rows) => rows.filter((_, idx) => idx !== i));
 
   // Nested limit alanlarını güncelleme: setLimitField('file', 'upload', 1024)
@@ -231,6 +237,12 @@ export default function PackageEditorPage({ params }) {
       const n = Number(v);
       return Number.isFinite(n) ? n : fallback;
     };
+    // Boş/null → null = SINIRSIZ (backend toLimit ile birebir; llm.credit /
+    // maxDevices kalıbı). Bu alanlarda backend sözleşmesi null=sınırsız, 0=kota yok.
+    // num()'la coerce edilseydi admin sınırsız için alanı temizleyemez, boş bırakılan
+    // her sınırsız paket kayıtta sessizce fallback'e (ör. 0/kota-yok) düşerdi.
+    const nullable = (v, fallback = 0) =>
+      v === '' || v === null || v === undefined ? null : num(v, fallback);
     return {
       product: { amount: num(limits.product?.amount) },
       services: { amount: num(limits.services?.amount) },
@@ -269,7 +281,17 @@ export default function PackageEditorPage({ params }) {
         regeneretetime: canonicalRegen(limits.offer?.regeneretetime),
       },
       llm: {
+        // Kota kredi bazlı (backend hasLLMCreditQuota → limit.llm.credit).
+        // `token` analitik alanı korunur (gönderilmezse backend 1024'e sıfırlar).
         token: num(limits.llm?.token),
+        // Boş/null → null = SINIRSIZ (backend toLimit ile birebir; maxDevices kalıbı).
+        // num()'la 1000'e coerce edilseydi, credit=null tutan sınırsız paket admin
+        // LLM alanına dokunmasa bile her kayıtta sessizce 1000'e düşerdi (backend'in
+        // özellikle koruduğu "sessizce sınırsızlığı geri alma" tuzağı).
+        credit:
+          limits.llm?.credit === '' || limits.llm?.credit === null || limits.llm?.credit === undefined
+            ? null
+            : num(limits.llm?.credit, 1000),
         regeneretetime: canonicalRegen(limits.llm?.regeneretetime),
       },
       ai: {
@@ -282,25 +304,29 @@ export default function PackageEditorPage({ params }) {
         totalRun: num(limits.workflow?.totalRun),
       },
       assistant: {
-        // published: aynı anda yayında olabilecek asistan sayısı (publish quota enforce eder)
-        published: num(limits.assistant?.published),
+        // published: aynı anda yayında olabilecek asistan sayısı (publish quota enforce eder).
+        // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (yayınlama bloke).
+        published: nullable(limits.assistant?.published, 1),
         // Aşağıdakiler UI'da düzenlenmese de taşınır — yoksa backend buildLimitPayload
         // bunları default'a (5/10/100) sıfırlar. previewViewsPerMonth enforce edilir.
         tools: num(limits.assistant?.tools, 5),
-        libraryFiles: num(limits.assistant?.libraryFiles, 10),
+        // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (dosya eklenemez).
+        libraryFiles: nullable(limits.assistant?.libraryFiles, 10),
         previewViewsPerMonth: num(limits.assistant?.previewViewsPerMonth, 100),
       },
       // Firma oluşturma limiti — bireysel pakette anlamlı; backend buildLimitPayload
       // company.count'u whitelist eder, gönderilmezse default 1'e döner.
+      // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (firma açılamaz).
       company: {
-        count: num(limits.company?.count, 1),
+        count: nullable(limits.company?.count, 1),
       },
       // Aylık web araması kotası — backend buildLimitPayload web_search'ü whitelist eder.
       // Yalnız `count` gönderilir: periyot aylık sabit ve backend `regeneretetime`'ı
       // `|| "monthly"` ile kendisi yazar (hem create hem update buildLimitPayload'dan
       // geçer), dolayısıyla göndermemek dokümandan alanı DÜŞÜRMEZ.
+      // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (arama bloke).
       web_search: {
-        count: num(limits.web_search?.count, 100),
+        count: nullable(limits.web_search?.count, 100),
       },
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
@@ -330,6 +356,12 @@ export default function PackageEditorPage({ params }) {
         isDefault: Boolean(p.isDefault),
         isRenewable: Boolean(p.isRenewable),
         durationTime: Number(p.durationTime) || 1,
+        discount: Math.min(100, Math.max(0, Number(p.discount) || 0)),
+        localPrices: {
+          TRY: p.localPrices?.TRY != null && p.localPrices?.TRY !== '' ? Number(p.localPrices.TRY) : null,
+          EUR: p.localPrices?.EUR != null && p.localPrices?.EUR !== '' ? Number(p.localPrices.EUR) : null,
+          USD: p.localPrices?.USD != null && p.localPrices?.USD !== '' ? Number(p.localPrices.USD) : null,
+        },
       }));
     return {
       name: form.name.trim(),
@@ -565,6 +597,10 @@ export default function PackageEditorPage({ params }) {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="w-24">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">İndirim %</label>
+                    <Input type="number" min="0" max="100" value={p.discount ?? 0} onChange={(e) => setPriceRow(i, 'discount', e.target.value)} placeholder="0" />
+                  </div>
                   <label className="flex items-center gap-1.5 pb-2 text-xs text-foreground">
                     <input type="checkbox" checked={p.isDefault} onChange={(e) => setPriceRow(i, 'isDefault', e.target.checked)} className="size-4" />
                     Varsayılan
@@ -580,6 +616,15 @@ export default function PackageEditorPage({ params }) {
               ))}
             </CardContent>
           </Card>
+
+          {/* Kâr / Zarar Analizi — kredi maliyet tabanı ($0.01/kredi) üzerinden canlı */}
+          <PackageProfitAnalysis
+            pricing={pricing}
+            credits={limits.llm?.credit}
+            resetPeriod={limits.llm?.regeneretetime}
+            creditUsdCost={creditConfig?.creditUsdCost}
+            setPriceRow={setPriceRow}
+          />
 
           {/* Limitler */}
           <Card>
@@ -685,15 +730,15 @@ export default function PackageEditorPage({ params }) {
                 </div>
               </div>
 
-              {/* LLM token limiti */}
+              {/* LLM kredi limiti (kota kredi bazlı; token analitik alanı korunur) */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">LLM</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <LimitRow
-                    label="Token"
-                    value={limits.llm?.token}
-                    unit="token"
-                    onChange={(v) => setLimitField('llm', 'token', v)}
+                    label="Kredi"
+                    value={limits.llm?.credit}
+                    unit="kredi"
+                    onChange={(v) => setLimitField('llm', 'credit', v)}
                   />
                   <LimitPeriodRow
                     label="Yenileme periyodu"
@@ -743,14 +788,16 @@ export default function PackageEditorPage({ params }) {
                     value={limits.assistant?.published}
                     unit="adet"
                     onChange={(v) => setLimitField('assistant', 'published', v)}
-                    helper="Aynı anda yayında (published) olabilecek asistan sayısı — asistan yayınlama kotası bunu uygular · 0 = sınırsız"
+                    placeholder="sınırsız"
+                    helper="Aynı anda yayında (published) olabilecek asistan sayısı — asistan yayınlama kotası bunu uygular · boş = sınırsız · 0 = kota yok"
                   />
                   <LimitRow
                     label="Bilgi tabanı dosya limiti"
                     value={limits.assistant?.libraryFiles}
                     unit="dosya"
                     onChange={(v) => setLimitField('assistant', 'libraryFiles', v)}
-                    helper="Bir asistanın bilgi tabanına (library + file) eklenebilecek max dosya · 0 = sınırsız"
+                    placeholder="sınırsız"
+                    helper="Bir asistanın bilgi tabanına (library + file) eklenebilecek max dosya · boş = sınırsız · 0 = kota yok"
                   />
                 </div>
               </div>
@@ -766,7 +813,8 @@ export default function PackageEditorPage({ params }) {
                     value={limits.web_search?.count}
                     unit="arama"
                     onChange={(v) => setLimitField('web_search', 'count', v)}
-                    helper="Her web araması (Brave) çağrısı 1 hak harcar; aylık sıfırlanır · 0 = sınırsız"
+                    placeholder="sınırsız"
+                    helper="Her web araması (Brave) çağrısı 1 hak harcar; aylık sıfırlanır · boş = sınırsız · 0 = kota yok"
                   />
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">Yenileme periyodu</label>
@@ -789,7 +837,8 @@ export default function PackageEditorPage({ params }) {
                       value={limits.company?.count}
                       unit="firma"
                       onChange={(v) => setLimitField('company', 'count', v)}
-                      helper="Kullanıcının oluşturabileceği toplam firma sayısı · 0 = sınırsız"
+                      placeholder="sınırsız"
+                      helper="Kullanıcının oluşturabileceği toplam firma sayısı · boş = sınırsız · 0 = kota yok"
                     />
                   </div>
                 </div>

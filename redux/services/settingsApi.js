@@ -31,6 +31,11 @@ export const settingsApi = baseApi.injectEndpoints({
       transformResponse: (res) => (res?.data ?? res)?.package ?? null,
       providesTags: (r, e, id) => [{ type: 'Package', id }],
     }),
+    // Kredi maliyet tabanı (backend Cost.creditPerUsd) — kâr/zarar analizi bunu okur.
+    getCreditConfig: build.query({
+      query: () => ENDPOINTS.systemPackages.creditConfig,
+      transformResponse: (res) => res?.data ?? res, // { creditPerUsd, creditUsdCost, webSearchUsdCost }
+    }),
     createPackage: build.mutation({
       query: (body) => ({ url: ENDPOINTS.systemPackages.cmsCreate, method: 'POST', body }),
       transformResponse: (res) => res?.data ?? res,
@@ -59,6 +64,7 @@ export const {
   useGetSystemPackagesQuery,
   useGetCmsPackagesQuery,
   useGetCmsPackageQuery,
+  useGetCreditConfigQuery,
   useCreatePackageMutation,
   useUpdatePackageMutation,
   useDeletePackageMutation,
