@@ -294,6 +294,7 @@ export const ENDPOINTS = {
   cron: {
     cmsHealth: '/cron/cms/health',
     cmsStats: '/cron/cms/stats',
+    cmsLogs: '/cron/cms/logs',
     cmsJobs: '/cron/cms/jobs',
     cmsJob: (id) => `/cron/cms/jobs/${id}`,
     cmsJobLogs: (id) => `/cron/cms/jobs/${id}/logs`,

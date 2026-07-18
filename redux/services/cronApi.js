@@ -34,6 +34,20 @@ export const cronApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { jobId, jobName, pagination, logs }
       providesTags: (r, e, { id }) => [{ type: 'CronJob', id: `${id}:logs` }],
     }),
+    getCronLogs: build.query({
+      // Tüm görevlerin çalışma logları — filtreli + sayfalı.
+      query: ({ page = 1, limit = 20, jobId, status, from, to, q } = {}) => {
+        const params = { page, limit };
+        if (jobId) params.jobId = jobId;
+        if (status) params.status = status;
+        if (from) params.from = from;
+        if (to) params.to = to;
+        if (q) params.q = q;
+        return { url: ENDPOINTS.cron.cmsLogs, params };
+      },
+      transformResponse: (res) => res?.data ?? res, // { pagination, logs }
+      providesTags: [{ type: 'CronJob', id: 'LOGS' }],
+    }),
     createCronJob: build.mutation({
       query: (body) => ({ url: ENDPOINTS.cron.cmsJobs, method: 'POST', body }),
       invalidatesTags: [{ type: 'CronJob', id: 'LIST' }, { type: 'CronStatus', id: 'STATS' }],
@@ -48,7 +62,7 @@ export const cronApi = baseApi.injectEndpoints({
     }),
     runCronJob: build.mutation({
       query: (id) => ({ url: ENDPOINTS.cron.cmsJobRun(id), method: 'POST' }),
-      invalidatesTags: (r, e, id) => [{ type: 'CronJob', id: `${id}:logs` }, { type: 'CronStatus', id: 'STATS' }],
+      invalidatesTags: (r, e, id) => [{ type: 'CronJob', id: `${id}:logs` }, { type: 'CronJob', id: 'LOGS' }, { type: 'CronStatus', id: 'STATS' }],
     }),
   }),
   overrideExisting: false,
@@ -60,6 +74,7 @@ export const {
   useGetCronJobsQuery,
   useGetCronJobQuery,
   useGetCronJobLogsQuery,
+  useGetCronLogsQuery,
   useCreateCronJobMutation,
   useUpdateCronJobMutation,
   useDeleteCronJobMutation,

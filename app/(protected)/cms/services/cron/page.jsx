@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   Activity, ListChecks, RefreshCw, X, Plus, Play, Pencil, Trash2, Loader2,
-  Inbox, HeartPulse, Save,
+  Inbox, HeartPulse, Save, ScrollText, ChevronLeft, ChevronRight, Search, FilterX,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -27,6 +27,7 @@ import {
   useGetCronStatsQuery,
   useGetCronJobsQuery,
   useGetCronJobLogsQuery,
+  useGetCronLogsQuery,
   useCreateCronJobMutation,
   useUpdateCronJobMutation,
   useDeleteCronJobMutation,
@@ -57,9 +58,19 @@ function formatTr(input) {
   return `${d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
 }
 
+const LOG_STATUS_OPTIONS = [
+  { value: 'success', label: 'Başarılı' },
+  { value: 'failed', label: 'Hata' },
+  { value: 'running', label: 'Çalışıyor' },
+  { value: 'queued', label: 'Kuyrukta' },
+  { value: 'timeout', label: 'Zaman aşımı' },
+];
+const LOG_LIMIT = 25;
+
 const SECTIONS = [
   { key: 'status', label: 'Genel Durum', icon: Activity, desc: 'Dashboard & sağlık' },
   { key: 'jobs', label: 'Görevler', icon: ListChecks, desc: 'Cron görev yönetimi' },
+  { key: 'logs', label: 'Loglar', icon: ScrollText, desc: 'Çalışma geçmişi (filtreli)' },
 ];
 
 /* ════════════ Genel Durum ════════════ */
@@ -440,6 +451,175 @@ function JobLogs({ job, onClose }) {
   );
 }
 
+/* ════════════ Loglar ════════════ */
+const emptyFilters = { jobId: 'all', status: 'all', from: '', to: '' };
+
+function LogsSection({ authorized }) {
+  const jobsQuery = useGetCronJobsQuery(undefined, { skip: !authorized });
+  const jobs = Array.isArray(jobsQuery.data) ? jobsQuery.data : [];
+
+  const [filters, setFilters] = useState(emptyFilters);
+  const [qDraft, setQDraft] = useState('');
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+
+  const args = {
+    page,
+    limit: LOG_LIMIT,
+    jobId: filters.jobId !== 'all' ? filters.jobId : undefined,
+    status: filters.status !== 'all' ? filters.status : undefined,
+    from: filters.from ? new Date(`${filters.from}T00:00:00`).toISOString() : undefined,
+    to: filters.to ? new Date(`${filters.to}T23:59:59.999`).toISOString() : undefined,
+    q: q || undefined,
+  };
+
+  const { data, isFetching, isError, refetch } = useGetCronLogsQuery(args, { skip: !authorized });
+  const logs = data?.logs || [];
+  const pag = data?.pagination || { page: 1, limit: LOG_LIMIT, total: 0, totalPages: 0 };
+
+  const setFilter = (key, value) => { setFilters((f) => ({ ...f, [key]: value })); setPage(1); };
+  const applySearch = () => { setQ(qDraft.trim()); setPage(1); };
+  const resetAll = () => { setFilters(emptyFilters); setQDraft(''); setQ(''); setPage(1); };
+
+  const hasActiveFilter = filters.jobId !== 'all' || filters.status !== 'all' || !!filters.from || !!filters.to || !!q;
+  const from = pag.total === 0 ? 0 : (pag.page - 1) * pag.limit + 1;
+  const to = Math.min(pag.page * pag.limit, pag.total);
+
+  return (
+    <div className="space-y-4">
+      {/* Filtreler */}
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5">
+              <label className="text-2sm font-medium">Görev</label>
+              <Select value={filters.jobId} onValueChange={(v) => setFilter('jobId', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tüm görevler</SelectItem>
+                  {jobs.map((j) => <SelectItem key={j._id} value={j._id}>{j.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-2sm font-medium">Durum</label>
+              <Select value={filters.status} onValueChange={(v) => setFilter('status', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tüm durumlar</SelectItem>
+                  {LOG_STATUS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-2sm font-medium">Başlangıç</label>
+              <Input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => setFilter('from', e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-2sm font-medium">Bitiş</label>
+              <Input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => setFilter('to', e.target.value)} />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={qDraft}
+                onChange={(e) => setQDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
+                placeholder="Görev adı, hata, koleksiyon veya URL ara…"
+                className="ps-8"
+              />
+            </div>
+            <Button variant="outline" size="sm" onClick={applySearch}><Search className="size-4" /> Ara</Button>
+            {hasActiveFilter && (
+              <Button variant="ghost" size="sm" onClick={resetAll}><FilterX className="size-4" /> Temizle</Button>
+            )}
+            <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching} title="Yenile">
+              <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sonuçlar */}
+      <Card>
+        <CardContent className="px-0 py-0">
+          {isError ? (
+            <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>Log kayıtları alınamadı. Cron servisi çalışmıyor olabilir.</AlertDescription></Alert></div>
+          ) : isFetching && logs.length === 0 ? (
+            <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
+          ) : logs.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <Inbox className="size-6 text-muted-foreground" />
+              <p className="font-semibold text-foreground">Log kaydı yok</p>
+              {hasActiveFilter && <p className="text-xs text-muted-foreground">Filtreleri değiştirmeyi deneyin.</p>}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Görev</TableHead>
+                    <TableHead>Durum</TableHead>
+                    <TableHead>Zaman</TableHead>
+                    <TableHead>Süre</TableHead>
+                    <TableHead>İşlem</TableHead>
+                    <TableHead>Sonuç / Hata</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logs.map((l) => {
+                    const rm = RESULT_META[l.status] || { label: l.status, variant: 'muted' };
+                    const detail = l.httpStatus != null ? `HTTP ${l.httpStatus}`
+                      : l.documentsAffected != null ? `${l.documentsAffected} kayıt`
+                      : null;
+                    return (
+                      <TableRow key={l._id}>
+                        <TableCell className="text-sm font-medium text-foreground">
+                          {l.jobName || '—'}
+                          {l.targetCollection && <div className="text-xs font-normal text-muted-foreground">{l.targetCollection}</div>}
+                        </TableCell>
+                        <TableCell><Badge variant={rm.variant}>{rm.label}</Badge></TableCell>
+                        <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTr(l.startedAt || l.createdAt)}</TableCell>
+                        <TableCell className="tabular-nums text-xs text-muted-foreground">{l.duration != null ? `${l.duration}ms` : '—'}</TableCell>
+                        <TableCell>{l.operation ? <Badge variant="outline">{l.operation}</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className="max-w-[320px]">
+                          {l.error ? <span className="break-words text-xs text-destructive">{l.error}</span>
+                            : detail ? <span className="text-xs text-muted-foreground">{detail}</span>
+                            : <span className="text-xs text-muted-foreground">—</span>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {/* Sayfalama */}
+          {logs.length > 0 && (
+            <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+              <span className="text-xs text-muted-foreground">
+                {from}–{to} / {pag.total} kayıt
+              </span>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="size-8" disabled={pag.page <= 1 || isFetching} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <span className="px-2 text-xs tabular-nums text-muted-foreground">{pag.page} / {pag.totalPages || 1}</span>
+                <Button variant="outline" size="icon" className="size-8" disabled={pag.page >= (pag.totalPages || 1) || isFetching} onClick={() => setPage((p) => p + 1)}>
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /* ════════════ Sayfa ════════════ */
 export default function CronServicePage() {
   const { data: session } = useSession();
@@ -482,6 +662,7 @@ export default function CronServicePage() {
         <div>
           {section === 'status' && <StatusSection authorized={authorized} />}
           {section === 'jobs' && <JobsSection authorized={authorized} />}
+          {section === 'logs' && <LogsSection authorized={authorized} />}
         </div>
       </div>
     </RoleGuard>
