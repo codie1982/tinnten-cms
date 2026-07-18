@@ -179,6 +179,11 @@ export default function PackageEditorPage({ params }) {
   const [activeLocale, setActiveLocale] = useState('tr');
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // "Bu pakete sahip herkese de uygula" — limit değişikliğini mevcut hesapların
+  // account.packages[].limits snapshot'ına da taşır (backend migratePackageLimits).
+  const [migrateToAccounts, setMigrateToAccounts] = useState(false);
+  const [migrateIncludeExpired, setMigrateIncludeExpired] = useState(false);
+  const [confirmMigrate, setConfirmMigrate] = useState(false);
 
   useEffect(() => {
     if (isNew || !pkg) return;
@@ -382,7 +387,7 @@ export default function PackageEditorPage({ params }) {
     };
   }
 
-  async function handleSave() {
+  async function handleSave({ migrate = false } = {}) {
     setNotice('');
     const body = buildBody();
     if (!body.name) { setNotice('Paket adı (name) zorunludur.'); return; }
@@ -393,9 +398,34 @@ export default function PackageEditorPage({ params }) {
       if (newId) router.push(`/cms/settings/packages/${newId}`);
       else if (r) router.push('/cms/settings/packages');
     } else {
-      const r = await updatePackage({ id, ...body }).unwrap().catch((e) => { setNotice(e?.data?.message || 'Güncellenemedi.'); return null; });
-      if (r) setNotice('Paket kaydedildi.');
+      // migrate seçiliyse backend'e bayrağı gönder; migration yalnız apply:true çalışır.
+      const payload = migrate
+        ? { id, ...body, migrateToAccounts: true, migrateIncludeExpired }
+        : { id, ...body };
+      const r = await updatePackage(payload).unwrap().catch((e) => { setNotice(e?.data?.message || 'Güncellenemedi.'); return null; });
+      if (r) {
+        const m = r?.migration;
+        if (m) {
+          setNotice(
+            `Paket kaydedildi. Limit migrasyonu uygulandı — ${m.changedAccounts} hesap, ` +
+            `${m.changedPackages} paket kaydı güncellendi (taranan: ${m.scannedAccounts}` +
+            `${m.includeExpired ? ', süresi dolmuşlar dahil' : ''}).`,
+          );
+          // Yanlışlıkla tekrar migrasyonu önle — bir sonraki kaydetme yine şablonu
+          // günceller ama kutular kasıtlı olarak sıfırlanır.
+          setMigrateToAccounts(false);
+          setMigrateIncludeExpired(false);
+        } else {
+          setNotice('Paket kaydedildi.');
+        }
+      }
     }
+  }
+
+  // Kaydet: migrate seçiliyse önce onay diyaloğu (geniş etkili işlem), yoksa direkt kaydet.
+  function handleSaveClick() {
+    if (!isNew && migrateToAccounts) setConfirmMigrate(true);
+    else handleSave();
   }
 
   // Status toggle — list sayfasındaki togglePublish davranışıyla birebir
@@ -493,7 +523,7 @@ export default function PackageEditorPage({ params }) {
                 </Button>
               </>
             )}
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={handleSaveClick} disabled={saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
               Kaydet
             </Button>
@@ -852,6 +882,43 @@ export default function PackageEditorPage({ params }) {
                   </div>
                 </div>
               )}
+
+              {/* Mevcut hesaplara migrasyon — yalnız kayıtlı paket için anlamlı.
+                  Varsayılan davranış: limit düzenlemesi yalnız ŞABLONU günceller,
+                  mevcut satın almaların account snapshot'ı DONMUŞ kalır. Bu seçenek
+                  kaydederken snapshot'ları yeni limitlerle eşitler. */}
+              {!isNew && (
+                <div className="rounded-lg border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+                  <label className="flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={migrateToAccounts}
+                      onChange={(e) => setMigrateToAccounts(e.target.checked)}
+                      className="mt-0.5 size-4 shrink-0"
+                    />
+                    <span>
+                      <span className="font-medium">Bu pakete sahip tüm hesaplara da uygula</span>
+                      <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+                        Normalde limit değişikliği yalnız paket şablonunu günceller; mevcut kullanıcıların
+                        hesabına aktarılmış (donmuş) limitler değişmez. Bu kutu işaretliyse, kaydederken bu
+                        pakete sahip <strong>aktif</strong> hesapların limit miktarları da yeni değerlerle
+                        güncellenir (migrasyon).
+                      </span>
+                    </span>
+                  </label>
+                  {migrateToAccounts && (
+                    <label className="mt-2.5 flex cursor-pointer items-center gap-2 pl-6 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={migrateIncludeExpired}
+                        onChange={(e) => setMigrateIncludeExpired(e.target.checked)}
+                        className="size-3.5 shrink-0"
+                      />
+                      Süresi dolmuş / pasif paket kayıtlarını da güncelle
+                    </label>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -988,6 +1055,44 @@ export default function PackageEditorPage({ params }) {
             <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
               {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
               Evet, sil
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Migrasyon onay diyaloğu — geniş etkili işlem: mevcut hesap snapshot'larını ezer */}
+      <Dialog open={confirmMigrate} onOpenChange={setConfirmMigrate}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-5 text-amber-500" />
+              Limitleri mevcut hesaplara uygula
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  <strong>{form.name || 'Bu paket'}</strong> paketine sahip{' '}
+                  {migrateIncludeExpired ? 'tüm (süresi dolmuşlar dahil)' : 'aktif'} hesapların
+                  limit miktarları, kaydettiğiniz yeni değerlerle güncellenecek.
+                </p>
+                <p className="text-amber-600 dark:text-amber-400">
+                  Bu işlem, bu paket için tekil hesap bazında yapılmış manuel limit
+                  düzenlemelerini (override) de yeni şablona sıfırlar ve geri alınamaz.
+                </p>
+                <p>Devam etmek istiyor musunuz?</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmMigrate(false)} disabled={saving}>
+              İptal
+            </Button>
+            <Button
+              onClick={() => { setConfirmMigrate(false); handleSave({ migrate: true }); }}
+              disabled={saving}
+            >
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              Evet, uygula
             </Button>
           </DialogFooter>
         </DialogContent>
