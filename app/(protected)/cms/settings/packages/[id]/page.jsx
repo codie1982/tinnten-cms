@@ -75,7 +75,6 @@ const DEFAULT_LIMITS = {
   // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
   // snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok. Periyot backend'de
   // fatura döngüsüne bağlı; paket bazında ayrıca bir periyot alanı tutulmaz.
-  web_search: { count: 100 },
   maxDevices: null,
 };
 
@@ -312,12 +311,7 @@ export default function PackageEditorPage({ params }) {
       company: {
         count: nullable(limits.company?.count, 1),
       },
-      // Web araması kotası — backend buildLimitPayload web_search'ü whitelist eder.
-      // Yalnız `count` gönderilir; reset periyodu backend'de fatura döngüsüne bağlı.
-      // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (arama bloke).
-      web_search: {
-        count: nullable(limits.web_search?.count, 100),
-      },
+      // web_search limiti KALDIRILDI — web araması LLM kredi bütçesinden düşülür (AI gibi).
       maxDevices:
         limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
           ? null
@@ -874,28 +868,8 @@ export default function PackageEditorPage({ params }) {
                 </div>
               </div>
 
-              {/* Web arama limitleri — tüm paketlerde (bireysel + firma) anlamlı;
-                  hesap başına Brave araması kotası. Reset fatura döngüsüne bağlı. */}
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Web Arama</p>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <LimitRow
-                    label="Web arama limiti"
-                    value={limits.web_search?.count}
-                    unit="arama"
-                    onChange={(v) => setLimitField('web_search', 'count', v)}
-                    placeholder="sınırsız"
-                    helper="Her web araması (Brave) çağrısı 1 hak harcar; fatura döngüsü başına sıfırlanır · boş = sınırsız · 0 = kota yok"
-                  />
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Yenileme periyodu</label>
-                    <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-                      Fatura döngüsü
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">Reset periyodu satın alınan periyoda (fatura döngüsüne) bağlıdır.</p>
-                  </div>
-                </div>
-              </div>
+              {/* Web Arama limitleri KALDIRILDI: her web araması LLM kredi bütçesinden düşülür
+                  (ayrı adet kotası yok; AI üretimiyle aynı model). */}
 
               {/* Firma limitleri — yalnız Kullanıcı Paketi (forCompany:false).
                   Business paketlerde firma oluşturma limiti kavramı yok. */}
