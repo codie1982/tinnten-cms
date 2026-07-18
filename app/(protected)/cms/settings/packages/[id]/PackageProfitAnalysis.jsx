@@ -5,12 +5,18 @@
  *
  * Kredi sistemi maliyet tabanı: 1 kredi = $0.01 GERÇEK maliyet (backend
  * CREDIT_PER_USD=100 ile SENKRON — orada değişirse burayı da güncelle).
- * Paket, `limit.llm.credit` krediyi RESET DÖNGÜSÜ başına verir (llm.regeneretetime:
- * Daily → günlük, monthly → aylık). Fiyat ise periyot başına (month/year/lifetime).
- * Bu yüzden maliyet = kredi × $0.01 × (periyottaki döngü sayısı).
+ *
+ * Limitler artık PERİYOT BAZLI: her fiyat satırının (month/year/lifetime) kendi
+ * limit objesi vardır ve kendi `llm.credit`'ini taşır. Reset fatura döngüsüne
+ * bağlı; her periyot için döngü başına bir kez sıfırlanır. Bu yüzden maliyet =
+ * o satırın kredisi × $0.01 (periyot başına TEK döngü — eski Daily/monthly
+ * çarpanı kaldırıldı).
  *
  * Karşılaştırma USD üzerinden: currency=USD ise amount, değilse localPrices.USD
  * (yoksa satır içi USD girişi ile localPrices.USD'ye yazılır).
+ *
+ * Ömür boyu (lifetime): fatura döngüsü olmadığından tek-döngü maliyet yanıltıcı
+ * olabilir; bu satırlar için marj gösterilmez, yalnız bilgi amaçlı etiketlenir.
  */
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,25 +29,24 @@ const DEFAULT_CREDIT_USD_COST = 0.01;
 
 const INTERVAL_LABEL = { month: 'Aylık', year: 'Yıllık', lifetime: 'Ömür Boyu' };
 
-// Reset döngüsü + fiyat periyodu → periyottaki döngü sayısı (maliyet çarpanı).
-function cyclesPerInterval(resetPeriod, interval) {
-  const daily = String(resetPeriod ?? '').toLowerCase() === 'daily';
-  if (interval === 'month') return daily ? 30 : 1;
-  if (interval === 'year') return daily ? 365 : 12;
-  return null; // lifetime — süre belirsiz
-}
-
 const fmtUsd = (n) => (Number.isFinite(n) ? `$${n.toFixed(2)}` : '—');
 const fmtPct = (n) => (Number.isFinite(n) ? `%${Math.round(n)}` : '—');
 
-export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, creditUsdCost }) {
+export default function PackageProfitAnalysis({ pricing, limitsByInterval, credits, creditUsdCost }) {
   const [consumption, setConsumption] = useState(70); // beklenen tüketim %
 
-  const creditNum = Number(credits) || 0;
   // Maliyet tabanı backend'den (Cost.creditPerUsd → creditUsdCost); yoksa fallback.
   const creditCost = Number(creditUsdCost) > 0 ? Number(creditUsdCost) : DEFAULT_CREDIT_USD_COST;
   const consPct = Math.min(100, Math.max(0, Number(consumption) || 0));
   const rows = (pricing || []).filter((p) => p.amount !== '' && p.amount != null);
+
+  // Bir fiyat satırının kredi limitini oku: her periyodun kendi limit objesi var
+  // (limitsByInterval[interval].llm.credit). Bulunamazsa tekil `credits` fallback.
+  const creditFor = (interval) => {
+    const perInterval = limitsByInterval?.[interval]?.llm?.credit;
+    const raw = perInterval != null && perInterval !== '' ? perInterval : credits;
+    return Number(raw) || 0;
+  };
 
   return (
     <Card>
@@ -51,8 +56,8 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
       <CardContent className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <span>Maliyet tabanı: <b className="text-foreground">1 kredi = ${creditCost}</b></span>
-          <span>Kredi / döngü: <b className="text-foreground">{creditNum || '—'}</b></span>
-          <span>Reset: <b className="text-foreground">{resetPeriod || 'Daily'}</b></span>
+          <span>Kredi: <b className="text-foreground">periyoda göre (satırda)</b></span>
+          <span>Reset: <b className="text-foreground">fatura döngüsü</b></span>
           <span className="flex items-center gap-1">
             Beklenen tüketim:
             <Input
@@ -64,9 +69,6 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
           </span>
         </div>
 
-        {creditNum <= 0 && (
-          <p className="text-sm text-amber-600">LLM kredi limiti 0/boş — maliyet hesaplanamaz (Limitler → LLM → Kredi).</p>
-        )}
         {rows.length === 0 && <p className="text-sm text-muted-foreground">Analiz için fiyat satırı ekleyin.</p>}
 
         {rows.length > 0 && (
@@ -75,6 +77,7 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
               <thead>
                 <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
                   <th className="px-2 py-2 text-start">Periyot</th>
+                  <th className="px-2 py-2 text-end">Kredi</th>
                   <th className="px-2 py-2 text-end">Net USD Fiyat</th>
                   <th className="px-2 py-2 text-end">Maliyet (max)</th>
                   <th className="px-2 py-2 text-end">Kâr (beklenen)</th>
@@ -84,6 +87,7 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
               </thead>
               <tbody>
                 {rows.map((p, i) => {
+                  const isLifetime = p.interval === 'lifetime';
                   const usdRaw =
                     p.currency === 'USD'
                       ? Number(p.amount)
@@ -91,8 +95,9 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
                         ? Number(p.localPrices.USD)
                         : null;
                   const disc = Math.min(100, Math.max(0, Number(p.discount) || 0));
-                  const cycles = cyclesPerInterval(resetPeriod, p.interval);
-                  const maxCost = creditNum * creditCost * (cycles ?? 1);
+                  const rowCredit = creditFor(p.interval);
+                  // Periyot başına TEK döngü — reset fatura döngüsüne bağlı.
+                  const maxCost = rowCredit * creditCost;
                   const expCost = maxCost * (consPct / 100);
                   const net = usdRaw != null && Number.isFinite(usdRaw) ? usdRaw * (1 - disc / 100) : null;
                   const profitExp = net != null ? net - expCost : null;
@@ -105,10 +110,11 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
                       <td className="px-2 py-2">
                         {INTERVAL_LABEL[p.interval] || p.interval}
                         {disc > 0 && <span className="ml-1 text-[10px] text-muted-foreground">(-%{disc})</span>}
-                        {cycles == null && (
-                          <span className="ml-1 text-[10px] text-amber-600">süre belirsiz → tek döngü</span>
+                        {isLifetime && (
+                          <span className="ml-1 text-[10px] text-amber-600">ömür boyu — tek seferlik grant</span>
                         )}
                       </td>
+                      <td className="px-2 py-2 text-end font-mono">{rowCredit || '—'}</td>
                       <td className="px-2 py-2 text-end font-mono">
                         {net != null ? (
                           fmtUsd(net)
@@ -119,19 +125,29 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
                         )}
                       </td>
                       <td className="px-2 py-2 text-end font-mono">{fmtUsd(maxCost)}</td>
-                      <td className={cn('px-2 py-2 text-end font-mono font-semibold', profitCls)}>
-                        {profitExp != null ? fmtUsd(profitExp) : '—'}
-                      </td>
-                      <td className={cn('px-2 py-2 text-end', profitCls)}>{fmtPct(marginExp)}</td>
-                      <td className="px-2 py-2 text-end">
-                        {breakEven == null ? (
-                          '—'
-                        ) : breakEven >= 100 ? (
-                          <span className="text-emerald-600">%&gt;100 (güvenli)</span>
-                        ) : (
-                          <span className="text-red-600">{fmtPct(breakEven)}</span>
-                        )}
-                      </td>
+                      {isLifetime ? (
+                        <>
+                          <td className="px-2 py-2 text-end text-[10px] text-muted-foreground" colSpan={3}>
+                            Ömür boyu — fatura döngüsü yok, marj hesaplanmaz
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className={cn('px-2 py-2 text-end font-mono font-semibold', profitCls)}>
+                            {profitExp != null ? fmtUsd(profitExp) : '—'}
+                          </td>
+                          <td className={cn('px-2 py-2 text-end', profitCls)}>{fmtPct(marginExp)}</td>
+                          <td className="px-2 py-2 text-end">
+                            {breakEven == null ? (
+                              '—'
+                            ) : breakEven >= 100 ? (
+                              <span className="text-emerald-600">%&gt;100 (güvenli)</span>
+                            ) : (
+                              <span className="text-red-600">{fmtPct(breakEven)}</span>
+                            )}
+                          </td>
+                        </>
+                      )}
                     </tr>
                   );
                 })}
@@ -141,10 +157,10 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
         )}
 
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          <b>Maliyet</b> = kredi/döngü × ${creditCost} × periyottaki döngü sayısı (Daily reset: ay=30, yıl=365 döngü;
-          monthly: ay=1, yıl=12). <b>Net USD fiyat</b> = USD fiyat × (1 − indirim%). <b>Kâr (beklenen)</b> =
-          net fiyat − (max maliyet × beklenen tüketim%). <b>Başabaş tüketim</b>: bu %'nin ÜSTÜNDE tüketimde
-          zarar; &quot;%&gt;100&quot; = tam tüketimde bile kârlı.
+          <b>Maliyet</b> = o periyodun kredisi × ${creditCost} (reset fatura döngüsüne bağlı, periyot başına tek döngü).
+          <b> Net USD fiyat</b> = USD fiyat × (1 − indirim%). <b>Kâr (beklenen)</b> = net fiyat − (max maliyet ×
+          beklenen tüketim%). <b>Başabaş tüketim</b>: bu %'nin ÜSTÜNDE tüketimde zarar; &quot;%&gt;100&quot; =
+          tam tüketimde bile kârlı. Ömür boyu satırlarda fatura döngüsü olmadığından marj gösterilmez.
         </p>
       </CardContent>
     </Card>

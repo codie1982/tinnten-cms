@@ -51,40 +51,9 @@ const CURRENCIES = ['USD', 'TRY', 'EUR'];
 // Backend systemPackagesController.buildLimitPayload ile birebir uyumlu birimler
 const SIZE_UNITS = ['kb', 'mb', 'gb', 'tb'];
 const STREAM_UNITS = ['mb', 'gb', 'tb'];
-// Backend system-packages.model.js'te offer/llm/token_limit/web_search
-// `regeneretetime` enum'u ['Daily','montly','monthly','month'] — yani backend
-// yalnız İKİ ayrı periyot tanır: günlük ve aylık. ('montly' eski bir yazım
-// hatası; kayıtlı veri olduğu için enum'da KORUNUYOR — silmeden önce DB'yi kontrol et.)
-//
-// Bu liste eskiden 'Hourly'/'Weekly'/'Monthly' de sunuyordu. Üçü de enum'da YOKTU:
-// updateById findByIdAndUpdate'i runValidators olmadan çağırdığı için sessizce
-// yazılıyor, sonra usageResetScheduler._calcNextReset (ve AccountManager.
-// _calcNextResetDate) switch'inde eşleşmeyip `default:` → +1 GÜN'e düşüyorlardı.
-// Yani "Aylık" seçmek kotayı ayda bir değil GÜNDE bir sıfırlıyordu (~30x cömert).
-// Artık yalnız backend'in gerçekten onurlandırdığı iki değer sunuluyor.
-// Yeni periyot eklemek backend'de hem enum'u hem İKİ switch'i değiştirmeyi gerektirir.
-const REGEN_PERIODS = [
-  { value: 'Daily', label: 'Günlük' },
-  { value: 'monthly', label: 'Aylık' },
-];
-
-// Backend'in "aylık" saydığı enum varyantları — üçü de _calcNextReset /
-// _calcNextResetDate switch'inde aynı `case`'e, yani +1 ay'a düşer.
-const MONTHLY_REGEN_ALIASES = new Set(['monthly', 'montly', 'month']);
-
-// Kayıtlı bir regeneretetime'ı REGEN_PERIODS'taki bir option'a indirger:
-//   'montly' | 'month'  → 'monthly' : legacy, zaten aylık davranıyor; select "Aylık" göstersin.
-//   'Monthly'           → 'monthly' : enum dışı, ama niyet aylıktı ve UI hep "Aylık"
-//                                     gösteriyordu; kaydedince backend artık gerçekten
-//                                     aylık resetler (bkz. repairRegeneretetimeEnum.js).
-//   'Hourly' | 'Weekly' → 'Daily'   : backend bunları hiç desteklemedi, fiilen günlük
-//                                     resetleniyorlardı; temsil edilebilir tek karşılık.
-//   yok / tanınmayan    → 'Daily'   : model default'u.
-// Hem okuma (mergeLimits) hem yazma (buildLimitBody) sınırında uygulanır: updateById
-// artık runValidators:true ile enum dışı değeri reddediyor, dolayısıyla form state'ine
-// geçersiz bir değer ne girmeli ne de çıkmalı.
-const canonicalRegen = (value) =>
-  MONTHLY_REGEN_ALIASES.has(String(value ?? '').toLowerCase()) ? 'monthly' : 'Daily';
+// NOT: `regeneretetime` alanı backend'den tamamen kaldırıldı. Reset artık
+// fatura döngüsü (satın alınan periyot) tarafından yönlendiriliyor; her periyot
+// (month/year) kendi limit objesini tutuyor ve döngü başına bir kez sıfırlanıyor.
 
 // Backend default değerleri ile birebir aynı (buildLimitPayload)
 const DEFAULT_LIMITS = {
@@ -93,9 +62,8 @@ const DEFAULT_LIMITS = {
   file: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
   image: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
   video: { download: 1024, upload: 1024, maxfileupload: 100, maxfileDownload: 100, unit: 'mb', stream: 50, stream_unit: 'gb' },
-  offer: { max: 10, regeneretetime: 'Daily' },
-  llm: { token: 1024, credit: 1000, regeneretetime: 'Daily' },
-  ai: { images: 20, enrich: 50, video: 5 },
+  offer: { max: 10 },
+  llm: { token: 1024, credit: 1000 },
   workflow: { count: 5, totalRun: 100 },
   // Backend system-packages.model.js limit.assistant ile birebir — 4 alan da
   // taşınmalı, aksi halde kaydetmede tools/libraryFiles/previewViewsPerMonth
@@ -105,11 +73,8 @@ const DEFAULT_LIMITS = {
   // Kayıtta kullanıcının account snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok.
   company: { count: 1 },
   // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
-  // snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok.
-  // NOT: `regeneretetime` bilinçli olarak YOK — periyot aylık SABİT ve backend
-  // buildLimitPayload zaten `|| "monthly"` ile dolduruyor. Alan gönderilmediği
-  // için dokümandan DÜŞMEZ. Periyot kullanıcıya açılacaksa LimitPeriodRow'a
-  // bağlamak yeterli (REGEN_PERIODS artık backend enum'u ile uyumlu).
+  // snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok. Periyot backend'de
+  // fatura döngüsüne bağlı; paket bazında ayrıca bir periyot alanı tutulmaz.
   web_search: { count: 100 },
   maxDevices: null,
 };
@@ -119,6 +84,11 @@ const emptyI18n = () => {
   for (const l of CONTENT_LOCALES) o[l.code] = { title: '', description: '', features: '' };
   return o;
 };
+
+// Unlisted ("özel/link ile") paketin paylaşım linki — storefront (tinnten-nextjs) /paket/[token]
+// sayfasına gider. Base URL NEXT_PUBLIC_STOREFRONT_URL ile ayarlanır (fallback: prod domain).
+const STOREFRONT_URL = (process.env.NEXT_PUBLIC_STOREFRONT_URL || 'https://tinnten.com').replace(/\/$/, '');
+const shareUrl = (token) => `${STOREFRONT_URL}/paket/${token}`;
 
 // Backend'den gelen kısmi limits'i default ile derinlemesine merge et — eksik
 // alanlar default değer alır, böylece UI hep dolu render eder.
@@ -130,17 +100,6 @@ const mergeLimits = (incoming) => {
       out[k] = { ...out[k], ...v };
     } else if (v !== undefined) {
       out[k] = v;
-    }
-  }
-  // OKUMA SINIRI — kayıtlı legacy/geçersiz periyotları select'in tanıdığı bir
-  // değere indirge. Aksi halde 'montly' veya 'Monthly' tutan bir paket açıldığında
-  // native select'in value'su hiçbir option ile eşleşmez (selectedIndex = -1) ve
-  // alan BOŞ render eder. Tip kontrolü şart: bozuk kayıtta `incoming.offer` nesne
-  // olmayabilir ve yukarıdaki döngü onu ham atar — primitive'e alan yazmak strict
-  // mode'da TypeError fırlatır, editör sayfası komple çökerdi.
-  for (const section of ['offer', 'llm']) {
-    if (out[section] && typeof out[section] === 'object') {
-      out[section].regeneretetime = canonicalRegen(out[section].regeneretetime);
     }
   }
   return out;
@@ -175,7 +134,14 @@ export default function PackageEditorPage({ params }) {
   });
   const [i18n, setI18n] = useState(emptyI18n);
   const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1, discount: 0, localPrices: {} }]);
-  const [limits, setLimits] = useState(() => JSON.parse(JSON.stringify(DEFAULT_LIMITS)));
+  // Limitler artık PERİYOT BAZLI: her fatura periyodu (month/year) kendi limit
+  // objesini tutar. Satın alınan periyodun limiti kullanıcıya aktarılır; reset
+  // fatura döngüsüne bağlı (periyot başına bir kez sıfırlanır).
+  const [limitsByInterval, setLimitsByInterval] = useState(() => ({
+    month: JSON.parse(JSON.stringify(DEFAULT_LIMITS)),
+    year: JSON.parse(JSON.stringify(DEFAULT_LIMITS)),
+  }));
+  const [activeLimitInterval, setActiveLimitInterval] = useState('month');
   const [activeLocale, setActiveLocale] = useState('tr');
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -194,7 +160,7 @@ export default function PackageEditorPage({ params }) {
       package_content_type: pkg.package_content_type || 'standart',
       status: pkg.status || 'active',
       default_package: Boolean(pkg.default_package),
-      visibility: pkg.visibility === 'private' ? 'private' : 'public',
+      visibility: ['private', 'unlisted'].includes(pkg.visibility) ? pkg.visibility : 'public',
       targetCompanyId: pkg.targetCompanyId ? String(pkg.targetCompanyId) : '',
       targetDescription: pkg.targetDescription || '',
     });
@@ -207,8 +173,9 @@ export default function PackageEditorPage({ params }) {
       };
     }
     setI18n(merged);
+    const loadedPricing = (pkg.pricing?.length ? pkg.pricing : [{ interval: 'month', amount: '', currency: 'USD', isDefault: true }]);
     setPricing(
-      (pkg.pricing?.length ? pkg.pricing : [{ interval: 'month', amount: '', currency: 'USD', isDefault: true }]).map((p) => ({
+      loadedPricing.map((p) => ({
         interval: p.interval || 'month',
         amount: p.amount ?? '',
         currency: p.currency || 'USD',
@@ -219,8 +186,22 @@ export default function PackageEditorPage({ params }) {
         localPrices: p.localPrices ?? {},
       })),
     );
-    // Backend `limit` (tekil) ya da eski kayıtlarda `limits` (çoğul) tutabilir
-    setLimits(mergeLimits(pkg.limit ?? pkg.limits));
+    // PERİYOT BAZLI limit yükleme: her pricing satırının kendi `.limit` objesi var.
+    // Top-level `limit` (tekil) / eski kayıtlarda `limits` (çoğul), per-entry limiti
+    // olmayan periyotlar için fallback. month & year anahtarları her zaman dolu olur.
+    const topLevel = mergeLimits(pkg.limit ?? pkg.limits);
+    const next = { month: topLevel, year: JSON.parse(JSON.stringify(topLevel)) };
+    for (const p of loadedPricing) {
+      const iv = p.interval || 'month';
+      if ((iv === 'month' || iv === 'year') && p.limit) {
+        next[iv] = mergeLimits(p.limit);
+      }
+    }
+    setLimitsByInterval(next);
+    // Aktif sekmeyi mevcut periyoda göre ayarla (month yoksa year'a düş).
+    setActiveLimitInterval(
+      loadedPricing.some((p) => (p.interval || 'month') === 'month') ? 'month' : 'year',
+    );
   }, [pkg, isNew]);
 
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -230,12 +211,26 @@ export default function PackageEditorPage({ params }) {
   const removePriceRow = (i) => setPricing((rows) => rows.filter((_, idx) => idx !== i));
 
   // Nested limit alanlarını güncelleme: setLimitField('file', 'upload', 1024)
+  // Yalnız AKTİF periyodun limit objesini immutably günceller.
   const setLimitField = (group, key, v) => {
-    setLimits((s) => ({ ...s, [group]: { ...(s[group] || {}), [key]: v } }));
+    setLimitsByInterval((s) => {
+      const cur = s[activeLimitInterval] || DEFAULT_LIMITS;
+      return {
+        ...s,
+        [activeLimitInterval]: { ...cur, [group]: { ...(cur[group] || {}), [key]: v } },
+      };
+    });
   };
-  const setLimitRoot = (key, v) => setLimits((s) => ({ ...s, [key]: v }));
+  const setLimitRoot = (key, v) => {
+    setLimitsByInterval((s) => {
+      const cur = s[activeLimitInterval] || DEFAULT_LIMITS;
+      return { ...s, [activeLimitInterval]: { ...cur, [key]: v } };
+    });
+  };
 
-  function buildLimitBody() {
+  function buildLimitBody(limitsArg) {
+    // Periyot bazlı: hangi periyodun limitini gövdeye çevireceğimizi çağıran verir.
+    const limits = limitsArg || DEFAULT_LIMITS;
     // Sayısal alanları Number'a çevir; null/boş → 0 (maxDevices hariç)
     const num = (v, fallback = 0) => {
       if (v === '' || v === null || v === undefined) return fallback;
@@ -278,12 +273,8 @@ export default function PackageEditorPage({ params }) {
         stream: num(limits.video?.stream),
         stream_unit: limits.video?.stream_unit || 'gb',
       },
-      // YAZMA SINIRI — canonicalRegen son savunma hattı. updateById artık
-      // runValidators:true; enum dışı bir değer sessizce yazılmak yerine
-      // ValidationError fırlatır, dolayısıyla buradan asla çıkmamalı.
       offer: {
         max: num(limits.offer?.max),
-        regeneretetime: canonicalRegen(limits.offer?.regeneretetime),
       },
       llm: {
         // Kota kredi bazlı (backend hasLLMCreditQuota → limit.llm.credit).
@@ -297,13 +288,9 @@ export default function PackageEditorPage({ params }) {
           limits.llm?.credit === '' || limits.llm?.credit === null || limits.llm?.credit === undefined
             ? null
             : num(limits.llm?.credit, 1000),
-        regeneretetime: canonicalRegen(limits.llm?.regeneretetime),
       },
-      ai: {
-        images: num(limits.ai?.images),
-        enrich: num(limits.ai?.enrich),
-        video: num(limits.ai?.video),
-      },
+      // ai limitleri KALDIRILDI — AI üretim artık LLM kredi bütçesinden düşer (backend
+      // buildLimitPayload da ai bloğunu üretmez).
       workflow: {
         count: num(limits.workflow?.count),
         totalRun: num(limits.workflow?.totalRun),
@@ -325,10 +312,8 @@ export default function PackageEditorPage({ params }) {
       company: {
         count: nullable(limits.company?.count, 1),
       },
-      // Aylık web araması kotası — backend buildLimitPayload web_search'ü whitelist eder.
-      // Yalnız `count` gönderilir: periyot aylık sabit ve backend `regeneretetime`'ı
-      // `|| "monthly"` ile kendisi yazar (hem create hem update buildLimitPayload'dan
-      // geçer), dolayısıyla göndermemek dokümandan alanı DÜŞÜRMEZ.
+      // Web araması kotası — backend buildLimitPayload web_search'ü whitelist eder.
+      // Yalnız `count` gönderilir; reset periyodu backend'de fatura döngüsüne bağlı.
       // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (arama bloke).
       web_search: {
         count: nullable(limits.web_search?.count, 100),
@@ -367,6 +352,13 @@ export default function PackageEditorPage({ params }) {
           EUR: p.localPrices?.EUR != null && p.localPrices?.EUR !== '' ? Number(p.localPrices.EUR) : null,
           USD: p.localPrices?.USD != null && p.localPrices?.USD !== '' ? Number(p.localPrices.USD) : null,
         },
+        // PERİYOT BAZLI limit: month/year satırları kendi limit objesini taşır;
+        // lifetime satırının limiti yok (reset fatura döngüsüne bağlı, ömür boyunun
+        // döngüsü yok).
+        limit:
+          p.interval === 'month' || p.interval === 'year'
+            ? buildLimitBody(limitsByInterval[p.interval])
+            : null,
       }));
     return {
       name: form.name.trim(),
@@ -377,11 +369,12 @@ export default function PackageEditorPage({ params }) {
       default_package: form.default_package,
       i18n: i18nOut,
       pricing: pricingOut,
-      // Backend hem `limit` (tekil) hem `limits` (çoğul) kabul ediyor;
-      // canonical olan `limit`'i gönderiyoruz.
-      limit: buildLimitBody(),
-      // Firmaya özel paket alanları — backend create/update whitelist'inde normalize edilir
-      visibility: form.visibility === 'private' ? 'private' : 'public',
+      // Top-level `limit` fallback — backend'i top-level'ı pricing'den türetiyor
+      // ama geriye dönük uyum için month (yoksa year) limitini yine de gönderiyoruz.
+      limit: buildLimitBody(limitsByInterval.month || limitsByInterval.year),
+      // Görünürlük alanları — backend create/update whitelist'inde normalize edilir.
+      // unlisted → backend shareToken üretir; targetCompanyId yalnız private'te.
+      visibility: ['private', 'unlisted'].includes(form.visibility) ? form.visibility : 'public',
       targetCompanyId: form.visibility === 'private' && form.targetCompanyId ? form.targetCompanyId : null,
       targetDescription: (form.targetDescription || '').trim(),
     };
@@ -392,6 +385,21 @@ export default function PackageEditorPage({ params }) {
     const body = buildBody();
     if (!body.name) { setNotice('Paket adı (name) zorunludur.'); return; }
     if (!Object.keys(body.i18n).length) { setNotice('En az bir dilde başlık girin.'); return; }
+    // Periyot bazlı limit modeli: her periyottan en fazla bir satır olmalı ki
+    // hangi limit objesinin geçerli olduğu belirsiz kalmasın.
+    const pricedRows = pricing.filter((p) => p.amount !== '' && p.amount != null);
+    if (pricedRows.filter((p) => p.interval === 'month').length > 1) {
+      setNotice('Birden fazla aylık (month) fiyat satırı olamaz.'); return;
+    }
+    if (pricedRows.filter((p) => p.interval === 'year').length > 1) {
+      setNotice('Birden fazla yıllık (year) fiyat satırı olamaz.'); return;
+    }
+    if (pricedRows.filter((p) => p.isDefault).length > 1) {
+      setNotice('Yalnız bir fiyat satırı varsayılan (isDefault) olabilir.'); return;
+    }
+    if (pricedRows.some((p) => p.interval === 'lifetime' && Number(p.amount) > 0)) {
+      setNotice('Ömür boyu paket ücretli olamaz.'); return;
+    }
     if (isNew) {
       const r = await createPackage(body).unwrap().catch((e) => { setNotice(e?.data?.message || 'Oluşturulamadı.'); return null; });
       const newId = r?._id ?? r?.id;
@@ -493,6 +501,14 @@ export default function PackageEditorPage({ params }) {
   }
 
   const lc = i18n[activeLocale] || { title: '', description: '', features: '' };
+
+  // Aktif periyodun limit objesi — Limitler JSX'i (limits.file?.upload vs.) bunu okur.
+  const limits = limitsByInterval[activeLimitInterval] || limitsByInterval.month;
+  // Limit sekmesi için mevcut pricing'deki month/year periyotları (lifetime hariç,
+  // tekrarsız ve month/year sırasında).
+  const limitIntervals = ['month', 'year'].filter((iv) =>
+    pricing.some((p) => p.interval === iv),
+  );
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -657,11 +673,12 @@ export default function PackageEditorPage({ params }) {
             </CardContent>
           </Card>
 
-          {/* Kâr / Zarar Analizi — kredi maliyet tabanı ($0.01/kredi) üzerinden canlı */}
+          {/* Kâr / Zarar Analizi — kredi maliyet tabanı ($0.01/kredi) üzerinden canlı.
+              Her satır kendi periyodunun (limitsByInterval[interval]) kredisini kullanır. */}
           <PackageProfitAnalysis
             pricing={pricing}
+            limitsByInterval={limitsByInterval}
             credits={limits.llm?.credit}
-            resetPeriod={limits.llm?.regeneretetime}
             creditUsdCost={creditConfig?.creditUsdCost}
           />
 
@@ -673,14 +690,46 @@ export default function PackageEditorPage({ params }) {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setLimits(JSON.parse(JSON.stringify(DEFAULT_LIMITS)))}
-                  title="Tüm limitleri varsayılana sıfırla"
+                  onClick={() =>
+                    setLimitsByInterval((s) => ({
+                      ...s,
+                      [activeLimitInterval]: JSON.parse(JSON.stringify(DEFAULT_LIMITS)),
+                    }))
+                  }
+                  title="Bu periyodun limitlerini varsayılana sıfırla"
                 >
                   Varsayılana sıfırla
                 </Button>
               </CardToolbar>
             </CardHeader>
             <CardContent className="space-y-5 p-4">
+              {/* Periyot sekmesi — her fatura periyodu (month/year) için ayrı limit seti */}
+              {limitIntervals.length > 0 && (
+                <div>
+                  <div className="flex flex-wrap gap-1">
+                    {limitIntervals.map((iv) => {
+                      const active = activeLimitInterval === iv;
+                      return (
+                        <button
+                          key={iv}
+                          type="button"
+                          onClick={() => setActiveLimitInterval(iv)}
+                          className={cn(
+                            'flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                            active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                          )}
+                        >
+                          {INTERVALS.find((x) => x.value === iv)?.label || iv}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    Her periyot için ayrı limitler; satın alınan periyodun limiti kullanıcıya aktarılır.
+                  </p>
+                </div>
+              )}
+
               {/* Genel sayım limitleri */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Genel</p>
@@ -761,11 +810,6 @@ export default function PackageEditorPage({ params }) {
                     unit="adet"
                     onChange={(v) => setLimitField('offer', 'max', v)}
                   />
-                  <LimitPeriodRow
-                    label="Yenileme periyodu"
-                    value={limits.offer?.regeneretetime}
-                    onChange={(v) => setLimitField('offer', 'regeneretetime', v)}
-                  />
                 </div>
               </div>
 
@@ -778,24 +822,13 @@ export default function PackageEditorPage({ params }) {
                     value={limits.llm?.credit}
                     unit="kredi"
                     onChange={(v) => setLimitField('llm', 'credit', v)}
-                  />
-                  <LimitPeriodRow
-                    label="Yenileme periyodu"
-                    value={limits.llm?.regeneretetime}
-                    onChange={(v) => setLimitField('llm', 'regeneretetime', v)}
+                    helper="Satın alınan periyodun kredisi; fatura döngüsü başına sıfırlanır"
                   />
                 </div>
               </div>
 
-              {/* AI üretim limitleri */}
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Üretim</p>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <LimitRow label="Görsel üretim" value={limits.ai?.images} unit="adet" onChange={(v) => setLimitField('ai', 'images', v)} />
-                  <LimitRow label="Enrich" value={limits.ai?.enrich} unit="adet" onChange={(v) => setLimitField('ai', 'enrich', v)} />
-                  <LimitRow label="Video üretim" value={limits.ai?.video} unit="adet" onChange={(v) => setLimitField('ai', 'video', v)} />
-                </div>
-              </div>
+              {/* AI Üretim limitleri KALDIRILDI: görsel/enrich/video artık ayrı adet kotasıyla
+                  değil LLM kredi bütçesiyle sınırlanır (her üretim krediden düşer). Ayrı limit alanı yok. */}
 
               {/* Workflow limitleri */}
               <div>
@@ -842,25 +875,24 @@ export default function PackageEditorPage({ params }) {
               </div>
 
               {/* Web arama limitleri — tüm paketlerde (bireysel + firma) anlamlı;
-                  hesap başına aylık Brave araması kotası. Periyot SABİT (aylık),
-                  bu yüzden LimitPeriodRow değil salt-okunur metin gösteriliyor. */}
+                  hesap başına Brave araması kotası. Reset fatura döngüsüne bağlı. */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Web Arama</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <LimitRow
-                    label="Aylık web arama limiti"
+                    label="Web arama limiti"
                     value={limits.web_search?.count}
                     unit="arama"
                     onChange={(v) => setLimitField('web_search', 'count', v)}
                     placeholder="sınırsız"
-                    helper="Her web araması (Brave) çağrısı 1 hak harcar; aylık sıfırlanır · boş = sınırsız · 0 = kota yok"
+                    helper="Her web araması (Brave) çağrısı 1 hak harcar; fatura döngüsü başına sıfırlanır · boş = sınırsız · 0 = kota yok"
                   />
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">Yenileme periyodu</label>
                     <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-                      Aylık (sabit)
+                      Fatura döngüsü
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">Web arama kotasının periyodu paket bazında değiştirilemez.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Reset periyodu satın alınan periyoda (fatura döngüsüne) bağlıdır.</p>
                   </div>
                 </div>
               </div>
@@ -974,7 +1006,7 @@ export default function PackageEditorPage({ params }) {
                 <input type="checkbox" checked={form.default_package} onChange={(e) => setField('default_package', e.target.checked)} className="size-4" />
               </label>
 
-              {/* Görünürlük — firmaya özel paket ayarları */}
+              {/* Görünürlük — genel / firmaya özel / özel (link ile) */}
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Görünürlük</label>
                 <Select value={form.visibility} onValueChange={(v) => setField('visibility', v)}>
@@ -982,12 +1014,44 @@ export default function PackageEditorPage({ params }) {
                   <SelectContent>
                     <SelectItem value="public">Genel (herkes)</SelectItem>
                     <SelectItem value="private">Firmaya Özel</SelectItem>
+                    <SelectItem value="unlisted">Özel (link ile)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Firmaya özel paketler genel listelerde (pricing, upgrade) görünmez; sadece hedef firma satın alabilir/atanabilir.
+                  {form.visibility === 'unlisted'
+                    ? 'Özel paketler hiçbir listede görünmez; yalnız aşağıdaki link ile erişilir. Linke sahip herkes satın alabilir.'
+                    : 'Firmaya özel paketler genel listelerde (pricing, upgrade) görünmez; sadece hedef firma satın alabilir/atanabilir.'}
                 </p>
               </div>
+
+              {/* Özel (unlisted) paketin paylaşım linki — token backend'de kaydetmede üretilir */}
+              {form.visibility === 'unlisted' && (
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Paylaşım Linki</label>
+                  {pkg?.shareToken ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        readOnly
+                        value={shareUrl(pkg.shareToken)}
+                        className="font-mono text-[11px]"
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { navigator.clipboard?.writeText(shareUrl(pkg.shareToken)); setNotice('Link kopyalandı.'); }}
+                      >
+                        Kopyala
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Link, paketi kaydettikten sonra oluşturulur.
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Hedef Açıklaması</label>
@@ -1151,24 +1215,6 @@ function LimitRowWithUnit({ label, value, unit, unitOptions, onChange, onUnitCha
           </Select>
         </div>
       </div>
-    </div>
-  );
-}
-
-// `value` daima REGEN_PERIODS'taki bir option olmalı — mergeLimits okuma sınırında
-// canonicalRegen'den geçiriyor. Eşleşmeyen bir değer Select trigger'ını boş bırakır.
-function LimitPeriodRow({ label, value, onChange }) {
-  return (
-    <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
-      <Select value={canonicalRegen(value)} onValueChange={onChange}>
-        <SelectTrigger><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {REGEN_PERIODS.map((p) => (
-            <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
     </div>
   );
 }
