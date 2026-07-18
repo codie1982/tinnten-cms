@@ -18,7 +18,8 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES } from '@/lib/roles';
-import { useGetCmsConversationsQuery } from '@/redux/services';
+import { useGetCmsConversationsQuery, useGetCreditConfigQuery } from '@/redux/services';
+import { usdToCredits, formatCredits } from '@/lib/credit';
 
 const PAGE_SIZE = 20;
 
@@ -60,6 +61,9 @@ function ConversationsSection() {
     page,
     limit: PAGE_SIZE,
   });
+  // Kredi oranı backend'den (Cost.creditPerUsd); kredi = usdToCredits(totalCost).
+  const { data: creditCfg } = useGetCreditConfigQuery();
+  const creditPerUsd = creditCfg?.creditPerUsd;
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -125,6 +129,7 @@ function ConversationsSection() {
                     <TableHead>Tür</TableHead>
                     <TableHead className="text-right">Mesaj</TableHead>
                     <TableHead className="text-right">Token</TableHead>
+                    <TableHead className="text-right">Kredi</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead>Son Güncelleme</TableHead>
                   </TableRow>
@@ -161,6 +166,7 @@ function ConversationsSection() {
                         </TableCell>
                         <TableCell className="text-right text-sm tabular-nums text-muted-foreground">{c.messageCount ?? 0}</TableCell>
                         <TableCell className="text-right text-sm tabular-nums text-muted-foreground">{(c.totalTokens ?? 0).toLocaleString('tr-TR')}</TableCell>
+                        <TableCell className="text-right text-sm tabular-nums font-medium text-foreground">{formatCredits(usdToCredits(c.totalCost, creditPerUsd))}</TableCell>
                         <TableCell><Badge variant={sm.variant}>{sm.label}</Badge></TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTr(c.updatedAt)}</TableCell>
                       </TableRow>

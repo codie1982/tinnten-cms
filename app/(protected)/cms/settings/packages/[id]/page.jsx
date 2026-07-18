@@ -601,6 +601,16 @@ export default function PackageEditorPage({ params }) {
                     <label className="mb-1 block text-[11px] text-muted-foreground">İndirim %</label>
                     <Input type="number" min="0" max="100" value={p.discount ?? 0} onChange={(e) => setPriceRow(i, 'discount', e.target.value)} placeholder="0" />
                   </div>
+                  {p.currency !== 'USD' && (
+                    <div className="w-24">
+                      <label className="mb-1 block text-[11px] text-muted-foreground">USD karşılığı</label>
+                      <Input
+                        type="number" min="0" placeholder="0"
+                        value={p.localPrices?.USD ?? ''}
+                        onChange={(e) => setPriceRow(i, 'localPrices', { ...(p.localPrices || {}), USD: e.target.value })}
+                      />
+                    </div>
+                  )}
                   <label className="flex items-center gap-1.5 pb-2 text-xs text-foreground">
                     <input type="checkbox" checked={p.isDefault} onChange={(e) => setPriceRow(i, 'isDefault', e.target.checked)} className="size-4" />
                     Varsayılan
@@ -623,7 +633,6 @@ export default function PackageEditorPage({ params }) {
             credits={limits.llm?.credit}
             resetPeriod={limits.llm?.regeneretetime}
             creditUsdCost={creditConfig?.creditUsdCost}
-            setPriceRow={setPriceRow}
           />
 
           {/* Limitler */}

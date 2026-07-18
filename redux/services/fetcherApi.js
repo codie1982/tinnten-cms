@@ -22,7 +22,7 @@ export const fetcherApi = baseApi.injectEndpoints({
 
     /* ── Domainler ── */
     getFetcherDomains: build.query({
-      query: (params = {}) => ({ url: ENDPOINTS.fetcher.domains, params }), // { status, page, limit }
+      query: (params = {}) => ({ url: ENDPOINTS.fetcher.domains, params }), // { status, page, limit, sort, order }
       transformResponse: (res) => res?.data ?? res, // { domains, total, page, limit }
       providesTags: [{ type: 'FetcherDomain', id: 'LIST' }],
     }),

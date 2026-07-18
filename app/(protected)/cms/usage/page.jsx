@@ -19,7 +19,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
-import { useGetUsageSeriesQuery } from '@/redux/services';
+import { useGetUsageSeriesQuery, useGetCreditConfigQuery } from '@/redux/services';
+import { usdToCredits, formatCredits } from '@/lib/credit';
 
 const RANGES = [
   { value: '24h', label: 'Son 24 Saat' },
@@ -50,6 +51,9 @@ export default function CmsUsagePage() {
 
   const series = data?.series ?? [];
   const totals = data?.totals ?? { totalTokens: 0, totalCost: 0, count: 0 };
+  // Kredi = usdToCredits(totalCost); oran backend'den (Cost.creditPerUsd).
+  const { data: creditCfg } = useGetCreditConfigQuery(undefined, { skip: !authorized });
+  const creditPerUsd = creditCfg?.creditPerUsd;
 
   const chartData = useMemo(
     () =>
@@ -92,7 +96,8 @@ export default function CmsUsagePage() {
       </div>
 
       {/* KPI kartları */}
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard icon={Coins} label="Toplam Kredi" value={formatCredits(usdToCredits(totals.totalCost, creditPerUsd))} loading={isLoading} />
         <KpiCard icon={Coins} label="Toplam Token" value={numberTr(totals.totalTokens)} loading={isLoading} />
         <KpiCard icon={DollarSign} label="Toplam Maliyet" value={`$${Number(totals.totalCost || 0).toFixed(2)}`} loading={isLoading} />
         <KpiCard icon={MessageSquare} label="İstek Sayısı" value={numberTr(totals.count)} loading={isLoading} />

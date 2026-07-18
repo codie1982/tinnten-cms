@@ -7,6 +7,7 @@ import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package, Boxes,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
   SlidersHorizontal, Loader2, Ban, ShieldCheck, ChevronLeft, ChevronRight,
+  Database, RefreshCw,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -34,6 +35,7 @@ import {
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
   useGetCmsProductsQuery,
+  useGetFetcherSubscriptionsQuery,
 } from '@/redux/services';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
 import {
@@ -54,6 +56,7 @@ const SECTIONS = [
   { key: 'banka', label: 'Banka Hesapları', icon: Landmark },
   { key: 'calisanlar', label: 'Çalışanlar', icon: Users },
   { key: 'urunler', label: 'Ürünler / Hizmetler', icon: Boxes },
+  { key: 'bilgi', label: 'Bilgi Tabanı', icon: Database },
   { key: 'paketler', label: 'Hesap & Paketler', icon: Package },
   { key: 'limitler', label: 'Limitler', icon: SlidersHorizontal },
   { key: 'kullanim', label: 'Kullanım', icon: Gauge },
@@ -70,6 +73,18 @@ function countOf(c, key) {
   const v = c?.[key];
   return Array.isArray(v) ? v.length : 0;
 }
+
+/* Bilgi tabanı (fetcher abonelik) durum → Türkçe etiket + rozet tonu. */
+const KB_STATE = {
+  live: { label: 'Aktif', variant: 'success' },
+  paused: { label: 'Duraklatıldı', variant: 'muted' },
+  backfilling: { label: 'İndeksleniyor', variant: 'warning' },
+  indexing: { label: 'İndeksleniyor', variant: 'warning' },
+  pending: { label: 'Beklemede', variant: 'warning' },
+  removing: { label: 'Kaldırılıyor', variant: 'destructive' },
+  removed: { label: 'Kaldırıldı', variant: 'destructive' },
+};
+const kbState = (s) => KB_STATE[s] || { label: s || '—', variant: 'muted' };
 
 /* ─── küçük yardımcı: bilgi satırı ─── */
 function InfoRow({ icon: Icon, label, value, href }) {
@@ -126,6 +141,21 @@ export default function CmsCompanyDetailPage({ params }) {
   const products = productsData?.items ?? [];
   const productsTotal = productsData?.total ?? 0;
   const productsTotalPages = productsData?.totalPages ?? 1;
+
+  // Bilgi Tabanı sekmesi — firmanın eklediği web siteleri (fetcher abonelikleri).
+  // Yalnız sekme aktifken (lazy) çekilir; admin cross-company companyId ile listeler.
+  const {
+    data: kbData,
+    isLoading: kbLoading,
+    isFetching: kbFetching,
+    error: kbError,
+    refetch: kbRefetch,
+  } = useGetFetcherSubscriptionsQuery(
+    { companyId: id },
+    { skip: !authorized || section !== 'bilgi' },
+  );
+  const knowledgeBase = kbData?.subscriptions ?? [];
+  const knowledgeTotal = kbData?.total ?? knowledgeBase.length;
 
   // Engelleme state'i
   const [blockOpen, setBlockOpen] = useState(false); // gerekçe formu açık mı
@@ -187,6 +217,7 @@ export default function CmsCompanyDetailPage({ params }) {
     banka: banks.length,
     calisanlar: employees.length,
     urunler: productsTotal,
+    bilgi: knowledgeTotal,
     paketler: packages.length,
     limitler: metrics.length,
     kullanim: metrics.length,
@@ -647,6 +678,108 @@ export default function CmsCompanyDetailPage({ params }) {
                       </div>
                     </div>
                   </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {section === 'bilgi' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Bilgi Tabanı</CardTitle>
+                <CardToolbar>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="muted">{knowledgeTotal} site</Badge>
+                    <Button variant="ghost" size="icon" onClick={kbRefetch} disabled={kbFetching}>
+                      <RefreshCw className={kbFetching ? 'size-4 animate-spin' : 'size-4'} />
+                    </Button>
+                  </div>
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="relative px-0 py-0">
+                {kbFetching && !kbLoading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+                    <Loader2 className="size-6 animate-spin text-primary" />
+                  </div>
+                )}
+                {kbError ? (
+                  <div className="p-4">
+                    <Alert variant="destructive">
+                      <AlertDescription>
+                        {kbError?.data?.message || 'Bilgi tabanı yüklenemedi. Fetcher servisine ulaşılamıyor olabilir.'}
+                      </AlertDescription>
+                    </Alert>
+                  </div>
+                ) : kbLoading ? (
+                  <div className="space-y-2 p-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="grid grid-cols-6 gap-4">
+                        {Array.from({ length: 6 }).map((__, j) => <Skeleton key={j} className="h-5" />)}
+                      </div>
+                    ))}
+                  </div>
+                ) : knowledgeBase.length === 0 ? (
+                  <div className="p-4">
+                    <EmptyCard icon={<Database className="size-5" />} message="Bu firmanın eklediği bilgi tabanı (web sitesi) yok." />
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Site</TableHead>
+                          <TableHead>Durum</TableHead>
+                          <TableHead>İndeks</TableHead>
+                          <TableHead>Kapsam</TableHead>
+                          <TableHead>Yeniden Tarama</TableHead>
+                          <TableHead>Eklenme</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {knowledgeBase.map((w) => {
+                          const st = kbState(w.state);
+                          const chunks = w.embedding?.chunkCount;
+                          const scope = w.contract?.scope;
+                          const recrawl = w.contract?.recrawlIntervalDays;
+                          return (
+                            <TableRow key={w.id || w.domainName}>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <Globe className="size-4 shrink-0 text-muted-foreground" />
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-sm font-medium text-foreground">{w.domainName || '—'}</span>
+                                    {w.domainName && (
+                                      <a href={`https://${w.domainName}`} target="_blank" rel="noreferrer"
+                                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                                        Aç <ExternalLink className="size-3" />
+                                      </a>
+                                    )}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell><Badge variant={st.variant}>{st.label}</Badge></TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {chunks != null && chunks > 0 ? (
+                                  <span className="tabular-nums">{chunks.toLocaleString('tr-TR')} parça</span>
+                                ) : w.embedding?.status ? (
+                                  <Badge variant="muted">{w.embedding.status}</Badge>
+                                ) : '—'}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {scope === 'single' ? 'Tek sayfa' : scope === 'domain' ? 'Tüm site' : (scope || '—')}
+                              </TableCell>
+                              <TableCell className="text-sm tabular-nums text-muted-foreground">
+                                {recrawl != null ? `${recrawl} gün` : '—'}
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                                {formatTrDate(w.createdAt || w.updatedAt)}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>

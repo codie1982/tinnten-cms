@@ -34,7 +34,7 @@ function cyclesPerInterval(resetPeriod, interval) {
 const fmtUsd = (n) => (Number.isFinite(n) ? `$${n.toFixed(2)}` : '—');
 const fmtPct = (n) => (Number.isFinite(n) ? `%${Math.round(n)}` : '—');
 
-export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, creditUsdCost, setPriceRow }) {
+export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, creditUsdCost }) {
   const [consumption, setConsumption] = useState(70); // beklenen tüketim %
 
   const creditNum = Number(credits) || 0;
@@ -83,8 +83,7 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p) => {
-                  const i = pricing.indexOf(p);
+                {rows.map((p, i) => {
                   const usdRaw =
                     p.currency === 'USD'
                       ? Number(p.amount)
@@ -114,13 +113,9 @@ export default function PackageProfitAnalysis({ pricing, credits, resetPeriod, c
                         {net != null ? (
                           fmtUsd(net)
                         ) : (
-                          <Input
-                            type="number" placeholder="USD gir" className="ml-auto h-7 w-24"
-                            value={p.localPrices?.USD ?? ''}
-                            onChange={(e) =>
-                              setPriceRow(i, 'localPrices', { ...(p.localPrices || {}), USD: e.target.value })
-                            }
-                          />
+                          <span className="text-[10px] text-amber-600">
+                            fiyat satırında "USD karşılığı" gir
+                          </span>
                         )}
                       </td>
                       <td className="px-2 py-2 text-end font-mono">{fmtUsd(maxCost)}</td>

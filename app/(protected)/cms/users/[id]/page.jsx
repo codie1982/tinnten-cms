@@ -60,6 +60,7 @@ import {
   useGetUserSessionsQuery,
   useGetUserAccountQuery,
   useGetUserConversationsQuery,
+  useGetCreditConfigQuery,
   useUpdateUserMutation,
   useResetUserPasswordMutation,
   useUpdateUserAccountLimitsMutation,
@@ -738,6 +739,9 @@ function ConversationsSection({ userId, authorized }) {
   const conversations = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
+  // Kredi = usdToCredits(totalCost); oran backend'den (Cost.creditPerUsd).
+  const { data: creditCfg } = useGetCreditConfigQuery(undefined, { skip: !authorized });
+  const creditPerUsd = creditCfg?.creditPerUsd;
 
   return (
     <Card>
@@ -785,6 +789,7 @@ function ConversationsSection({ userId, authorized }) {
                     <TableHead>Durum</TableHead>
                     <TableHead className="text-right">Mesaj</TableHead>
                     <TableHead className="text-right">Token</TableHead>
+                    <TableHead className="text-right">Kredi</TableHead>
                     <TableHead className="text-right">Maliyet</TableHead>
                     <TableHead>Güncellenme</TableHead>
                   </TableRow>
@@ -814,6 +819,9 @@ function ConversationsSection({ userId, authorized }) {
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm text-foreground">
                           {(c.totalTokens ?? 0).toLocaleString('tr-TR')}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm font-medium text-foreground">
+                          {formatCredits(usdToCredits(c.totalCost, creditPerUsd))}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-muted-foreground">
                           {c.totalCost ? `$${Number(c.totalCost).toFixed(4)}` : '—'}

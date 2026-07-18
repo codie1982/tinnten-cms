@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   Activity, Globe, Link2, ScrollText, Server, RefreshCw, X, Search,
   Play, Square, RotateCw, Trash2, Plus, CircleDot, OctagonX, Loader2, Inbox,
   Rss, ShieldAlert, Pause, Ban, Radio, Pencil, ShieldCheck, FileText, SlidersHorizontal,
+  ChevronsUpDown, Building2, Check,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -56,6 +57,8 @@ import {
   useSaveScrapingConfigMutation,
   useDeleteScrapingConfigMutation,
   useResetDomainScrapingMutation,
+  useGetCompanyQuery,
+  useGetCompaniesQuery,
 } from '@/redux/services';
 
 const PAGE_SIZE = 25;
@@ -81,6 +84,147 @@ const subStateVariant = (s) =>
 // Yapısal upstream hata detayı ApiResponse.error.data → fetcher body altında kalır.
 const upstreamErr = (err) => err?.data?.data || {};
 const SITE_TYPES = ['ecommerce', 'service', 'blog'];
+
+// Domain listeleme sıralama seçenekleri (değer: `${alan}:${yön}`).
+const DOMAIN_SORTS = [
+  { value: 'createdAt:desc', label: 'Eklenme: Yeni → Eski' },
+  { value: 'createdAt:asc', label: 'Eklenme: Eski → Yeni' },
+  { value: 'updatedAt:desc', label: 'Güncelleme: Yeni → Eski' },
+  { value: 'domain:asc', label: 'Domain: A → Z' },
+];
+
+function shortId(id) {
+  const s = String(id || '');
+  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+}
+
+/**
+ * Domaine ekli firma/kullanıcıyı ID yerine kimliğiyle (isim + e-posta) gösterir.
+ * Öncelik: domain kaydına gömülü companyContext (ek istek yok). Bu snapshot yoksa
+ * ama companyId varsa (eski kayıtlar) firma detayını lazily çözer.
+ */
+function CompanyOwnerCell({ companyId, context }) {
+  const ctxName = context?.company?.name;
+  const ctxEmail = context?.owner?.email || context?.company?.email;
+  const needLookup = !ctxName && Boolean(companyId);
+  const { data: company } = useGetCompanyQuery(companyId, { skip: !needLookup });
+
+  const name = ctxName || company?.companyName;
+  const email = ctxEmail || company?.email;
+
+  if (!companyId && !name) return <span className="text-xs text-muted-foreground">—</span>;
+
+  return (
+    <div className="min-w-0" title={companyId || undefined}>
+      <div className="truncate text-sm text-foreground">{name || shortId(companyId)}</div>
+      {email ? <div className="truncate text-xs text-muted-foreground">{email}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * Firma seçici: ObjectId yazmak yerine ada göre arayıp seçtirir; dışarı `value`
+ * olarak companyId döner. `initialLabel` (ör. companyContext.company.name) düzenleme
+ * modunda mevcut firmanın adını göstermek için verilir; yoksa id'den ada çözer.
+ */
+function CompanySelect({ value, initialLabel, onChange, placeholder = 'Firma seç (opsiyonel)' }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [pickedLabel, setPickedLabel] = useState(initialLabel || '');
+  const rootRef = useRef(null);
+
+  const { data, isFetching } = useGetCompaniesQuery(
+    { query: search.trim() || undefined, limit: 20 },
+    { skip: !open },
+  );
+  const items = data?.items ?? [];
+
+  // value var ama etiket yoksa (eski kayıt, context'siz) id'den adı çöz.
+  const needLabelLookup = Boolean(value) && !pickedLabel;
+  const { data: current } = useGetCompanyQuery(value, { skip: !needLabelLookup });
+  const label = pickedLabel || current?.companyName || (value ? shortId(value) : '');
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocDown = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  const pick = (c) => {
+    onChange(c?.id || '');
+    setPickedLabel(c ? (c.companyName || c.id) : '');
+    setOpen(false);
+    setSearch('');
+  };
+
+  return (
+    <div className="relative" ref={rootRef}>
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-left text-sm hover:bg-accent"
+        >
+          <span className={cn('flex min-w-0 items-center gap-2', !value && 'text-muted-foreground')}>
+            <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{value ? label : placeholder}</span>
+          </span>
+          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+        {value ? (
+          <Button type="button" variant="outline" size="icon" className="size-9 shrink-0" title="Firmayı kaldır"
+            onClick={() => pick(null)}>
+            <X className="size-3.5" />
+          </Button>
+        ) : null}
+      </div>
+
+      {open && (
+        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+          <div className="border-b border-border p-2">
+            <div className="flex items-center gap-2 rounded-md border border-border px-2">
+              <Search className="size-3.5 shrink-0 text-muted-foreground" />
+              <input
+                autoFocus
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Firma adı ara…"
+                className="h-8 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+          <div className="max-h-56 overflow-y-auto py-1">
+            {isFetching ? (
+              <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> Aranıyor…
+              </div>
+            ) : items.length === 0 ? (
+              <p className="px-3 py-4 text-center text-sm text-muted-foreground">
+                {search.trim() ? 'Firma bulunamadı.' : 'Aramak için yazın.'}
+              </p>
+            ) : (
+              items.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => pick(c)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-foreground">{c.companyName || shortId(c.id)}</span>
+                    {(c.email || c.slug) ? <span className="block truncate text-xs text-muted-foreground">{c.email || c.slug}</span> : null}
+                  </span>
+                  {value === c.id ? <Check className="size-3.5 shrink-0 text-primary" /> : null}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const SECTIONS = [
   { key: 'status', label: 'Genel Durum', icon: Activity, desc: 'Sistem & node özeti' },
@@ -202,8 +346,13 @@ function DomainFormModal({ mode, domain, onSubmit, onClose }) {
             </div>
           )}
           <div className="space-y-1.5">
-            <label className="text-2sm font-medium">Firma ID {isEdit ? '' : '(opsiyonel)'}</label>
-            <Input value={form.companyId} onChange={(e) => setForm((f) => ({ ...f, companyId: e.target.value }))} placeholder="ObjectId" />
+            <label className="text-2sm font-medium">Firma {isEdit ? '' : '(opsiyonel)'}</label>
+            <CompanySelect
+              value={form.companyId}
+              initialLabel={isEdit ? (domain?.companyContext?.company?.name || '') : ''}
+              onChange={(id) => setForm((f) => ({ ...f, companyId: id }))}
+              placeholder="Firma ara ve seç"
+            />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
@@ -522,10 +671,12 @@ function ResetModal({ domain, onConfirm, onClose }) {
 /* ════════════ Domainler ════════════ */
 function DomainsSection({ authorized }) {
   const [status, setStatus] = useState('all');
+  const [sort, setSort] = useState('createdAt:desc'); // varsayılan: son eklenen en üstte
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState(null);
 
-  const params = { page, limit: PAGE_SIZE };
+  const [sortBy, order] = sort.split(':');
+  const params = { page, limit: PAGE_SIZE, sort: sortBy, order };
   if (status !== 'all') params.status = status;
   const { data, isFetching, isError, refetch } = useGetFetcherDomainsQuery(params, { skip: !authorized });
   const domains = data?.domains ?? [];
@@ -565,6 +716,14 @@ function DomainsSection({ authorized }) {
               </SelectContent>
             </Select>
           </div>
+          <div className="w-52">
+            <Select value={sort} onValueChange={(v) => { setSort(v); setPage(1); }}>
+              <SelectTrigger><SelectValue placeholder="Sıralama" /></SelectTrigger>
+              <SelectContent>
+                {DOMAIN_SORTS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <span className="text-xs text-muted-foreground">{total} domain</span>
           <div className="ms-auto flex gap-2">
             <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
@@ -594,8 +753,9 @@ function DomainsSection({ authorized }) {
                     <TableHead>Domain</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead>Ülke</TableHead>
-                    <TableHead>Firma</TableHead>
+                    <TableHead>Firma / Kullanıcı</TableHead>
                     <TableHead>Doğrulama</TableHead>
+                    <TableHead>Eklenme</TableHead>
                     <TableHead className="text-right">İşlemler</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -605,12 +765,13 @@ function DomainsSection({ authorized }) {
                       <TableCell className="font-medium text-foreground">{d.domain}</TableCell>
                       <TableCell><Badge variant={domainStatusVariant(d.status)}>{d.status || '—'}</Badge></TableCell>
                       <TableCell className="text-sm text-muted-foreground">{d.locate || '—'}</TableCell>
-                      <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{d.companyId || '—'}</TableCell>
+                      <TableCell className="max-w-[200px]"><CompanyOwnerCell companyId={d.companyId} context={d.companyContext} /></TableCell>
                       <TableCell>
                         {d.verification?.isVerified
                           ? <Badge variant="success">Doğrulandı</Badge>
                           : <Badge variant="muted">{d.verification?.status || 'Beklemede'}</Badge>}
                       </TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTr(d.createdAt)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="icon" className="size-7" title="Başlat"
@@ -720,7 +881,10 @@ function DomainDetail({ domain, onClose }) {
               <>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div><span className="text-muted-foreground">Ülke: </span>{doc.locate || '—'}</div>
-                  <div className="truncate"><span className="text-muted-foreground">Firma: </span>{doc.companyId || '—'}</div>
+                  <div className="min-w-0">
+                    <span className="text-muted-foreground">Firma / Kullanıcı: </span>
+                    <CompanyOwnerCell companyId={doc.companyId} context={doc.companyContext} />
+                  </div>
                   <div><span className="text-muted-foreground">Doğrulama: </span>{doc.verification?.isVerified ? 'Doğrulandı' : (doc.verification?.status || 'Beklemede')}</div>
                   <div><span className="text-muted-foreground">Strateji: </span>{doc.scraping_config?.strategy || '—'}</div>
                   <div><span className="text-muted-foreground">Oluşturma: </span>{formatTr(doc.createdAt)}</div>
