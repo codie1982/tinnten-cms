@@ -186,6 +186,7 @@ export const ENDPOINTS = {
     usage: (id) => `/company/cms/${id}/usage`,
     usageReset: (id) => `/company/cms/${id}/usage/reset`,
     adminActive: (id) => `/company/cms/${id}/admin-active`,
+    owner: (id) => `/company/cms/${id}/owner`,
     update: (id) => `/companies/${id}`,
     approve: (id) => `/companies/${id}/approve`,
     reject: (id) => `/companies/${id}/reject`,

@@ -1,13 +1,13 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package, Boxes,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
   SlidersHorizontal, Loader2, Ban, ShieldCheck, ChevronLeft, ChevronRight,
-  Database, RefreshCw,
+  Database, RefreshCw, UserCog, User, Search, Check, X,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -34,6 +35,8 @@ import {
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
+  useTransferCompanyOwnerMutation,
+  useGetUsersQuery,
   useGetCmsProductsQuery,
   useGetFetcherSubscriptionsQuery,
 } from '@/redux/services';
@@ -124,6 +127,7 @@ export default function CmsCompanyDetailPage({ params }) {
   const [updateUsage, { isLoading: savingUsage }] = useUpdateCompanyUsageMutation();
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
   const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
+  const [transferOwner, { isLoading: transferring }] = useTransferCompanyOwnerMutation();
 
   // Ürünler / Hizmetler sekmesi — yalnız aktifken (lazy) çekilir; firma ucu değişmez.
   const [prodSort, setProdSort] = useState('createdAt:desc');
@@ -161,6 +165,52 @@ export default function CmsCompanyDetailPage({ params }) {
   const [blockOpen, setBlockOpen] = useState(false); // gerekçe formu açık mı
   const [blockReason, setBlockReason] = useState('');
   const [blockNotice, setBlockNotice] = useState(null); // { type, text }
+
+  // Sahiplik devri state'i
+  const [ownerOpen, setOwnerOpen] = useState(false);
+  const [ownerSearch, setOwnerSearch] = useState('');
+  const [ownerSearchDebounced, setOwnerSearchDebounced] = useState('');
+  const [selectedNewOwner, setSelectedNewOwner] = useState(null); // { id, name, email }
+  const [setAsActiveCompany, setSetAsActiveCompany] = useState(false);
+  const [ownerNotice, setOwnerNotice] = useState(null); // { type, text }
+
+  useEffect(() => {
+    const t = setTimeout(() => setOwnerSearchDebounced(ownerSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [ownerSearch]);
+
+  // Yeni sahip adayı arama — panel açık ve en az 2 karakter varken (lazy).
+  const { data: ownerSearchData, isFetching: ownerSearching } = useGetUsersQuery(
+    { query: ownerSearchDebounced || undefined, limit: 8 },
+    { skip: !authorized || !ownerOpen || ownerSearchDebounced.length < 2 },
+  );
+  const ownerCandidates = ownerSearchData?.items ?? [];
+
+  const resetOwnerForm = () => {
+    setOwnerOpen(false);
+    setSelectedNewOwner(null);
+    setOwnerSearch('');
+    setOwnerSearchDebounced('');
+    setSetAsActiveCompany(false);
+  };
+
+  const handleTransferOwner = async () => {
+    if (!selectedNewOwner?.id) {
+      setOwnerNotice({ type: 'error', text: 'Lütfen yeni sahip için bir kullanıcı seçin.' });
+      return;
+    }
+    try {
+      await transferOwner({
+        id,
+        userId: selectedNewOwner.id,
+        setActiveCompany: setAsActiveCompany,
+      }).unwrap();
+      setOwnerNotice({ type: 'success', text: 'Firma sahibi güncellendi.' });
+      resetOwnerForm();
+    } catch (e) {
+      setOwnerNotice({ type: 'error', text: e?.data?.message || e?.normalizedMessage || 'Sahiplik devredilemedi.' });
+    }
+  };
 
   if (isLoading) {
     return (
@@ -359,6 +409,133 @@ export default function CmsCompanyDetailPage({ params }) {
               )}
             </CardContent>
           </Card>
+
+          {section === 'genel' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Firma Sahibi</CardTitle>
+                {!ownerOpen && (
+                  <CardToolbar>
+                    <Button size="sm" variant="outline" onClick={() => { setOwnerNotice(null); setOwnerOpen(true); }}>
+                      <UserCog className="size-4" />
+                      Sahibi Değiştir
+                    </Button>
+                  </CardToolbar>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-3 p-4">
+                {ownerNotice && (
+                  <Alert variant={ownerNotice.type === 'error' ? 'destructive' : 'info'}>
+                    <AlertDescription>{ownerNotice.text}</AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Mevcut sahip */}
+                <div className="flex items-center gap-3 rounded-lg border border-border p-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <User className="size-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{company.owner?.name || '—'}</p>
+                    <p className="truncate text-xs text-muted-foreground">{company.owner?.email || 'Sahip bilgisi yok'}</p>
+                  </div>
+                </div>
+
+                {/* Devir paneli */}
+                {ownerOpen && (
+                  <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-3">
+                    <div>
+                      <label className="text-xs font-medium text-foreground">Yeni sahip ara (ad veya e-posta)</label>
+                      <div className="relative mt-1">
+                        <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={ownerSearch}
+                          onChange={(e) => { setOwnerSearch(e.target.value); setSelectedNewOwner(null); }}
+                          placeholder="En az 2 karakter…"
+                          className="pl-8"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Sonuçlar */}
+                    {ownerSearchDebounced.length >= 2 && (
+                      <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
+                        {ownerSearching ? (
+                          <div className="flex items-center justify-center py-6"><Loader2 className="size-5 animate-spin text-primary" /></div>
+                        ) : ownerCandidates.length === 0 ? (
+                          <p className="px-3 py-4 text-sm text-muted-foreground">Kullanıcı bulunamadı.</p>
+                        ) : (
+                          <div className="divide-y divide-border">
+                            {ownerCandidates.map((u) => {
+                              const isSelf = company.owner?.id && u.id === company.owner.id;
+                              const selected = selectedNewOwner?.id === u.id;
+                              return (
+                                <button
+                                  key={u.id}
+                                  type="button"
+                                  disabled={isSelf}
+                                  onClick={() => setSelectedNewOwner({ id: u.id, name: u.name, email: u.email })}
+                                  className={cn(
+                                    'flex w-full items-center gap-3 px-3 py-2 text-left transition-colors',
+                                    selected ? 'bg-primary/10' : 'hover:bg-accent',
+                                    isSelf && 'cursor-not-allowed opacity-50',
+                                  )}
+                                >
+                                  <Avatar name={u.name || u.email || '?'} size="sm" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-medium text-foreground">{u.name || '—'}</p>
+                                    <p className="truncate text-xs text-muted-foreground">{u.email || '—'}</p>
+                                  </div>
+                                  {isSelf ? (
+                                    <Badge variant="muted">Mevcut sahip</Badge>
+                                  ) : selected ? (
+                                    <Check className="size-4 text-primary" />
+                                  ) : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Seçili yeni sahip özeti */}
+                    {selectedNewOwner && (
+                      <div className="rounded-lg border border-border bg-background p-3 text-sm">
+                        <p className="text-foreground">
+                          Yeni sahip: <span className="font-medium">{selectedNewOwner.name || selectedNewOwner.email}</span>
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Eski sahip firmadan çıkarılacak; firma yeni sahibin hesabında görünecek.
+                        </p>
+                      </div>
+                    )}
+
+                    <label className="flex items-center gap-2 text-sm text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={setAsActiveCompany}
+                        onChange={(e) => setSetAsActiveCompany(e.target.checked)}
+                        className="size-4 rounded border-input accent-primary"
+                      />
+                      Yeni sahibin aktif firması yap
+                    </label>
+
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleTransferOwner} disabled={transferring || !selectedNewOwner}>
+                        {transferring ? <Loader2 className="size-4 animate-spin" /> : <UserCog className="size-4" />}
+                        Devret
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={resetOwnerForm} disabled={transferring}>
+                        <X className="size-4" />
+                        Vazgeç
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {section === 'genel' && (
             <Card>

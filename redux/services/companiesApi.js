@@ -50,6 +50,20 @@ export const companiesApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { adminActive, adminActiveAt, adminActiveReason, status }
       invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }, { type: 'Company', id: 'LIST' }],
     }),
+    transferCompanyOwner: build.mutation({
+      query: ({ id, userId, setActiveCompany }) => ({
+        url: ENDPOINTS.companies.owner(id),
+        method: 'PATCH',
+        body: { newOwnerKeycloakId: userId, setActiveCompany: !!setActiveCompany },
+      }),
+      transformResponse: (res) => res?.data ?? res, // { owner }
+      invalidatesTags: (r, e, { id, userId }) => [
+        { type: 'Company', id },
+        { type: 'Company', id: 'LIST' },
+        { type: 'User', id: 'LIST' },
+        ...(userId ? [{ type: 'User', id: userId }] : []),
+      ],
+    }),
     approveCompany: build.mutation({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.companies.approve(id), method: 'POST', body }),
       invalidatesTags: (r, e, { id }) => [
@@ -77,6 +91,7 @@ export const {
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
+  useTransferCompanyOwnerMutation,
   useApproveCompanyMutation,
   useRejectCompanyMutation,
 } = companiesApi;
