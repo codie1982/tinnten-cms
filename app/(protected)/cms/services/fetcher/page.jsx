@@ -63,10 +63,23 @@ import {
 
 const PAGE_SIZE = 25;
 
+/**
+ * Fetcher tarihleri naive UTC döner (datetime.utcnow().isoformat() — offset taşımaz).
+ * JS offsetsiz girdiyi lokal saat sayar; UTC olarak işaretleyip kaymayı önlüyoruz.
+ */
+function parseDate(input) {
+  if (!input) return null;
+  const raw = typeof input === 'string' ? input.trim() : input;
+  const norm = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}[T ][\d:.]+$/.test(raw)
+    ? `${raw.replace(' ', 'T')}Z`
+    : raw;
+  const d = new Date(norm);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function formatTr(input) {
-  if (!input) return '—';
-  const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return '—';
+  const d = parseDate(input);
+  if (!d) return '—';
   return `${d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
@@ -74,8 +87,24 @@ const domainStatusVariant = (s) =>
   s === 'ACTIVE' ? 'success' : ['RESTRICTED', 'PAUSED'].includes(s) ? 'warning' : 'muted';
 const urlStatusVariant = (s) =>
   s === 'DONE' ? 'success' : s === 'ERROR' ? 'destructive' : s === 'READY' ? 'primary' : s === 'PAUSED' ? 'muted' : 'warning';
-const nodeStatusVariant = (s) =>
-  s === 'ACTIVE' ? 'success' : s === 'DECOMMISSIONED' ? 'destructive' : 'muted';
+// Backend heartbeat'i eskiyen node'u çevrimdışı sayar: NODE_OFFLINE_SECONDS(30) + 10sn tolerans.
+const NODE_OFFLINE_MS = 40_000;
+
+/**
+ * Node'un gerçek durumu — backend iki ekseni birleştirir: kayıtlı durum
+ * (enabled/status) ve canlılık (last_heartbeat tazeliği). Static node'lar
+ * heartbeat göndermediği için tazelik kontrolünden muaftır (mongo_store.list_nodes).
+ * `passive` olan node iş almaz; başlat/yeniden başlat ile geri alınır.
+ */
+function nodeState(n) {
+  if (n.status === 'DECOMMISSIONED') return { label: 'Devre dışı', variant: 'destructive', dot: 'text-muted-foreground', passive: true };
+  if (n.enabled === false || n.status === 'DISABLED') return { label: 'Kapalı', variant: 'muted', dot: 'text-muted-foreground', passive: true };
+  const hb = parseDate(n.last_heartbeat);
+  if (n.type !== 'static' && (!hb || Date.now() - hb.getTime() > NODE_OFFLINE_MS)) {
+    return { label: 'Çevrimdışı', variant: 'warning', dot: 'text-amber-500', passive: true };
+  }
+  return { label: 'Aktif', variant: 'success', dot: 'text-green-500', passive: false };
+}
 const httpVariant = (code) =>
   !code ? 'muted' : code < 300 ? 'success' : code < 400 ? 'warning' : 'destructive';
 // Abonelik state machine (mongo_store.py): 7 durum.
@@ -1131,12 +1160,15 @@ function LogsSection({ authorized }) {
 
 /* ════════════ Node'lar ════════════ */
 function NodesSection({ authorized }) {
-  const [includeDisabled, setIncludeDisabled] = useState(true);
+  // DİKKAT: fetcher (app.py list_nodes) bu flag'leri `== "1"` ile okur — `true`
+  // gönderilirse false'a düşer ve pasif node'lar sessizce listeden kaybolur.
+  const [scope, setScope] = useState('all'); // varsayılan: pasif node'lar da görünsün
   const { data, isFetching, isError, refetch } = useGetFetcherNodesQuery(
-    { include_disabled: includeDisabled, include_offline: true },
+    scope === 'all' ? { include_disabled: 1, include_offline: 1 } : {},
     { skip: !authorized, pollingInterval: 20000 },
   );
   const nodes = data?.nodes ?? [];
+  const passiveCount = nodes.filter((n) => nodeState(n).passive).length;
 
   const [nodeAction] = useNodeActionMutation();
   const [deleteNode] = useDeleteFetcherNodeMutation();
@@ -1148,7 +1180,9 @@ function NodesSection({ authorized }) {
   const run = async (nodeId, action) => {
     setBusy(`${nodeId}:${action}`);
     if (action === 'delete') {
-      if (window.confirm(`"${nodeId}" node'u devre dışı bırakılsın mı (decommission)?`)) {
+      // Backend (fetcher) kaydı gerçekten siler — decommission değil, geri dönüşü yok.
+      // Node'u sadece pasifleştirmek için "Durdur" kullanılmalı.
+      if (window.confirm(`"${nodeId}" node kaydı KALICI olarak silinsin mi?\n\nBu geri alınamaz — node yeniden heartbeat gönderene kadar listeye dönmez. Sadece devre dışı bırakmak için "Durdur" kullanın.`)) {
         await deleteNode(nodeId).unwrap().catch(() => {});
       }
     } else {
@@ -1170,10 +1204,18 @@ function NodesSection({ authorized }) {
     <div className="space-y-4">
       <Card>
         <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <Button variant="outline" size="sm" onClick={() => setIncludeDisabled((v) => !v)}>
-            {includeDisabled ? 'Tümü' : 'Sadece aktif'}
-          </Button>
-          <span className="text-xs text-muted-foreground">{nodes.length} node</span>
+          <div className="w-44">
+            <Select value={scope} onValueChange={setScope}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tüm node'lar</SelectItem>
+                <SelectItem value="active">Sadece çalışanlar</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {nodes.length} node{passiveCount > 0 ? ` · ${passiveCount} pasif` : ''}
+          </span>
           <div className="ms-auto flex gap-2">
             <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
               <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
@@ -1213,7 +1255,13 @@ function NodesSection({ authorized }) {
           ) : isFetching && nodes.length === 0 ? (
             <div className="space-y-2 p-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
           ) : nodes.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-14 text-center"><Server className="size-6 text-muted-foreground" /><p className="font-semibold text-foreground">Node yok</p></div>
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <Server className="size-6 text-muted-foreground" />
+              <p className="font-semibold text-foreground">Node yok</p>
+              {scope === 'active' && (
+                <p className="text-sm text-muted-foreground">Çalışan node yok — pasifleri görmek için "Tüm node'lar"a geçin.</p>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -1227,38 +1275,42 @@ function NodesSection({ authorized }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {nodes.map((n) => (
-                    <TableRow key={n.node_id}>
+                  {nodes.map((n) => {
+                    const st = nodeState(n);
+                    return (
+                    <TableRow key={n.node_id} className={cn(st.passive && 'bg-muted/30')}>
                       <TableCell>
                         <div className="font-medium text-foreground">{n.node_id}</div>
                         <div className="max-w-[220px] truncate text-xs text-muted-foreground">{n.node_url}</div>
                       </TableCell>
                       <TableCell>
                         <span className="inline-flex items-center gap-1.5">
-                          <CircleDot className={cn('size-3', n.status === 'ACTIVE' && n.enabled ? 'text-green-500' : 'text-muted-foreground')} />
-                          <Badge variant={nodeStatusVariant(n.status)}>{n.status}{n.enabled === false ? ' · kapalı' : ''}</Badge>
+                          <CircleDot className={cn('size-3', st.dot)} />
+                          <Badge variant={st.variant}>{st.label}</Badge>
                         </span>
+                        <div className="mt-0.5 text-xs text-muted-foreground">{n.status}{n.enabled === false ? ' · kapalı' : ''}</div>
                       </TableCell>
                       <TableCell className="text-sm tabular-nums text-muted-foreground">{n.metrics?.inflight ?? 0}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTr(n.last_heartbeat)}</TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="size-7" title="Başlat" disabled={busy === `${n.node_id}:start`} onClick={() => run(n.node_id, 'start')}>
+                          <Button variant={st.passive ? 'outline' : 'ghost'} size="icon" className="size-7" title="Başlat" disabled={busy === `${n.node_id}:start`} onClick={() => run(n.node_id, 'start')}>
                             {busy === `${n.node_id}:start` ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5 text-green-600" />}
                           </Button>
                           <Button variant="ghost" size="icon" className="size-7" title="Durdur" disabled={busy === `${n.node_id}:stop`} onClick={() => run(n.node_id, 'stop')}>
                             {busy === `${n.node_id}:stop` ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5 text-amber-600" />}
                           </Button>
-                          <Button variant="ghost" size="icon" className="size-7" title="Yeniden başlat" disabled={busy === `${n.node_id}:restart`} onClick={() => run(n.node_id, 'restart')}>
+                          <Button variant={st.passive ? 'outline' : 'ghost'} size="icon" className="size-7" title="Yeniden başlat" disabled={busy === `${n.node_id}:restart`} onClick={() => run(n.node_id, 'restart')}>
                             {busy === `${n.node_id}:restart` ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCw className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="icon" className="size-7" title="Devre dışı bırak" disabled={busy === `${n.node_id}:delete`} onClick={() => run(n.node_id, 'delete')}>
+                          <Button variant="ghost" size="icon" className="size-7" title="Kaydı kalıcı sil" disabled={busy === `${n.node_id}:delete`} onClick={() => run(n.node_id, 'delete')}>
                             {busy === `${n.node_id}:delete` ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5 text-destructive" />}
                           </Button>
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
