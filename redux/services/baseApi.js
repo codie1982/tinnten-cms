@@ -112,6 +112,8 @@ export const baseApi = createApi({
     'ErrorIssue',
     'Conversation',
     'Product',
+    'ProductCategory',
+    'CategoryAttribute',
     'ConnectorCatalog',
     'ConnectorCategory',
     'OAuthProvider',

@@ -9,6 +9,7 @@ export * from './newsApi';
 export * from './newsCategoryApi';
 export * from './companiesApi';
 export * from './productsApi';
+export * from './categoriesApi';
 export * from './usersApi';
 export * from './emailApi';
 export * from './mailCampaignApi';

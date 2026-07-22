@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
  * SelectItem) ile çağrılır ama altta tek bir stillendirilmiş native <select>
  * render eder. Seçili öğenin etiketi native olarak görünür; sıfır JS popup.
  */
-export function Select({ value, onValueChange, children, className }) {
+export function Select({ value, onValueChange, children, className, disabled }) {
   const options = [];
   let placeholder = '';
 
@@ -33,7 +33,13 @@ export function Select({ value, onValueChange, children, className }) {
       <select
         value={value ?? ''}
         onChange={(e) => onValueChange?.(e.target.value)}
-        className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-input bg-background ps-3 pe-8 text-sm text-foreground outline-none hover:bg-accent focus:ring-2 focus:ring-ring/30"
+        disabled={disabled}
+        className={cn(
+          'h-9 w-full appearance-none rounded-lg border border-input bg-background ps-3 pe-8 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/30',
+          disabled
+            ? 'cursor-not-allowed opacity-60'
+            : 'cursor-pointer hover:bg-accent',
+        )}
       >
         {placeholder && (
           <option value="" disabled hidden>

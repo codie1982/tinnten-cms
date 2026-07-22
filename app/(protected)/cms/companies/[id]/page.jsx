@@ -1,13 +1,14 @@
 'use client';
 
-import { use, useState, useEffect } from 'react';
+import { Suspense, use, useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Building2, MapPin, Phone, Share2, Landmark, Users, Package, Boxes,
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
   SlidersHorizontal, Loader2, Ban, ShieldCheck, ChevronLeft, ChevronRight,
-  Database, RefreshCw, UserCog, User, Search, Check, X,
+  Database, RefreshCw, UserCog, User, Search, Check, X, Plus, Pencil, Trash2,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -19,7 +20,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -27,6 +28,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
@@ -38,8 +47,11 @@ import {
   useTransferCompanyOwnerMutation,
   useGetUsersQuery,
   useGetCmsProductsQuery,
+  useUpdateCmsProductMutation,
+  useDeleteCmsProductMutation,
   useGetFetcherSubscriptionsQuery,
 } from '@/redux/services';
+import { mutationMessage } from '../../products/_form/productFormModel';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
 import {
   typeMeta as productTypeMeta,
@@ -115,12 +127,27 @@ function EmptyCard({ icon, message }) {
   );
 }
 
-export default function CmsCompanyDetailPage({ params }) {
-  const { id } = use(params);
+function CmsCompanyDetailView({ id }) {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
 
-  const [section, setSection] = useState('genel');
+  // Sekme URL'e bağlı: ?section=urunler ile derin link verilebilsin ve oluşturma
+  // sayfasından geri dönüşte doğru sekme açılsın. Bilinmeyen değer 'genel'e düşer.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sectionParam = searchParams.get('section');
+  const section = SECTIONS.some((s) => s.key === sectionParam)
+    ? sectionParam
+    : 'genel';
+  const setSection = (next) => {
+    const query = new URLSearchParams(searchParams.toString());
+    if (next === 'genel') query.delete('section');
+    else query.set('section', next);
+    const qs = query.toString();
+    router.replace(`/cms/companies/${id}${qs ? `?${qs}` : ''}`, {
+      scroll: false,
+    });
+  };
 
   const { data: company, isLoading, error } = useGetCompanyQuery(id, { skip: !authorized });
   const [updateLimits, { isLoading: savingLimits }] = useUpdateCompanyLimitsMutation();
@@ -145,6 +172,95 @@ export default function CmsCompanyDetailPage({ params }) {
   const products = productsData?.items ?? [];
   const productsTotal = productsData?.total ?? 0;
   const productsTotalPages = productsData?.totalPages ?? 1;
+
+  // Devre dışı bırakma (yumuşak silme).
+  //
+  // NEDEN KALICI SİLME DEĞİL: backend'deki deleteProduct yalnız ürün dokümanını
+  // kaldırıyor — bağlı basePrice / gallery / images temizlenmiyor ve oluşturmada
+  // artan kota sayacı hiçbir yerde azalmıyor. Yani hard delete yetim kayıt ve
+  // kalıcı kota kaybı üretir. Kalıcı silme, cascade + kota iadesi ile birlikte
+  // ayrı bir adımda gelecek.
+  const [deactivateTarget, setDeactivateTarget] = useState(null);
+  const [deactivateReason, setDeactivateReason] = useState('');
+  const [productNotice, setProductNotice] = useState(null);
+  const [updateCmsProduct, { isLoading: deactivating }] =
+    useUpdateCmsProductMutation();
+
+  // Kalıcı silme — geri alınamaz. Backend cascade ile bağlı basePrice/gallery/
+  // images'ı temizler ve firmanın kota sayacını iade eder.
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteCmsProduct, { isLoading: deletingProduct }] =
+    useDeleteCmsProductMutation();
+  const DELETE_CONFIRM_WORD = 'SİL';
+
+  const closeDeactivate = () => {
+    setDeactivateTarget(null);
+    setDeactivateReason('');
+  };
+
+  const closeDelete = () => {
+    setDeleteTarget(null);
+    setDeleteConfirm('');
+  };
+
+  const handleDelete = async () => {
+    try {
+      const result = await deleteCmsProduct(deleteTarget.id).unwrap();
+      const cleanup = result?.cleanup;
+      const parts = [];
+      if (cleanup?.prices) parts.push(`${cleanup.prices} fiyat planı`);
+      if (cleanup?.images) parts.push(`${cleanup.images} görsel`);
+      if (cleanup?.gallery) parts.push('galeri');
+      if (cleanup?.usage && !cleanup.usage.skipped) parts.push('kota iadesi');
+
+      setProductNotice({
+        // Temizlik kısmen başarısızsa bunu başarı gibi göstermiyoruz.
+        type: cleanup?.failures ? 'error' : 'success',
+        text: cleanup?.failures
+          ? `“${deleteTarget.title}” silindi ancak ${cleanup.failures} bağlı kayıt temizlenemedi — sunucu loglarına bakın.`
+          : `“${deleteTarget.title}” kalıcı olarak silindi${
+              parts.length ? ` (${parts.join(', ')} temizlendi)` : ''
+            }.`,
+      });
+      closeDelete();
+    } catch (err) {
+      setProductNotice({
+        type: 'error',
+        text: mutationMessage(err, 'Kayıt silinemedi.'),
+      });
+    }
+  };
+
+  const handleDeactivate = async () => {
+    const reason = deactivateReason.trim();
+    if (!reason) {
+      setProductNotice({
+        type: 'error',
+        text: 'Devre dışı bırakma nedeni zorunludur.',
+      });
+      return;
+    }
+    try {
+      await updateCmsProduct({
+        id: deactivateTarget.id,
+        status: 'inactive',
+        admin_aprove: false,
+        reason,
+        notifyOwner: true,
+      }).unwrap();
+      setProductNotice({
+        type: 'success',
+        text: `“${deactivateTarget.title}” devre dışı bırakıldı ve firma sahibine bildirildi.`,
+      });
+      closeDeactivate();
+    } catch (err) {
+      setProductNotice({
+        type: 'error',
+        text: mutationMessage(err, 'Kayıt devre dışı bırakılamadı.'),
+      });
+    }
+  };
 
   // Bilgi Tabanı sekmesi — firmanın eklediği web siteleri (fetcher abonelikleri).
   // Yalnız sekme aktifken (lazy) çekilir; admin cross-company companyId ile listeler.
@@ -765,10 +881,24 @@ export default function CmsCompanyDetailPage({ params }) {
                         </SelectContent>
                       </Select>
                     </div>
+                    <Link
+                      href={`/cms/products/new?companyId=${id}`}
+                      className={buttonVariants({ size: 'sm' })}
+                    >
+                      <Plus className="size-4" />
+                      Ürün / Hizmet Ekle
+                    </Link>
                   </div>
                 </CardToolbar>
               </CardHeader>
               <CardContent className="relative px-0 py-0">
+                {productNotice && (
+                  <div className="px-4 pt-4">
+                    <Alert variant={productNotice.type === 'error' ? 'destructive' : 'info'}>
+                      <AlertDescription>{productNotice.text}</AlertDescription>
+                    </Alert>
+                  </div>
+                )}
                 {productsFetching && !productsLoading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
                     <Loader2 className="size-6 animate-spin text-primary" />
@@ -805,6 +935,7 @@ export default function CmsCompanyDetailPage({ params }) {
                             <TableHead>Durum</TableHead>
                             <TableHead>Fiyat</TableHead>
                             <TableHead>Oluşturulma</TableHead>
+                            <TableHead className="text-right">İşlem</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -832,6 +963,42 @@ export default function CmsCompanyDetailPage({ params }) {
                                   {ppt && <p className="text-xs text-muted-foreground">{ppt.label}</p>}
                                 </TableCell>
                                 <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTrDate(p.createdAt)}</TableCell>
+                                <TableCell className="whitespace-nowrap text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Link
+                                      href={`/cms/products/${p.id}`}
+                                      className={buttonVariants({ variant: 'ghost', size: 'sm' })}
+                                      title="Düzenle"
+                                    >
+                                      <Pencil className="size-4" />
+                                    </Link>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Devre dışı bırak"
+                                      disabled={p.status === 'inactive'}
+                                      onClick={() => {
+                                        setProductNotice(null);
+                                        setDeactivateReason('');
+                                        setDeactivateTarget(p);
+                                      }}
+                                    >
+                                      <Ban className="size-4 text-destructive" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Kalıcı olarak sil"
+                                      onClick={() => {
+                                        setProductNotice(null);
+                                        setDeleteConfirm('');
+                                        setDeleteTarget(p);
+                                      }}
+                                    >
+                                      <Trash2 className="size-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
                               </TableRow>
                             );
                           })}
@@ -859,6 +1026,135 @@ export default function CmsCompanyDetailPage({ params }) {
               </CardContent>
             </Card>
           )}
+
+          <Dialog
+            open={Boolean(deactivateTarget)}
+            onOpenChange={(open) => {
+              if (!open && !deactivating) closeDeactivate();
+            }}
+          >
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Devre Dışı Bırak</DialogTitle>
+              </DialogHeader>
+              <DialogBody className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {deactivateTarget?.title}
+                  </span>{' '}
+                  pasife alınacak ve admin onayı kaldırılacak. Kayıt silinmez —
+                  public tarafta görünmez olur, firma sahibine bildirim gider.
+                </p>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Neden (zorunlu)
+                  </span>
+                  <textarea
+                    value={deactivateReason}
+                    onChange={(e) => setDeactivateReason(e.target.value)}
+                    rows={3}
+                    disabled={deactivating}
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                    placeholder="Firma sahibine iletilecek gerekçe…"
+                  />
+                </label>
+              </DialogBody>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeDeactivate}
+                  disabled={deactivating}
+                >
+                  Vazgeç
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDeactivate}
+                  disabled={deactivating || !deactivateReason.trim()}
+                >
+                  {deactivating ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Ban className="size-4" />
+                  )}
+                  Devre dışı bırak
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={Boolean(deleteTarget)}
+            onOpenChange={(open) => {
+              if (!open && !deletingProduct) closeDelete();
+            }}
+          >
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Kalıcı Olarak Sil</DialogTitle>
+              </DialogHeader>
+              <DialogBody className="space-y-4">
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    <span className="font-medium">{deleteTarget?.title}</span> ve
+                    ona bağlı fiyat planları, galeri ve görseller kalıcı olarak
+                    silinecek. Bu işlem geri alınamaz. Firmanın ürün/hizmet
+                    kotasından bir hak iade edilir.
+                  </AlertDescription>
+                </Alert>
+                <p className="text-sm text-muted-foreground">
+                  Kaydı yalnızca gizlemek istiyorsanız bunun yerine{' '}
+                  <span className="font-medium text-foreground">
+                    devre dışı bırak
+                  </span>{' '}
+                  kullanın — kayıt korunur, public tarafta görünmez.
+                </p>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Onaylamak için{' '}
+                    <span className="font-mono font-semibold text-foreground">
+                      {DELETE_CONFIRM_WORD}
+                    </span>{' '}
+                    yazın
+                  </span>
+                  <Input
+                    value={deleteConfirm}
+                    onChange={(e) => setDeleteConfirm(e.target.value)}
+                    disabled={deletingProduct}
+                    autoComplete="off"
+                  />
+                </label>
+              </DialogBody>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeDelete}
+                  disabled={deletingProduct}
+                >
+                  Vazgeç
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={
+                    deletingProduct ||
+                    deleteConfirm.trim() !== DELETE_CONFIRM_WORD
+                  }
+                >
+                  {deletingProduct ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-4" />
+                  )}
+                  Kalıcı olarak sil
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {section === 'bilgi' && (
             <Card>
@@ -984,5 +1280,25 @@ export default function CmsCompanyDetailPage({ params }) {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+/**
+ * Sekme durumu ?section= ile URL'de tutuluyor; useSearchParams bir Suspense
+ * sınırı gerektirdiği için asıl görünüm ayrı bileşende.
+ */
+export default function CmsCompanyDetailPage({ params }) {
+  const { id } = use(params);
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-5">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-96 w-full" />
+        </div>
+      }
+    >
+      <CmsCompanyDetailView id={id} />
+    </Suspense>
   );
 }

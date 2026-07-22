@@ -43,6 +43,49 @@ export const periodMeta = {
   custom: 'Özel',
 };
 
+/**
+ * Hizmet satış tipi (`serviceType`). Oluşturmada hangi bölümlerin görüneceğini ve
+ * `isOfferable`/`pricetype` varsayılanlarını sürer — kurallar tek yerde:
+ * _form/productFormModel.js → SERVICE_TYPE_RULES.
+ * DİKKAT: `type` (product/services) ile karıştırma; bu yalnız hizmetlerde anlamlı.
+ */
+export const serviceTypeMeta = {
+  slot: { label: 'Randevu', variant: 'primary' },
+  rental: { label: 'Kiralama', variant: 'secondary' },
+  quote: { label: 'Teklife Bağlı', variant: 'warning' },
+  direct: { label: 'Doğrudan Satış', variant: 'muted' },
+};
+
+export const serviceTypeOptions = [
+  { value: 'slot', label: 'Randevu — zaman dilimli' },
+  { value: 'rental', label: 'Kiralama — rezervasyonlu' },
+  { value: 'quote', label: 'Teklife Bağlı — fiyat sorulur' },
+  { value: 'direct', label: 'Doğrudan Satış — sabit fiyat' },
+];
+
+/* ── Form seçenekleri ─────────────────────────────────────────────────────── */
+// Önceden [id]/page.jsx içinde yerel sabitlerdi; oluşturma sayfası da aynılarını
+// kullandığı için buraya taşındı.
+
+export const priceTypeOptions = [
+  { value: 'fixed', label: 'Sabit Fiyat' },
+  { value: 'recurring', label: 'Tekrarlı' },
+  { value: 'offer_based', label: 'Teklife Bağlı' },
+];
+
+export const stockOptions = [
+  { value: 'in_stock', label: 'Stokta' },
+  { value: 'out_of_stock', label: 'Stok Yok' },
+  { value: 'limited', label: 'Sınırlı' },
+  { value: 'preorder', label: 'Ön Sipariş' },
+];
+
+export const shippingPriceModeOptions = [
+  { value: 'free', label: 'Ücretsiz' },
+  { value: 'paid', label: 'Ücretli' },
+  { value: 'free_over_threshold', label: 'Tutar Üzeri Ücretsiz' },
+];
+
 export const stockStatusMeta = {
   in_stock: { label: 'Stokta', variant: 'success' },
   out_of_stock: { label: 'Stok Yok', variant: 'destructive' },

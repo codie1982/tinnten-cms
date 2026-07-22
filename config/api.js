@@ -204,6 +204,37 @@ export const ENDPOINTS = {
     cmsFormGenerate: (id) => `/products/cms/${id}/form/generate`,
     cmsFormCreate: (id, slot) => `/products/cms/${id}/form/${slot}/create`,
     cmsFormAssociate: (id, slot) => `/products/cms/${id}/form/${slot}`,
+    // Firma adına oluşturma — `companyid` GÖVDEDE gider (addProduct sözleşmesi).
+    cmsCreate: '/products/cms/create',
+    // Alt-kaynak yazma — üç-segmentli "/cms/product/:pid" şekli bilinçli:
+    // iki-segmentli "/cms/:id", backend'deki "DELETE /:cid/:pid" tarafından
+    // cid="cms" ile yutulurdu (bkz. productRouters.js yorumları).
+    // Kalıcı silme — backend deleteProductCascade ile bağlı basePrice/gallery/
+    // images'ı temizler ve firmanın kota sayacını iade eder.
+    cmsDelete: (id) => `/products/cms/product/${id}`,
+    cmsStatus: (id) => `/products/cms/product/${id}/status`,
+    cmsBasePrice: (id) => `/products/cms/product/${id}/base-price`,
+    cmsBasePriceItem: (id, prid) => `/products/cms/product/${id}/base-price/${prid}`,
+    cmsGallery: (id) => `/products/cms/product/${id}/gallery`,
+    cmsGalleryImage: (id, imageid) => `/products/cms/product/${id}/gallery/image/${imageid}`,
+    cmsVariants: (id) => `/products/cms/product/${id}/variants`,
+  },
+  /**
+   * Ürün kategorileri & kategori attribute'ları.
+   *
+   * CMS admini için ek backend işi GEREKMEZ: /categories/general* uçları tamamen
+   * public, company uçları yalnız `ensureAuth` (üyelik kapısı yok).
+   * DİKKAT: bunlar ürün kategorileri — news-categories ve connector-categories
+   * ayrı kaynaklar.
+   */
+  categories: {
+    general: '/categories/general',
+    generalSearch: '/categories/general/search',
+    generalSubcategories: (parentId) => `/categories/general/${parentId}/subcategories`,
+    generalDetail: (idOrSlug) => `/categories/general/${idOrSlug}`,
+    companyList: (companyid) => `/categories/company/${companyid}`,
+    companyCategoryAttributes: (companyid, categoryId) =>
+      `/categories/attributes/company/${companyid}/category/${categoryId}`,
   },
   users: {
     list: '/users',

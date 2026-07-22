@@ -21,7 +21,6 @@ import {
   Loader2,
   Mail,
   Package,
-  Save,
   ShieldCheck,
   ShieldOff,
   Tag,
@@ -42,22 +41,6 @@ import {
   CardTitle,
   CardToolbar,
 } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -75,12 +58,18 @@ import {
   formatPrice,
   periodMeta,
   pricetypeMeta,
+  serviceTypeMeta,
   statusMeta,
-  statusOptions,
   stockStatusMeta,
   typeMeta,
-  typeOptions,
 } from '../_data';
+import {
+  buildProductForm,
+  mutationMessage,
+  toPatchPayload,
+  validateProductForm,
+} from '../_form/productFormModel';
+import { ProductFormDialog } from '../_form/ProductFormDialog';
 import SchedulingSection from './_sections/SchedulingSection';
 import FormsSection from './_sections/FormsSection';
 import LocationSection from './_sections/LocationSection';
@@ -101,74 +90,6 @@ function resolveImageUrl(path) {
   if (!path) return undefined;
   if (/^https?:\/\//i.test(path)) return path;
   return `${API_HOST}${path.startsWith('/') ? '' : '/'}${path}`;
-}
-
-const priceTypeOptions = [
-  { value: 'fixed', label: 'Sabit Fiyat' },
-  { value: 'recurring', label: 'Tekrarlı' },
-  { value: 'offer_based', label: 'Teklife Bağlı' },
-];
-
-const stockOptions = [
-  { value: 'in_stock', label: 'Stokta' },
-  { value: 'out_of_stock', label: 'Stok Yok' },
-  { value: 'limited', label: 'Sınırlı' },
-  { value: 'preorder', label: 'Ön Sipariş' },
-];
-
-const shippingPriceModeOptions = [
-  { value: 'free', label: 'Ücretsiz' },
-  { value: 'paid', label: 'Ücretli' },
-  { value: 'free_over_threshold', label: 'Tutar Üzeri Ücretsiz' },
-];
-
-function buildEditForm(product) {
-  return {
-    title: product?.title || '',
-    sku: product?.sku || '',
-    brand: product?.brand || '',
-    type: product?.type || 'product',
-    status: product?.status || 'draft',
-    pricetype: product?.pricetype || 'fixed',
-    priceAmount: product?.priceAmount ?? '',
-    currency: product?.currency || 'TRY',
-    categories: Array.isArray(product?.categories)
-      ? product.categories.join(', ')
-      : '',
-    summary: product?.summary || '',
-    description: product?.description || '',
-    admin_aprove: product?.admin_aprove !== false,
-    reason: product?.reason || '',
-    notifyOwner: false,
-    stockStatus: product?.stock?.status || 'in_stock',
-    stockQuantity: product?.stock?.quantity ?? '',
-    shippingShippable: product?.shipping?.shippable !== false,
-    shippingPriceMode: product?.shipping?.priceMode || 'free',
-    shippingPrice: product?.shipping?.price ?? '',
-    shippingFreeOverAmount: product?.shipping?.freeOverAmount ?? '',
-  };
-}
-
-function parseOptionalNumber(value) {
-  if (value === '' || value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function splitCategories(value) {
-  return String(value || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function mutationMessage(error, fallback) {
-  return (
-    error?.data?.message ||
-    error?.normalizedMessage ||
-    error?.message ||
-    fallback
-  );
 }
 
 function InfoRow({ icon: Icon, label, value, href }) {
@@ -213,11 +134,11 @@ export default function CmsProductDetailPage({ params }) {
   const [notifyCmsProductsEdited, { isLoading: isNotifying }] =
     useNotifyCmsProductsEditedMutation();
   const [editOpen, setEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState(() => buildEditForm(null));
+  const [editForm, setEditForm] = useState(() => buildProductForm(null));
   const [notice, setNotice] = useState(null);
 
   useEffect(() => {
-    if (product) setEditForm(buildEditForm(product));
+    if (product) setEditForm(buildProductForm(product));
   }, [product]);
 
   const setField = (field, value) => {
@@ -249,74 +170,20 @@ export default function CmsProductDetailPage({ params }) {
 
   const handleEditSubmit = async (event) => {
     event.preventDefault();
-    const title = editForm.title.trim();
-    const sku = editForm.sku.trim();
-    const reason = editForm.reason.trim();
-    if (!title || title.length < 2) {
+
+    const validationError = validateProductForm(editForm, { requireSku: true });
+    if (validationError) {
       setNotice({
         variant: 'destructive',
         title: 'Form eksik',
-        description: 'Başlık en az 2 karakter olmalı.',
-      });
-      return;
-    }
-    if (!sku || sku.length < 2) {
-      setNotice({
-        variant: 'destructive',
-        title: 'Form eksik',
-        description: 'SKU en az 2 karakter olmalı.',
-      });
-      return;
-    }
-    if (!editForm.admin_aprove && !reason) {
-      setNotice({
-        variant: 'destructive',
-        title: 'Durdurma nedeni gerekli',
-        description: 'Admin ürünü/hizmeti durdururken reason alanı zorunludur.',
+        description: validationError,
       });
       return;
     }
 
-    // Tekrarlı (recurring) ürünler CMS'te düzenlenemez — pricetype kilitli:
-    // admin yanlışlıkla planı bozup fixed/offer_based'e çeviremesin diye
-    // pricetype PATCH payload'ına DAHİL EDİLMEZ. Eski 'rental' da tekrarlı sayılır.
-    const isRecurringProduct =
-      product?.pricetype === 'recurring' || product?.pricetype === 'rental';
-
-    const payload = {
-      id,
-      title,
-      sku,
-      brand: editForm.brand.trim(),
-      type: editForm.type,
-      status: editForm.status,
-      priceAmount: parseOptionalNumber(editForm.priceAmount),
-      currency: editForm.currency.trim().toUpperCase() || 'TRY',
-      categories: splitCategories(editForm.categories),
-      summary: editForm.summary.trim(),
-      description: editForm.description.trim(),
-      admin_aprove: editForm.admin_aprove,
-      reason,
-      notifyOwner: editForm.notifyOwner,
-    };
-
-    if (!isRecurringProduct) {
-      payload.pricetype = editForm.pricetype;
-    }
-
-    if (editForm.type === 'product') {
-      payload.stock = {
-        status: editForm.stockStatus,
-        quantity: parseOptionalNumber(editForm.stockQuantity) ?? 0,
-      };
-      payload.shipping = {
-        shippable: editForm.shippingShippable,
-        priceMode: editForm.shippingPriceMode,
-        price: parseOptionalNumber(editForm.shippingPrice) ?? 0,
-        freeOverAmount:
-          parseOptionalNumber(editForm.shippingFreeOverAmount) ?? 0,
-      };
-    }
+    // Gövde şekli (tekrarlı fiyat kilidi, basePrice varken priceAmount'ın
+    // atlanması, redirectUrl'in diziye çevrilmesi) toPatchPayload'da.
+    const payload = { id, ...toPatchPayload(editForm, product) };
 
     try {
       const result = await updateCmsProduct(payload).unwrap();
@@ -526,330 +393,15 @@ export default function CmsProductDetailPage({ params }) {
           </CardContent>
         </Card>
 
-        <Dialog
+        <ProductFormDialog
           open={editOpen}
-          onOpenChange={(open) => {
-            if (!isUpdating) setEditOpen(open);
-          }}
-        >
-          <DialogContent className="max-h-[90vh] max-w-3xl">
-            <form onSubmit={handleEditSubmit} className="flex min-h-0 flex-col">
-              <DialogHeader>
-                <DialogTitle>Ürün / Hizmet Düzenle</DialogTitle>
-              </DialogHeader>
-              <DialogBody className="max-h-[65vh] overflow-y-auto pr-1">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Başlık
-                    </span>
-                    <Input
-                      value={editForm.title}
-                      onChange={(e) => setField('title', e.target.value)}
-                    />
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      SKU
-                    </span>
-                    <Input
-                      value={editForm.sku}
-                      onChange={(e) => setField('sku', e.target.value)}
-                    />
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Tür
-                    </span>
-                    <Select
-                      value={editForm.type}
-                      onValueChange={(value) => setField('type', value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Tür" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {typeOptions
-                          .filter((o) => o.value !== 'all')
-                          .map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Durum
-                    </span>
-                    <Select
-                      value={editForm.status}
-                      onValueChange={(value) => setField('status', value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Durum" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statusOptions
-                          .filter((o) => o.value !== 'all')
-                          .map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Fiyat Tipi
-                    </span>
-                    <Select
-                      value={editForm.pricetype}
-                      onValueChange={(value) => setField('pricetype', value)}
-                      disabled={isRecurringProduct}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Fiyat tipi" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {priceTypeOptions.map((o) => (
-                          <SelectItem key={o.value} value={o.value}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {isRecurringProduct && (
-                      <span className="text-xs text-muted-foreground">
-                        Tekrarlı ürünlerin fiyat tipi değiştirilemez.
-                      </span>
-                    )}
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Birim Fiyat
-                    </span>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={editForm.priceAmount}
-                      onChange={(e) => setField('priceAmount', e.target.value)}
-                    />
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Para Birimi
-                    </span>
-                    <Input
-                      value={editForm.currency}
-                      onChange={(e) => setField('currency', e.target.value)}
-                    />
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Marka
-                    </span>
-                    <Input
-                      value={editForm.brand}
-                      onChange={(e) => setField('brand', e.target.value)}
-                    />
-                  </label>
-                  <label className="space-y-1.5 sm:col-span-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Kategoriler
-                    </span>
-                    <Input
-                      value={editForm.categories}
-                      onChange={(e) => setField('categories', e.target.value)}
-                      placeholder="Virgül ile ayırın"
-                    />
-                  </label>
-                  <label className="space-y-1.5 sm:col-span-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Özet
-                    </span>
-                    <textarea
-                      value={editForm.summary}
-                      onChange={(e) => setField('summary', e.target.value)}
-                      rows={3}
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                    />
-                  </label>
-                  <label className="space-y-1.5 sm:col-span-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Açıklama
-                    </span>
-                    <textarea
-                      value={editForm.description}
-                      onChange={(e) => setField('description', e.target.value)}
-                      rows={5}
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                    />
-                  </label>
-                </div>
-
-                {editForm.type === 'product' && (
-                  <div className="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-2">
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Stok Durumu
-                      </span>
-                      <Select
-                        value={editForm.stockStatus}
-                        onValueChange={(value) =>
-                          setField('stockStatus', value)
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Stok" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {stockOptions.map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </label>
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Stok Miktarı
-                      </span>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={editForm.stockQuantity}
-                        onChange={(e) =>
-                          setField('stockQuantity', e.target.value)
-                        }
-                      />
-                    </label>
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Kargo Ücret Modeli
-                      </span>
-                      <Select
-                        value={editForm.shippingPriceMode}
-                        onValueChange={(value) =>
-                          setField('shippingPriceMode', value)
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Kargo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {shippingPriceModeOptions.map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </label>
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Kargo Ücreti
-                      </span>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={editForm.shippingPrice}
-                        onChange={(e) =>
-                          setField('shippingPrice', e.target.value)
-                        }
-                      />
-                    </label>
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Ücretsiz Kargo Eşiği
-                      </span>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={editForm.shippingFreeOverAmount}
-                        onChange={(e) =>
-                          setField('shippingFreeOverAmount', e.target.value)
-                        }
-                      />
-                    </label>
-                    <label className="flex items-center gap-2 self-end rounded-lg border border-border px-3 py-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={editForm.shippingShippable}
-                        onChange={(e) =>
-                          setField('shippingShippable', e.target.checked)
-                        }
-                        className="size-4"
-                      />
-                      Kargoya uygun
-                    </label>
-                  </div>
-                )}
-
-                <div className="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-2">
-                  <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={editForm.admin_aprove}
-                      onChange={(e) =>
-                        setField('admin_aprove', e.target.checked)
-                      }
-                      className="size-4"
-                    />
-                    Admin onaylı
-                  </label>
-                  <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={editForm.notifyOwner}
-                      onChange={(e) =>
-                        setField('notifyOwner', e.target.checked)
-                      }
-                      className="size-4"
-                    />
-                    Kaydedince kullanıcıya mail gönder
-                  </label>
-                  <label className="space-y-1.5 sm:col-span-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Reason
-                    </span>
-                    <textarea
-                      value={editForm.reason}
-                      onChange={(e) => setField('reason', e.target.value)}
-                      rows={3}
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                    />
-                  </label>
-                </div>
-              </DialogBody>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setEditOpen(false)}
-                  disabled={isUpdating}
-                >
-                  Vazgeç
-                </Button>
-                <Button type="submit" disabled={isUpdating}>
-                  {isUpdating ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Save className="size-4" />
-                  )}
-                  Kaydet
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+          onOpenChange={setEditOpen}
+          form={editForm}
+          setField={setField}
+          product={product}
+          onSubmit={handleEditSubmit}
+          pending={isUpdating}
+        />
 
         {/* Zamanlama & Rezervasyon (yalnızca hizmet) */}
         {product.type === 'services' && (
@@ -877,6 +429,16 @@ export default function CmsProductDetailPage({ params }) {
               label="Tür"
               value={t?.label ?? product.type}
             />
+            {product.type === 'services' && (
+              <InfoRow
+                icon={Layers}
+                label="Hizmet Tipi"
+                value={
+                  serviceTypeMeta[product.serviceType]?.label ??
+                  product.serviceType
+                }
+              />
+            )}
             <InfoRow
               icon={Boxes}
               label="Fiyat Tipi"
