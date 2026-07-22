@@ -11,11 +11,9 @@ import {
   Boxes,
   Building2,
   CalendarClock,
-  Check,
   Edit3,
   ExternalLink,
   Hash,
-  Image as ImageIcon,
   Layers,
   ListChecks,
   Loader2,
@@ -25,7 +23,6 @@ import {
   ShieldOff,
   Tag,
   Truck,
-  Wallet,
 } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { API_HOST } from '@/config/api';
@@ -56,7 +53,6 @@ import { EmptyState } from '@/components/layout/page-shell';
 import {
   adminAproveMeta,
   formatPrice,
-  periodMeta,
   pricetypeMeta,
   serviceTypeMeta,
   statusMeta,
@@ -70,6 +66,8 @@ import {
   validateProductForm,
 } from '../_form/productFormModel';
 import { ProductFormDialog } from '../_form/ProductFormDialog';
+import GallerySection from './_sections/GallerySection';
+import PricingSection from './_sections/PricingSection';
 import SchedulingSection from './_sections/SchedulingSection';
 import FormsSection from './_sections/FormsSection';
 import LocationSection from './_sections/LocationSection';
@@ -267,9 +265,6 @@ export default function CmsProductDetailPage({ params }) {
     : [];
   const attributes = Array.isArray(product.attributes)
     ? product.attributes
-    : [];
-  const basePrices = Array.isArray(product.basePrice)
-    ? product.basePrice.filter((p) => p && typeof p === 'object')
     : [];
   const galleryImages = Array.isArray(product.gallery?.images)
     ? product.gallery.images
@@ -481,79 +476,8 @@ export default function CmsProductDetailPage({ params }) {
           </CardContent>
         </Card>
 
-        {/* Fiyatlandırma */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Fiyatlandırma</CardTitle>
-            <CardToolbar>
-              <Badge variant="muted">{pt?.label ?? product.pricetype}</Badge>
-            </CardToolbar>
-          </CardHeader>
-          <CardContent className="space-y-4 p-6">
-            <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2">
-              <InfoRow
-                icon={Wallet}
-                label="Birim Fiyat"
-                value={formatPrice(product.priceAmount, product.currency)}
-              />
-              <InfoRow
-                icon={Wallet}
-                label="Para Birimi"
-                value={product.currency || 'TRY'}
-              />
-            </div>
-            {basePrices.length > 0 && (
-              <div className="border-t border-border pt-3">
-                <p className="mb-2 text-xs text-muted-foreground">
-                  Tanımlı Fiyatlar
-                </p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Liste Fiyatı</TableHead>
-                      <TableHead>İndirim</TableHead>
-                      <TableHead>İndirimli</TableHead>
-                      <TableHead>Para Birimi</TableHead>
-                      <TableHead>Periyot</TableHead>
-                      <TableHead>Varsayılan</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {basePrices.map((bp, i) => (
-                      <TableRow key={bp._id || i}>
-                        <TableCell>
-                          {formatPrice(bp.originalPrice, bp.currency)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {bp.discountRate ? `%${bp.discountRate}` : '—'}
-                        </TableCell>
-                        <TableCell>
-                          {formatPrice(bp.discountedPrice, bp.currency)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {bp.currency || 'TRY'}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {bp.period ? periodMeta[bp.period] ?? bp.period : '—'}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {bp.isDefault ? (
-                            <Check
-                              className="size-4 text-emerald-600"
-                              aria-label="Varsayılan"
-                            />
-                          ) : (
-                            '—'
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Fiyatlandırma — basePrice planları düzenlenebilir (PricingSection). */}
+        <PricingSection product={product} onNotice={setNotice} />
 
         {/* Stok (sadece ürün) */}
         {isProduct && (
@@ -584,45 +508,9 @@ export default function CmsProductDetailPage({ params }) {
           </Card>
         )}
 
-        {/* Görseller */}
-        {galleryImages.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Görseller</CardTitle>
-              <CardToolbar>
-                <Badge variant="muted">{galleryImages.length} görsel</Badge>
-              </CardToolbar>
-            </CardHeader>
-            <CardContent className="p-4">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-6">
-                {galleryImages.map((img, i) => {
-                  const url = resolveImageUrl(
-                    img?.path || img?.variants?.[0]?.url,
-                  );
-                  return (
-                    <div
-                      key={img?._id || i}
-                      className="aspect-square overflow-hidden rounded-lg border border-border bg-muted"
-                    >
-                      {url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={url}
-                          alt={img?.alt || product.title}
-                          className="size-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex size-full items-center justify-center text-muted-foreground">
-                          <ImageIcon className="size-5" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {/* Görseller — yükleme/sıralama/silme GallerySection'da. Boş galeride
+            de render edilir: yükleme girişi orada. */}
+        <GallerySection product={product} onNotice={setNotice} />
 
         {/* Özellikler */}
         {attributes.length > 0 && (
