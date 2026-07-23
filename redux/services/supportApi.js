@@ -1,7 +1,7 @@
 'use client';
 
-import { baseApi } from './baseApi';
 import { ENDPOINTS } from '@/config/api';
+import { baseApi } from './baseApi';
 
 /**
  * Destek masası CMS servisi — talep kuyruğu, detay, yanıt/iç not, durum, atama
@@ -26,7 +26,10 @@ export const supportApi = baseApi.injectEndpoints({
       providesTags: (result) =>
         result?.tickets
           ? [
-              ...result.tickets.map((t) => ({ type: 'SupportTicket', id: t._id || t.id })),
+              ...result.tickets.map((t) => ({
+                type: 'SupportTicket',
+                id: t._id || t.id,
+              })),
               { type: 'SupportTicket', id: 'LIST' },
             ]
           : [{ type: 'SupportTicket', id: 'LIST' }],
@@ -34,7 +37,8 @@ export const supportApi = baseApi.injectEndpoints({
 
     getSupportTicket: build.query({
       query: (id) => ENDPOINTS.support.cmsTicketDetail(id),
-      transformResponse: (res) => (res?.data ?? res)?.ticket ?? res?.data ?? res,
+      transformResponse: (res) =>
+        (res?.data ?? res)?.ticket ?? res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'SupportTicket', id }],
     }),
 
@@ -59,10 +63,14 @@ export const supportApi = baseApi.injectEndpoints({
     }),
 
     updateSupportTicketStatus: build.mutation({
-      query: ({ id, status, closeReason }) => ({
+      query: ({ id, status, note, closeReason }) => ({
         url: ENDPOINTS.support.cmsTicketStatus(id),
         method: 'PATCH',
-        body: { status, closeReason },
+        body: {
+          status,
+          ...(note ? { note } : {}),
+          ...(closeReason ? { closeReason } : {}),
+        },
       }),
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, { id }) => [
@@ -91,7 +99,10 @@ export const supportApi = baseApi.injectEndpoints({
       providesTags: (result) =>
         Array.isArray(result)
           ? [
-              ...result.map((c) => ({ type: 'SupportCallback', id: c._id || c.id })),
+              ...result.map((c) => ({
+                type: 'SupportCallback',
+                id: c._id || c.id,
+              })),
               { type: 'SupportCallback', id: 'LIST' },
             ]
           : [{ type: 'SupportCallback', id: 'LIST' }],
