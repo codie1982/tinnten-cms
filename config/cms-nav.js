@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   MessagesSquare,
   Package,
+  LifeBuoy,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -178,6 +179,18 @@ export const CMS_NAV = [
       { title: 'Kampanya Şablonları', path: '/cms/email/campaign-templates', roles: [CMS_ROLES.EDITOR] },
       { title: 'Değişkenler', path: '/cms/email/merge-variables', roles: [CMS_ROLES.EDITOR] },
       { title: 'Şablonlar (.flt)', path: '/cms/email/templates', roles: [CMS_ROLES.EDITOR] },
+    ],
+  },
+  {
+    title: 'Destek Masası',
+    icon: LifeBuoy,
+    // Her item'a rol AÇIKÇA yazılır: `canAccess(roles, [])` her CMS
+    // kullanıcısına `true` döner (lib/roles.js), yani rolü unutmak destek
+    // taleplerini — müşteri PII'si dâhil — herkese açardı.
+    roles: [CMS_ROLES.SUPPORT],
+    children: [
+      { title: 'Talepler', path: '/cms/support/tickets', roles: [CMS_ROLES.SUPPORT] },
+      { title: 'Geri Arama Kuyruğu', path: '/cms/support/callbacks', roles: [CMS_ROLES.SUPPORT] },
     ],
   },
 ];

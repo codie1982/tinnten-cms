@@ -30,3 +30,4 @@ export * from './dashboardApi';
 export * from './faqApi';
 export * from './connectorsApi';
 export * from './errorMonitoringApi';
+export * from './supportApi';

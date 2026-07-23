@@ -389,4 +389,18 @@ export const ENDPOINTS = {
   upload: {
     image: '/upload/multiple/image',
   },
+  // Destek masası. Backend `requireAnyPermission("cms:support", "cms:admin")`
+  // ile korur — `requirePermission` DEĞİL, çünkü o ALL-OF semantiğinde ve admin
+  // bypass'ı yok; CMS `cms:admin`'i süper rol saydığı için admin menüyü görüp
+  // API'den 403 yerdi.
+  support: {
+    cmsTickets: '/support/cms/tickets',
+    cmsTicketDetail: (id) => `/support/cms/tickets/${id}`,
+    cmsTicketReply: (id) => `/support/cms/tickets/${id}/reply`,
+    cmsTicketStatus: (id) => `/support/cms/tickets/${id}/status`,
+    cmsTicketAssign: (id) => `/support/cms/tickets/${id}/assign`,
+    cmsCallbacks: '/support/cms/callbacks',
+    cmsCallbackConfirm: (id) => `/support/cms/callbacks/${id}/confirm`,
+    cmsCallbackOutcome: (id) => `/support/cms/callbacks/${id}/outcome`,
+  },
 };
