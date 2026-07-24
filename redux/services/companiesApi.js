@@ -64,6 +64,15 @@ export const companiesApi = baseApi.injectEndpoints({
         ...(userId ? [{ type: 'User', id: userId }] : []),
       ],
     }),
+    assignCompanyPackage: build.mutation({
+      query: ({ id, packageId, pricingIndex }) => ({
+        url: ENDPOINTS.companies.packages(id),
+        method: 'POST',
+        body: { packageId, ...(Number.isInteger(pricingIndex) ? { pricingIndex } : {}) },
+      }),
+      transformResponse: (res) => res?.data ?? res, // { accountId, account, limitUsage }
+      invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }],
+    }),
     approveCompany: build.mutation({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.companies.approve(id), method: 'POST', body }),
       invalidatesTags: (r, e, { id }) => [
@@ -92,6 +101,7 @@ export const {
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
   useTransferCompanyOwnerMutation,
+  useAssignCompanyPackageMutation,
   useApproveCompanyMutation,
   useRejectCompanyMutation,
 } = companiesApi;

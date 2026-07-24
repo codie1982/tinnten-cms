@@ -45,11 +45,13 @@ import {
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
   useTransferCompanyOwnerMutation,
+  useAssignCompanyPackageMutation,
   useGetUsersQuery,
   useGetCmsProductsQuery,
   useUpdateCmsProductMutation,
   useDeleteCmsProductMutation,
   useGetFetcherSubscriptionsQuery,
+  useGetCmsPackagesQuery,
 } from '@/redux/services';
 import { mutationMessage } from '../../products/_form/productFormModel';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
@@ -87,6 +89,18 @@ function formatTrDate(input) {
 function countOf(c, key) {
   const v = c?.[key];
   return Array.isArray(v) ? v.length : 0;
+}
+
+/* ─── paket seçici için yardımcılar (paket ekleme paneli) ─── */
+const PKG_INTERVAL_LABEL = { month: 'Aylık', year: 'Yıllık', lifetime: 'Ömür Boyu' };
+const PKG_CATEGORY_BADGE = { free: 'muted', basic: 'primary', premium: 'secondary', enterprise: 'warning' };
+function pkgTitle(p) {
+  const i = p?.i18n || {};
+  return i.tr?.title || i.en?.title || Object.values(i)[0]?.title || p?.name || '—';
+}
+function pkgPricingLabel(entry) {
+  if (!entry) return 'Ücretsiz / süresiz';
+  return `${PKG_INTERVAL_LABEL[entry.interval] || entry.interval}: ${entry.amount} ${entry.currency || ''}`.trim();
 }
 
 /* Bilgi tabanı (fetcher abonelik) durum → Türkçe etiket + rozet tonu. */
@@ -155,6 +169,7 @@ function CmsCompanyDetailView({ id }) {
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
   const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
   const [transferOwner, { isLoading: transferring }] = useTransferCompanyOwnerMutation();
+  const [assignPackage, { isLoading: assigningPackage }] = useAssignCompanyPackageMutation();
 
   // Ürünler / Hizmetler sekmesi — yalnız aktifken (lazy) çekilir; firma ucu değişmez.
   const [prodSort, setProdSort] = useState('createdAt:desc');
@@ -325,6 +340,42 @@ function CmsCompanyDetailView({ id }) {
       resetOwnerForm();
     } catch (e) {
       setOwnerNotice({ type: 'error', text: e?.data?.message || e?.normalizedMessage || 'Sahiplik devredilemedi.' });
+    }
+  };
+
+  // Paket ekleme paneli — firmaya uygun (public + bu firmaya özel) paketleri listeler.
+  const [pkgPanelOpen, setPkgPanelOpen] = useState(false);
+  const [selectedPkgId, setSelectedPkgId] = useState(null);
+  const [selectedPricingIdx, setSelectedPricingIdx] = useState(null);
+  const [pkgNotice, setPkgNotice] = useState(null);
+
+  const { data: eligiblePackages = [], isFetching: pkgFetching } = useGetCmsPackagesQuery(
+    { status: 'active', forCompany: 'true', eligibleForCompanyId: id },
+    { skip: !authorized || !pkgPanelOpen },
+  );
+  const selectedPkg = eligiblePackages.find((p) => p._id === selectedPkgId) || null;
+
+  const resetPkgForm = () => {
+    setPkgPanelOpen(false);
+    setSelectedPkgId(null);
+    setSelectedPricingIdx(null);
+  };
+
+  const handleAssignPackage = async () => {
+    if (!selectedPkgId) {
+      setPkgNotice({ type: 'error', text: 'Lütfen eklenecek bir paket seçin.' });
+      return;
+    }
+    try {
+      await assignPackage({
+        id,
+        packageId: selectedPkgId,
+        ...(Number.isInteger(selectedPricingIdx) ? { pricingIndex: selectedPricingIdx } : {}),
+      }).unwrap();
+      setPkgNotice({ type: 'success', text: 'Paket firmaya eklendi.' });
+      resetPkgForm();
+    } catch (e) {
+      setPkgNotice({ type: 'error', text: e?.data?.message || e?.normalizedMessage || 'Paket eklenemedi.' });
     }
   };
 
@@ -851,14 +902,122 @@ function CmsCompanyDetailView({ id }) {
             <Card>
               <CardHeader>
                 <CardTitle>Hesap & Paketler</CardTitle>
-                <CardToolbar><Badge variant="muted">{packages.length} paket</Badge></CardToolbar>
+                <CardToolbar>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="muted">{packages.length} paket</Badge>
+                    {!pkgPanelOpen && (
+                      <Button size="sm" variant="outline" onClick={() => { setPkgNotice(null); setPkgPanelOpen(true); }}>
+                        <Plus className="size-4" />
+                        Paket Ekle
+                      </Button>
+                    )}
+                  </div>
+                </CardToolbar>
               </CardHeader>
               <CardContent className="space-y-5 p-4">
+                {pkgNotice && (
+                  <Alert variant={pkgNotice.type === 'error' ? 'destructive' : 'info'}>
+                    <AlertDescription>{pkgNotice.text}</AlertDescription>
+                  </Alert>
+                )}
+
                 <AccountSummary
                   accountId={company.account?._id ? String(company.account._id) : null}
                   balance={company.account?.balance}
                   packageCount={packages.length}
                 />
+                {!company.account?._id && (
+                  <p className="text-xs text-muted-foreground">
+                    Bu firmanın henüz hesabı yok — ilk paket eklendiğinde otomatik oluşturulacak.
+                  </p>
+                )}
+
+                {/* Paket ekleme paneli — firmaya uygun (genel + bu firmaya özel) paketleri listeler */}
+                {pkgPanelOpen && (
+                  <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-3">
+                    <p className="text-xs font-medium text-foreground">Firmaya uygun paketler</p>
+                    <div className="max-h-64 overflow-y-auto rounded-lg border border-border">
+                      {pkgFetching ? (
+                        <div className="flex items-center justify-center py-6"><Loader2 className="size-5 animate-spin text-primary" /></div>
+                      ) : eligiblePackages.length === 0 ? (
+                        <p className="px-3 py-4 text-sm text-muted-foreground">Uygun paket bulunamadı.</p>
+                      ) : (
+                        <div className="divide-y divide-border">
+                          {eligiblePackages.map((p) => {
+                            const selected = selectedPkgId === p._id;
+                            return (
+                              <button
+                                key={p._id}
+                                type="button"
+                                onClick={() => { setSelectedPkgId(p._id); setSelectedPricingIdx(null); }}
+                                className={cn(
+                                  'flex w-full items-center gap-3 px-3 py-2 text-left transition-colors',
+                                  selected ? 'bg-primary/10' : 'hover:bg-accent',
+                                )}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="truncate text-sm font-medium text-foreground">{pkgTitle(p)}</span>
+                                    {p.category && (
+                                      <Badge variant={PKG_CATEGORY_BADGE[p.category] ?? 'muted'} className="capitalize">{p.category}</Badge>
+                                    )}
+                                    {p.visibility === 'private' && <Badge variant="warning">Firmaya Özel</Badge>}
+                                  </div>
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {Array.isArray(p.pricing) && p.pricing.length
+                                      ? p.pricing.map((pr) => pkgPricingLabel(pr)).join(' · ')
+                                      : 'Ücretsiz / süresiz'}
+                                  </p>
+                                </div>
+                                {selected && <Check className="size-4 shrink-0 text-primary" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedPkg && Array.isArray(selectedPkg.pricing) && selectedPkg.pricing.length > 1 && (
+                      <div>
+                        <label className="text-xs font-medium text-foreground">Fiyatlandırma dönemi</label>
+                        <Select
+                          value={selectedPricingIdx != null ? String(selectedPricingIdx) : undefined}
+                          onValueChange={(v) => setSelectedPricingIdx(Number(v))}
+                        >
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Varsayılan" /></SelectTrigger>
+                          <SelectContent>
+                            {selectedPkg.pricing.map((pr, i) => (
+                              <SelectItem key={i} value={String(i)}>{pkgPricingLabel(pr)}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {selectedPkg && (
+                      <div className="rounded-lg border border-border bg-background p-3 text-sm">
+                        <p className="text-foreground">
+                          Eklenecek paket: <span className="font-medium">{pkgTitle(selectedPkg)}</span>
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Firmanın mevcut ücretli paketleri pasife alınacak (ücretsiz paket aktif kalır).
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleAssignPackage} disabled={assigningPackage || !selectedPkgId}>
+                        {assigningPackage ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                        Ekle
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={resetPkgForm} disabled={assigningPackage}>
+                        <X className="size-4" />
+                        Vazgeç
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="border-t border-border pt-4">
                   <PackagesTable packages={normalizedPackages} />
                 </div>
