@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Wand2, ArrowRight, ArrowLeft, Loader2, Sparkles, Rocket,
   FlaskConical, CheckCircle2, XCircle, ChevronDown, ChevronRight,
+  Hash, FolderTree,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -73,6 +74,7 @@ export default function DomainWizard({ onClose, onDone }) {
   // Adım 1-2
   const [selected, setSelected] = useState(() => new Set());
   const [knowledge, setKnowledge] = useState({}); // pattern -> 'content'|'product'
+  const [treePatterns, setTreePatterns] = useState({}); // URL ağacından eklenen ince pattern'ler
   const [drafts, setDrafts] = useState({}); // pattern -> { pattern, family, cssSchema, status, test, raw, jsonError }
   const [testing, setTesting] = useState(null);
 
@@ -92,6 +94,13 @@ export default function DomainWizard({ onClose, onDone }) {
 
   const urlHost = useMemo(() => hostFromUrl(url), [url]);
   const canConfigure = analysis?.access?.canConfigure ?? true;
+
+  // Kaba kümeler + ağaçtan eklenen ince pattern'ler (pattern'e göre dedup).
+  const allPatterns = useMemo(() => {
+    const base = analysis?.patterns || [];
+    const seen = new Set(base.map((p) => p.pattern));
+    return [...base, ...Object.values(treePatterns).filter((p) => !seen.has(p.pattern))];
+  }, [analysis?.patterns, treePatterns]);
 
   const goTo = (i) => { setStep(i); setFurthest((f) => Math.max(f, i)); };
 
@@ -138,6 +147,23 @@ export default function DomainWizard({ onClose, onDone }) {
     const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n;
   });
 
+  /* ── URL ağacı düğümü seç/kaldır (dashboard ile aynı mantık) ── */
+  const toggleTreeNode = (node) => {
+    const pattern = `${node.path}/*`;
+    const isCluster = (analysis?.patterns || []).some((p) => p.pattern === pattern);
+    setSelected((s) => { const n = new Set(s); if (n.has(pattern)) n.delete(pattern); else n.add(pattern); return n; });
+    if (isCluster) return; // kaba küme — sentetik gerekmez
+    setTreePatterns((tp) => {
+      const next = { ...tp };
+      if (next[pattern]) delete next[pattern];
+      else next[pattern] = {
+        pattern, count: node.count, samples: node.samples || [],
+        family: 'article', needsSchema: true, hasSchema: false, schemaResult: null, label: node.path,
+      };
+      return next;
+    });
+  };
+
   /* ── schema_gen poll ── */
   const pollSchemaGen = useCallback(async (dom, sel, attempt = 0) => {
     if (cancelled.current) return;
@@ -173,11 +199,11 @@ export default function DomainWizard({ onClose, onDone }) {
   const handleGenerate = async () => {
     if (!domain || selected.size === 0) return;
     setErr(null);
-    const sel = (analysis.patterns || []).map((p) => p.pattern).filter((p) => selected.has(p));
+    const sel = allPatterns.map((p) => p.pattern).filter((p) => selected.has(p));
     const pending = {}; for (const p of sel) pending[p] = { pattern: p, cssSchema: null, raw: '', status: 'pending' };
     setDrafts(pending); setBusy(true); setBusyLabel('Şema üretimi başlatılıyor…'); goTo(2);
     try {
-      const patterns = (analysis.patterns || []).filter((p) => selected.has(p.pattern))
+      const patterns = allPatterns.filter((p) => selected.has(p.pattern))
         .map((p) => ({ pattern: p.pattern, family: p.family || 'article' }));
       await genSchemas({ domain, patterns }).unwrap();
       setBusyLabel(`Şemalar arka planda üretiliyor… (0/${sel.length} hazır)`);
@@ -189,7 +215,7 @@ export default function DomainWizard({ onClose, onDone }) {
     const d = drafts[pattern]; if (!d?.cssSchema) return;
     setTesting(pattern); setErr(null);
     try {
-      const samples = (analysis.patterns || []).find((p) => p.pattern === pattern)?.samples || [];
+      const samples = allPatterns.find((p) => p.pattern === pattern)?.samples || [];
       const res = await testSchema({ domain, pattern, css_schema: d.cssSchema, urls: samples.slice(0, 3) }).unwrap();
       setDrafts((prev) => ({ ...prev, [pattern]: { ...prev[pattern], test: res } }));
     } catch (e) { setErr({ text: upstreamErr(e) }); }
@@ -289,17 +315,30 @@ export default function DomainWizard({ onClose, onDone }) {
               <div className="space-y-3">
                 {analysis?.siteProfile && <ProfileBadges p={analysis.siteProfile} />}
                 {analysis?.quality?.label && <QualityBadge label={analysis.quality.label} coverage={analysis.quality.schemaCoverage} />}
-                {!analysis?.patterns?.length ? (
+                {!allPatterns.length ? (
                   <Alert variant="info"><AlertDescription>Pattern bulunamadı. Site haritası okunamamış olabilir.</AlertDescription></Alert>
                 ) : (
                   <ul className="space-y-2">
-                    {[...analysis.patterns].sort((a, b) => (a.needsSchema === b.needsSchema ? b.count - a.count : a.needsSchema ? -1 : 1)).map((p) => (
+                    {[...allPatterns].sort((a, b) => (a.needsSchema === b.needsSchema ? b.count - a.count : a.needsSchema ? -1 : 1)).map((p) => (
                       <PatternRow key={p.pattern} p={p} checked={selected.has(p.pattern)} disabled={!canConfigure}
                         onToggle={() => togglePattern(p.pattern)}
                         source={knowledge[p.pattern] || (p.family === 'product' ? 'product' : 'content')}
                         onSource={(s) => setKnowledge((k) => ({ ...k, [p.pattern]: s }))} />
                     ))}
                   </ul>
+                )}
+
+                {/* Gelişmiş: recursive URL ağacında gez, alt dal seç. */}
+                {analysis?.urlTree?.children?.length > 0 && (
+                  <details className="group rounded-lg border border-input">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-xs font-medium text-secondary-foreground hover:text-foreground">
+                      <span>Gelişmiş — URL ağacında gez (alt bölüm seç)</span>
+                      <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+                    </summary>
+                    <div className="border-t border-input p-2">
+                      <UrlTree tree={analysis.urlTree} selected={selected} onToggleNode={toggleTreeNode} disabled={!canConfigure} />
+                    </div>
+                  </details>
                 )}
               </div>
             )
@@ -433,6 +472,50 @@ function PatternRow({ p, checked, disabled, onToggle, source, onSource }) {
         </div>
       </div>
     </li>
+  );
+}
+
+/* ── Recursive URL ağacı gezgini ──────────────────────────────────────────
+   Backend `_build_url_tree` çıktısını açar; her düğüm seçilebilir. Düğüm pattern'i
+   `${path}/*` — cluster_urls ile aynı biçim, aynı `selected` kümesinde birleşir. */
+function TreeRow({ node, depth, selected, onToggle, disabled }) {
+  const [open, setOpen] = useState(depth < 1);
+  const hasKids = (node.children?.length || 0) > 0;
+  const pattern = `${node.path}/*`;
+  const isSel = selected.has(pattern);
+  return (
+    <li>
+      <div className={cn('flex items-center gap-1.5 rounded-md py-1 pr-2', isSel ? 'bg-primary/10' : 'hover:bg-accent')}
+        style={{ paddingInlineStart: 4 + depth * 16 }}>
+        {hasKids ? (
+          <button type="button" onClick={() => setOpen((o) => !o)} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label={open ? 'Kapat' : 'Aç'}>
+            {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </button>
+        ) : <span className="inline-block size-4 shrink-0" />}
+        <input type="checkbox" checked={isSel} disabled={disabled} onChange={() => onToggle(node)} className="size-3.5 shrink-0" aria-label={`${pattern} seç`} />
+        <code className="truncate font-mono text-xs font-medium">/{node.segment}</code>
+        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground"><Hash className="size-2.5" />{node.count}</span>
+      </div>
+      {hasKids && open && (
+        <ul>{node.children.map((k) => <TreeRow key={k.path} node={k} depth={depth + 1} selected={selected} onToggle={onToggle} disabled={disabled} />)}</ul>
+      )}
+    </li>
+  );
+}
+
+function UrlTree({ tree, selected, onToggleNode, disabled }) {
+  if (!tree || !(tree.children?.length > 0)) {
+    return <Alert variant="info"><AlertDescription>URL ağacı yok — “Yeniden analiz et” ile kurulur.</AlertDescription></Alert>;
+  }
+  return (
+    <div>
+      <p className="flex items-center gap-1.5 px-1 pb-1.5 text-[11px] text-muted-foreground">
+        <FolderTree className="size-3.5" /> Alt bölümleri açıp yalnız istediğin dalı seç (ör. yalnız <code className="mx-1 rounded bg-muted px-1 font-mono">/tr/discovery</code>).
+      </p>
+      <ul className={cn('max-h-72 overflow-y-auto', disabled && 'pointer-events-none opacity-60')}>
+        {tree.children.map((k) => <TreeRow key={k.path} node={k} depth={0} selected={selected} onToggle={onToggleNode} disabled={disabled} />)}
+      </ul>
+    </div>
   );
 }
 
