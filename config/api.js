@@ -369,6 +369,12 @@ export const ENDPOINTS = {
     // Scraping config + reset
     scrapingConfig: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping-config`,
     scrapingReset: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/reset`,
+    // Etkileşimli onboarding sihirbazı (admin, kullanıcı-bağımsız)
+    domainAnalysis: (d) => `/fetcher/domains/${encodeURIComponent(d)}/analysis`,
+    domainAnalysisStart: (d) => `/fetcher/domains/${encodeURIComponent(d)}/analysis/start`,
+    domainSchemasGenerate: (d) => `/fetcher/domains/${encodeURIComponent(d)}/schemas/generate`,
+    domainSchemasTest: (d) => `/fetcher/domains/${encodeURIComponent(d)}/schemas/test`,
+    domainSchemasCommit: (d) => `/fetcher/domains/${encodeURIComponent(d)}/schemas/commit`,
   },
   inbox: {
     cmsList: '/inbox/cms',

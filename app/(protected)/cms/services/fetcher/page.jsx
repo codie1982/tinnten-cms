@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   Activity, Globe, Link2, ScrollText, Server, RefreshCw, X, Search,
-  Play, Square, RotateCw, Trash2, Plus, CircleDot, OctagonX, Loader2, Inbox,
+  Play, Square, RotateCw, Trash2, Plus, CircleDot, OctagonX, Loader2, Inbox, Wand2,
   Rss, ShieldAlert, Pause, Ban, Radio, Pencil, ShieldCheck, FileText, SlidersHorizontal,
   ChevronsUpDown, Building2, Check,
 } from 'lucide-react';
@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
+import DomainWizard from './DomainWizard';
 import {
   useGetFetcherStatusQuery,
   useStopAllScrapingMutation,
@@ -758,7 +759,8 @@ function DomainsSection({ authorized }) {
             <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
               <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
             </Button>
-            <Button size="sm" onClick={() => setModal({ type: 'add' })}><Plus className="size-4" /> Domain Ekle</Button>
+            <Button variant="outline" size="sm" onClick={() => setModal({ type: 'add' })}><Plus className="size-4" /> Domain Ekle</Button>
+            <Button size="sm" onClick={() => setModal({ type: 'wizard' })}><Wand2 className="size-4" /> Sihirbaz</Button>
           </div>
         </CardContent>
       </Card>
@@ -849,6 +851,7 @@ function DomainsSection({ authorized }) {
       </Card>
 
       {detail && <DomainDetail domain={detail} onClose={() => setDetail(null)} />}
+      {modal?.type === 'wizard' && <DomainWizard onDone={() => refetch()} onClose={() => setModal(null)} />}
       {modal?.type === 'add' && <DomainFormModal mode="add" onSubmit={(body) => addDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'edit' && <DomainFormModal mode="edit" domain={modal.domain} onSubmit={(body) => updateDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'verify' && <VerifyDomainModal domain={modal.domain} onSubmit={(body) => verifyDomain(body).unwrap()} onClose={() => setModal(null)} />}

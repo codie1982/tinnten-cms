@@ -186,6 +186,33 @@ export const fetcherApi = baseApi.injectEndpoints({
       query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.scrapingReset(domain), method: 'POST', body }), // { sitemap?, purge_s3 }
       invalidatesTags: (r, e, { domain }) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: `${domain}:stats` }, { type: 'FetcherUrl', id: domain }, { type: 'FetcherConfig', id: domain }],
     }),
+
+    /* ── Etkileşimli onboarding sihirbazı (admin, kullanıcı-bağımsız) ──
+     * companyId GÖNDERİLMEZ → fetcher operator (admin) modu, sahiplik kısıtı yok.
+     * Analiz patterns-only; şema üretimi arka planda (schema_gen). Poll için
+     * getDomainAnalysis'e `providesTags` VERİLMEZ — sihirbaz manuel `refetch`
+     * ile poll eder (invalidasyon fırtınası olmasın). */
+    getDomainAnalysis: build.query({
+      query: (domain) => ({ url: ENDPOINTS.fetcher.domainAnalysis(domain) }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    startDomainAnalysis: build.mutation({
+      query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainAnalysisStart(domain), method: 'POST', body }), // { patternsOnly?, autoStartAfter? }
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    generateDomainSchemas: build.mutation({
+      query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainSchemasGenerate(domain), method: 'POST', body }), // { patterns:[{pattern,family}] }
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    testDomainSchema: build.mutation({
+      query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainSchemasTest(domain), method: 'POST', body }), // { pattern, css_schema, urls?, maxSamples? }
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    commitDomainSchemas: build.mutation({
+      query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainSchemasCommit(domain), method: 'POST', body }), // { schemas, indexSettings?, startCrawl? }
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { domain }) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }, { type: 'FetcherConfig', id: domain }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -226,4 +253,11 @@ export const {
   useSaveScrapingConfigMutation,
   useDeleteScrapingConfigMutation,
   useResetDomainScrapingMutation,
+  // Onboarding sihirbazı
+  useGetDomainAnalysisQuery,
+  useLazyGetDomainAnalysisQuery,
+  useStartDomainAnalysisMutation,
+  useGenerateDomainSchemasMutation,
+  useTestDomainSchemaMutation,
+  useCommitDomainSchemasMutation,
 } = fetcherApi;
