@@ -768,7 +768,32 @@ function DeleteDomainModal({ domain, onConfirm, onClose }) {
             arka planda dakikalar sürebilir. İlerlemeyi listedeki <b>Siliniyor…</b> rozetinden
             izleyebilirsiniz — takılırsa aynı silmeyi tekrar çalıştırmak güvenlidir.
           </p>
-          {err && <Alert variant="destructive"><AlertDescription>{err.error || err.details || 'Silme başarısız.'}</AlertDescription></Alert>}
+          {err?.error === 'domain_has_subscribers' ? (
+            <Alert variant="destructive">
+              <AlertTitle className="flex items-center gap-1.5">
+                <Users className="size-4" /> {err.subscriberCount} firma bu domaine abone
+              </AlertTitle>
+              <AlertDescription>
+                <p>
+                  Silme engellendi. Abonelikler kaldırılmadan domain silinirse firmaların
+                  embedding'leri yetim kalır — kaynak yokken aramada çıkmaya devam ederler.
+                  Önce <b>Abonelikler</b> sekmesinden aşağıdakileri kaldırın.
+                </p>
+                <div className="mt-2 space-y-1">
+                  {(err.subscribers || []).slice(0, 8).map((s) => (
+                    <div key={s.subscriptionId} className="flex items-center gap-2 text-xs">
+                      <Badge variant={subStateVariant(s.state)}>{s.state}</Badge>
+                      <CompanyOwnerCell companyId={s.companyId} />
+                    </div>
+                  ))}
+                  {(err.subscribers || []).length > 8
+                    ? <p className="text-xs">+{err.subscribers.length - 8} firma daha</p> : null}
+                </div>
+              </AlertDescription>
+            </Alert>
+          ) : err ? (
+            <Alert variant="destructive"><AlertDescription>{err.error || err.details || 'Silme başarısız.'}</AlertDescription></Alert>
+          ) : null}
           <div className="space-y-1.5">
             <label className="text-2sm font-medium">Onaylamak için domaini yaz: <span className="font-mono">{domain.domain}</span></label>
             <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={domain.domain} />
