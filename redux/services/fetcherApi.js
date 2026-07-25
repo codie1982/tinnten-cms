@@ -22,7 +22,10 @@ export const fetcherApi = baseApi.injectEndpoints({
 
     /* ── Domainler ── */
     getFetcherDomains: build.query({
-      query: (params = {}) => ({ url: ENDPOINTS.fetcher.domains, params }), // { status, page, limit, sort, order }
+      // { status, page, limit, sort, order, search, companyId, verified, site_type, locate, hasSchema }
+      // Liste satırları abone sayısını da taşır (subscriberCount / subscriptionCount /
+      // legacyOwnerCount) — fetcher tek aggregate ile ekliyor, N+1 yok.
+      query: (params = {}) => ({ url: ENDPOINTS.fetcher.domains, params }),
       transformResponse: (res) => res?.data ?? res, // { domains, total, page, limit }
       providesTags: [{ type: 'FetcherDomain', id: 'LIST' }],
     }),
@@ -63,10 +66,14 @@ export const fetcherApi = baseApi.injectEndpoints({
       providesTags: [{ type: 'FetcherUrl', id: 'LIST' }],
     }),
 
-    /* ── Crawl logları ── */
+    /* ── Crawl logları ──
+     * DİKKAT: uç artık toplam SAYMIYOR ve zaman penceresi zorunlu.
+     * `crawl_logs` her fetch için satır yazıyor, hiç budanmıyor; eski uç her
+     * istekte count_documents ile koleksiyonu tam tarayıp timeout'a gidiyordu.
+     * Yanıt { logs, page, limit, hours, since, has_more } — `total` YOK. */
     getFetcherLogs: build.query({
-      query: (params = {}) => ({ url: ENDPOINTS.fetcher.logs, params }), // { domain, url, page, limit }
-      transformResponse: (res) => res?.data ?? res, // { logs, total, page, limit }
+      query: (params = {}) => ({ url: ENDPOINTS.fetcher.logs, params }), // { domain, url, page, limit, hours }
+      transformResponse: (res) => res?.data ?? res,
       providesTags: [{ type: 'FetcherLog', id: 'LIST' }],
     }),
 
@@ -117,6 +124,27 @@ export const fetcherApi = baseApi.injectEndpoints({
       invalidatesTags: (r, e, { id }) => [{ type: 'FetcherSubscription', id }, { type: 'FetcherSubscription', id: 'LIST' }],
     }),
 
+    getFetcherSubscriptionStats: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.fetcher.subscriptionStats, params }), // { includeRemoved? }
+      transformResponse: (res) => res?.data ?? res, // { domains: [{ domain, subscriberCount, companyIds, states, source }], total, source }
+      providesTags: [{ type: 'FetcherSubscription', id: 'STATS' }],
+    }),
+
+    /* ── Canlı hız kontrolü (scheduler tuning) ──
+     * Değerler fetcher'da Redis hash'inde (`fetcher:tuning`) yaşar; restart
+     * gerekmez. Her knob { value, default, source: 'redis'|'env', env_var }
+     * taşır. Bir knob'a null gönderilirse override SİLİNİR (env'e döner). */
+    getSchedulerTuning: build.query({
+      query: () => ENDPOINTS.fetcher.schedulerTuning,
+      transformResponse: (res) => res?.data ?? res, // { enabled, inflight_total, throttle_factor, tunables, nodes }
+      providesTags: [{ type: 'FetcherTuning', id: 'TUNING' }],
+    }),
+    updateSchedulerTuning: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.fetcher.schedulerTuning, method: 'PUT', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'FetcherTuning', id: 'TUNING' }],
+    }),
+
     /* ── Raporlar & sağlık ── */
     getRestrictedDomains: build.query({
       query: () => ENDPOINTS.fetcher.restrictedDomains,
@@ -140,7 +168,12 @@ export const fetcherApi = baseApi.injectEndpoints({
       invalidatesTags: (r, e, { domain }) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }],
     }),
     deleteFetcherDomain: build.mutation({
-      query: (domain) => ({ url: ENDPOINTS.fetcher.domain(domain), method: 'DELETE' }), // KALICI + kademeli (ürün purge) — UI güçlü onay ile çağırır
+      // KALICI + kademeli (ürün purge) — UI güçlü onay ile çağırır.
+      // Fetcher artık domaini anında REMOVED işaretleyip 202 dönüyor; ağır
+      // cascade arka planda koşuyor. Sonuç domain kaydındaki `deletion`
+      // alanından izlenir ({ state: 'running'|'failed', error }).
+      query: (domain) => ({ url: ENDPOINTS.fetcher.domain(domain), method: 'DELETE' }),
+      transformResponse: (res) => res?.data ?? res, // { status: 'deleting'|'detached', domain, message }
       invalidatesTags: (r, e, domain) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }],
     }),
     verifyFetcherDomain: build.mutation({
@@ -235,6 +268,9 @@ export const {
   useDeleteFetcherNodeMutation,
   useNodeActionMutation,
   useGetFetcherSubscriptionsQuery,
+  useGetFetcherSubscriptionStatsQuery,
+  useGetSchedulerTuningQuery,
+  useUpdateSchedulerTuningMutation,
   useGetFetcherSubscriptionQuery,
   useUpdateFetcherSubscriptionMutation,
   useReindexFetcherSubscriptionMutation,

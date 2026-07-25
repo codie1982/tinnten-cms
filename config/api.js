@@ -363,6 +363,11 @@ export const ENDPOINTS = {
     subscriptions: '/fetcher/subscriptions',
     subscription: (id) => `/fetcher/subscriptions/${encodeURIComponent(id)}`,
     subscriptionReindex: (id) => `/fetcher/subscriptions/${encodeURIComponent(id)}/reindex`,
+    // Domain başına abone dökümü (abonelik koleksiyonu boşsa legacy
+    // informationOwners üzerinden aynı şekli döner — satırdaki `source` söyler).
+    subscriptionStats: '/fetcher/subscriptions/stats/by-domain',
+    // Canlı hız kontrolü (scheduler tuning; Redis override + env varsayılanları)
+    schedulerTuning: '/fetcher/scheduler/tuning',
     // Raporlar & sağlık
     restrictedDomains: '/fetcher/reports/restricted-domains',
     rabbitmqHealth: '/fetcher/health/rabbitmq',

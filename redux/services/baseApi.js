@@ -95,6 +95,7 @@ export const baseApi = createApi({
     'FetcherReport',
     'FetcherHealth',
     'FetcherConfig',
+    'FetcherTuning',
     'EmbeddingStatus',
     'EmbeddingDoc',
     'CronStatus',

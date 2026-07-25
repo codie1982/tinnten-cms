@@ -3,10 +3,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import {
-  Activity, Globe, Link2, ScrollText, Server, RefreshCw, X, Search,
+  Activity, Globe, ScrollText, Server, RefreshCw, X, Search,
   Play, Square, RotateCw, Trash2, Plus, CircleDot, OctagonX, Loader2, Inbox, Wand2,
   Rss, ShieldAlert, Pause, Ban, Radio, Pencil, ShieldCheck, FileText, SlidersHorizontal,
-  ChevronsUpDown, Building2, Check,
+  ChevronsUpDown, Building2, Check, Gauge, Braces, FlaskConical, Users, RotateCcw,
+  AlertTriangle, Clock, Undo2,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -24,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
+import CompanySelect from '@/components/cms/company-select';
 import DomainWizard from './DomainWizard';
 import {
   useGetFetcherStatusQuery,
@@ -35,13 +37,15 @@ import {
   useStartDomainScrapingMutation,
   useStopDomainScrapingMutation,
   useRestartDomainScrapingMutation,
-  useGetFetcherUrlsQuery,
   useGetFetcherLogsQuery,
   useGetFetcherNodesQuery,
   useCreateFetcherNodeMutation,
   useDeleteFetcherNodeMutation,
   useNodeActionMutation,
   useGetFetcherSubscriptionsQuery,
+  useGetFetcherSubscriptionStatsQuery,
+  useGetSchedulerTuningQuery,
+  useUpdateSchedulerTuningMutation,
   useUpdateFetcherSubscriptionMutation,
   useReindexFetcherSubscriptionMutation,
   useDeleteFetcherSubscriptionMutation,
@@ -58,6 +62,9 @@ import {
   useSaveScrapingConfigMutation,
   useDeleteScrapingConfigMutation,
   useResetDomainScrapingMutation,
+  useGenerateDomainSchemasMutation,
+  useTestDomainSchemaMutation,
+  useCommitDomainSchemasMutation,
   useGetCompanyQuery,
   useGetCompaniesQuery,
 } from '@/redux/services';
@@ -116,12 +123,64 @@ const upstreamErr = (err) => err?.data?.data || {};
 const SITE_TYPES = ['ecommerce', 'service', 'blog'];
 
 // Domain listeleme sıralama seçenekleri (değer: `${alan}:${yön}`).
+// Alanlar fetcher'daki MongoStore.ALLOWED_DOMAIN_SORT_FIELDS ile birebir
+// eşleşmeli — whitelist dışı bir alan sessizce updatedAt'e düşer.
 const DOMAIN_SORTS = [
   { value: 'createdAt:desc', label: 'Eklenme: Yeni → Eski' },
   { value: 'createdAt:asc', label: 'Eklenme: Eski → Yeni' },
   { value: 'updatedAt:desc', label: 'Güncelleme: Yeni → Eski' },
   { value: 'domain:asc', label: 'Domain: A → Z' },
+  { value: 'domain:desc', label: 'Domain: Z → A' },
+  { value: 'status:asc', label: 'Duruma göre' },
+  { value: 'priority:desc', label: 'Öncelik: Yüksek → Düşük' },
+  { value: 'stats.last_crawl_at:desc', label: 'Son tarama: Yeni → Eski' },
+  { value: 'stats.last_crawl_at:asc', label: 'Son tarama: Eski → Yeni' },
+  { value: 'stats.total_pages_crawled:desc', label: 'Taranan sayfa: Çok → Az' },
 ];
+
+const DOMAIN_STATUSES = ['ACTIVE', 'PAUSED', 'RESTRICTED', 'REMOVED'];
+const LOG_WINDOWS = [
+  { value: '1', label: 'Son 1 saat' },
+  { value: '6', label: 'Son 6 saat' },
+  { value: '24', label: 'Son 24 saat' },
+  { value: '72', label: 'Son 3 gün' },
+  { value: '168', label: 'Son 7 gün' },
+  { value: '720', label: 'Son 30 gün' },
+];
+
+const nfmt = (n) => (n == null ? '—' : Number(n).toLocaleString('tr-TR'));
+
+/** "3 sa önce" gibi kısa göreli zaman — liste hücrelerinde tam tarihten okunaklı. */
+function relativeTr(input) {
+  const d = parseDate(input);
+  if (!d) return '—';
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'az önce';
+  if (mins < 60) return `${mins} dk önce`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} sa önce`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} gün önce`;
+  return formatTr(input);
+}
+
+/** Domain kaydındaki url_schemas — ikiz yazılan iki konumdan dolu olanı. */
+function domainSchemas(doc) {
+  return doc?.scraping_config?.url_schemas || doc?.config?.scraping?.url_schemas || [];
+}
+
+/**
+ * Silme artık asenkron: domain anında REMOVED işaretlenip `deletion` alanı
+ * yazılıyor, ağır cascade arka planda koşuyor. Liste bunu ayrı göstermeli —
+ * yoksa "sildim ama duruyor" gibi görünür.
+ */
+function deletionState(doc) {
+  const del = doc?.deletion;
+  if (!del?.state) return null;
+  if (del.state === 'failed') return { label: 'Silme başarısız', variant: 'destructive', error: del.error };
+  if (del.state === 'running') return { label: 'Siliniyor…', variant: 'warning', error: null };
+  return null;
+}
 
 function shortId(id) {
   const s = String(id || '');
@@ -152,115 +211,14 @@ function CompanyOwnerCell({ companyId, context }) {
   );
 }
 
-/**
- * Firma seçici: ObjectId yazmak yerine ada göre arayıp seçtirir; dışarı `value`
- * olarak companyId döner. `initialLabel` (ör. companyContext.company.name) düzenleme
- * modunda mevcut firmanın adını göstermek için verilir; yoksa id'den ada çözer.
- */
-function CompanySelect({ value, initialLabel, onChange, placeholder = 'Firma seç (opsiyonel)' }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [pickedLabel, setPickedLabel] = useState(initialLabel || '');
-  const rootRef = useRef(null);
-
-  const { data, isFetching } = useGetCompaniesQuery(
-    { query: search.trim() || undefined, limit: 20 },
-    { skip: !open },
-  );
-  const items = data?.items ?? [];
-
-  // value var ama etiket yoksa (eski kayıt, context'siz) id'den adı çöz.
-  const needLabelLookup = Boolean(value) && !pickedLabel;
-  const { data: current } = useGetCompanyQuery(value, { skip: !needLabelLookup });
-  const label = pickedLabel || current?.companyName || (value ? shortId(value) : '');
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDocDown = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onDocDown);
-    return () => document.removeEventListener('mousedown', onDocDown);
-  }, [open]);
-
-  const pick = (c) => {
-    onChange(c?.id || '');
-    setPickedLabel(c ? (c.companyName || c.id) : '');
-    setOpen(false);
-    setSearch('');
-  };
-
-  return (
-    <div className="relative" ref={rootRef}>
-      <div className="flex gap-1.5">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-left text-sm hover:bg-accent"
-        >
-          <span className={cn('flex min-w-0 items-center gap-2', !value && 'text-muted-foreground')}>
-            <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate">{value ? label : placeholder}</span>
-          </span>
-          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
-        </button>
-        {value ? (
-          <Button type="button" variant="outline" size="icon" className="size-9 shrink-0" title="Firmayı kaldır"
-            onClick={() => pick(null)}>
-            <X className="size-3.5" />
-          </Button>
-        ) : null}
-      </div>
-
-      {open && (
-        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-border bg-card shadow-lg">
-          <div className="border-b border-border p-2">
-            <div className="flex items-center gap-2 rounded-md border border-border px-2">
-              <Search className="size-3.5 shrink-0 text-muted-foreground" />
-              <input
-                autoFocus
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Firma adı ara…"
-                className="h-8 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-          </div>
-          <div className="max-h-56 overflow-y-auto py-1">
-            {isFetching ? (
-              <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" /> Aranıyor…
-              </div>
-            ) : items.length === 0 ? (
-              <p className="px-3 py-4 text-center text-sm text-muted-foreground">
-                {search.trim() ? 'Firma bulunamadı.' : 'Aramak için yazın.'}
-              </p>
-            ) : (
-              items.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => pick(c)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-foreground">{c.companyName || shortId(c.id)}</span>
-                    {(c.email || c.slug) ? <span className="block truncate text-xs text-muted-foreground">{c.email || c.slug}</span> : null}
-                  </span>
-                  {value === c.id ? <Check className="size-3.5 shrink-0 text-primary" /> : null}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
+// NOT: Global "URL'ler" sekmesi kaldırıldı — domain bağlamı olmadan düz bir URL
+// kuyruğu listesi tek başına bir şey anlatmıyordu ve aynı veri (üstelik durum
+// dağılımı + içerik önizlemesiyle) domain detayında zaten var.
 const SECTIONS = [
   { key: 'status', label: 'Genel Durum', icon: Activity, desc: 'Sistem & node özeti' },
   { key: 'domains', label: 'Domainler', icon: Globe, desc: 'Domain & scraping kontrolü' },
   { key: 'subscriptions', label: 'Abonelikler', icon: Rss, desc: 'Firma ↔ domain abonelik yönetimi' },
-  { key: 'urls', label: "URL'ler", icon: Link2, desc: 'Keşfedilen URL kuyruğu' },
+  { key: 'tuning', label: 'Hız Kontrolü', icon: Gauge, desc: 'Canlı crawl hızı & eşzamanlılık' },
   { key: 'logs', label: 'Crawl Logları', icon: ScrollText, desc: 'Tarama denemesi kayıtları' },
   { key: 'nodes', label: "Node'lar", icon: Server, desc: 'Scraper worker yönetimi' },
   { key: 'reports', label: 'Raporlar', icon: ShieldAlert, desc: 'Kısıtlı domainler & RabbitMQ' },
@@ -323,6 +281,274 @@ function StatusSection({ authorized }) {
 }
 
 /* ════════════ Domain modalları ════════════ */
+
+const SCHEMA_FAMILIES = ['article', 'product', 'category', 'static'];
+const EMPTY_SCHEMA_DRAFT = { pattern: '', label: '', knowledge_source: '', css: '' };
+
+/**
+ * URL şema yönetimi — domain düzenlemenin ikinci sekmesi.
+ *
+ * İki farklı yazma yolu var ve ikisi de gerekli:
+ *  • Ekleme/güncelleme → `schemas/commit`. Bu uç MERGE eder; analizörün ürettiği
+ *    ve burada listelenmeyen girdileri korur.
+ *  • Silme → `scraping-config` POST. Commit silme yapamıyor (yalnız ekler), bu
+ *    yüzden tek yol config'in TAMAMINI eksik girdiyle yeniden yazmak.
+ * `startCrawl: false` gönderiyoruz — şema düzenlemek taramayı başlatmamalı.
+ */
+function DomainSchemasPanel({ domain }) {
+  const { data: cfgData, isFetching, isError, error, refetch } = useGetScrapingConfigQuery(domain);
+  const noConfig = isError && error?.status === 404;
+  const config = cfgData?.scraping_config || {};
+  const schemas = config.url_schemas || [];
+
+  const [commitSchemas, { isLoading: committing }] = useCommitDomainSchemasMutation();
+  const [saveCfg, { isLoading: replacing }] = useSaveScrapingConfigMutation();
+  const [testSchema, { isLoading: testing }] = useTestDomainSchemaMutation();
+  const [generateSchemas, { isLoading: generating }] = useGenerateDomainSchemasMutation();
+
+  const [draft, setDraft] = useState(null); // { index|null, ...EMPTY_SCHEMA_DRAFT }
+  const [msg, setMsg] = useState(null);     // { tone, text }
+  const [testResult, setTestResult] = useState(null);
+  const [genPattern, setGenPattern] = useState({ pattern: '', family: 'article' });
+
+  const openDraft = (entry, index) => {
+    setTestResult(null); setMsg(null);
+    setDraft(entry
+      ? {
+          index,
+          pattern: entry.pattern || '',
+          label: entry.label || '',
+          knowledge_source: entry.knowledge_source || '',
+          css: entry.css_schema ? JSON.stringify(entry.css_schema, null, 2) : '',
+        }
+      : { index: null, ...EMPTY_SCHEMA_DRAFT });
+  };
+
+  /** css_schema boş bırakılabilir (sadece pattern eşleme); doluysa JSON nesnesi olmalı. */
+  const parseCss = () => {
+    const raw = (draft.css || '').trim();
+    if (!raw) return { ok: true, value: null };
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+        return { ok: false, error: 'css_schema bir JSON nesnesi olmalı.' };
+      }
+      return { ok: true, value: parsed };
+    } catch { return { ok: false, error: 'css_schema geçerli JSON değil.' }; }
+  };
+
+  const runTest = async () => {
+    const css = parseCss();
+    if (!css.ok) { setMsg({ tone: 'destructive', text: css.error }); return; }
+    if (!css.value) { setMsg({ tone: 'destructive', text: 'Test için css_schema gerekli.' }); return; }
+    setMsg(null); setTestResult(null);
+    try {
+      const res = await testSchema({
+        domain,
+        pattern: draft.pattern.trim() || undefined,
+        css_schema: css.value,
+        maxSamples: 2,
+      }).unwrap();
+      setTestResult(res);
+    } catch (e) {
+      const u = upstreamErr(e);
+      setMsg({
+        tone: 'destructive',
+        text: e?.status === 504
+          ? 'Test zaman aşımına uğradı — örnek sayfalar uzak scraper üzerinden çekiliyor, tekrar deneyin.'
+          : (u.error || 'Şema testi başarısız.'),
+      });
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!draft.pattern.trim()) { setMsg({ tone: 'destructive', text: 'Pattern zorunlu (ör. /urun/*).' }); return; }
+    const css = parseCss();
+    if (!css.ok) { setMsg({ tone: 'destructive', text: css.error }); return; }
+    setMsg(null);
+    const entry = { pattern: draft.pattern.trim(), css_schema: css.value };
+    if (draft.label.trim()) entry.label = draft.label.trim();
+    if (draft.knowledge_source.trim()) entry.knowledge_source = draft.knowledge_source.trim();
+    try {
+      const res = await commitSchemas({ domain, schemas: [entry], startCrawl: false }).unwrap();
+      setMsg({ tone: 'success', text: `Kaydedildi · ${res?.schemasWritten ?? 1} şema yazıldı.` });
+      setDraft(null); setTestResult(null);
+      refetch();
+    } catch (e) {
+      setMsg({ tone: 'destructive', text: upstreamErr(e).error || 'Şema kaydedilemedi.' });
+    }
+  };
+
+  const removeSchema = async (index) => {
+    const entry = schemas[index];
+    if (!window.confirm(`"${entry.pattern || entry.label}" şeması silinsin mi?`)) return;
+    setMsg(null);
+    try {
+      // Commit silemez; config'in tamamını eksik girdiyle yeniden yazıyoruz.
+      await saveCfg({ domain, ...config, url_schemas: schemas.filter((_, i) => i !== index) }).unwrap();
+      setMsg({ tone: 'success', text: 'Şema silindi.' });
+      refetch();
+    } catch (e) {
+      setMsg({ tone: 'destructive', text: upstreamErr(e).error || 'Şema silinemedi.' });
+    }
+  };
+
+  const runGenerate = async () => {
+    if (!genPattern.pattern.trim()) { setMsg({ tone: 'destructive', text: 'Üretim için pattern gerekli.' }); return; }
+    setMsg(null);
+    try {
+      const res = await generateSchemas({
+        domain,
+        patterns: [{ pattern: genPattern.pattern.trim(), family: genPattern.family }],
+      }).unwrap();
+      setMsg({
+        tone: 'success',
+        text: res?.status === 'already_queued'
+          ? 'Zaten kuyrukta — analiz bitince şemalar burada görünür.'
+          : 'Üretim kuyruğa alındı. Arka planda çalışır; birkaç dakika sonra yenileyin.',
+      });
+      setGenPattern({ pattern: '', family: 'article' });
+    } catch (e) {
+      setMsg({ tone: 'destructive', text: upstreamErr(e).error || 'Şema üretimi başlatılamadı.' });
+    }
+  };
+
+  if (isFetching && !cfgData) return <Skeleton className="h-48 w-full" />;
+
+  return (
+    <div className="space-y-3">
+      {msg && <Alert variant={msg.tone === 'destructive' ? 'destructive' : undefined}><AlertDescription>{msg.text}</AlertDescription></Alert>}
+      {isError && !noConfig && <Alert variant="destructive"><AlertDescription>Şema config'i alınamadı.</AlertDescription></Alert>}
+
+      {schemas.length === 0 ? (
+        <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border py-8 text-center">
+          <Braces className="size-5 text-muted-foreground" />
+          <p className="text-sm font-medium text-foreground">Bu domainde URL şeması yok</p>
+          <p className="text-xs text-muted-foreground">Şemasız taramada sayfalar yalnız düz metin olarak alınır.</p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {schemas.map((s, i) => {
+            const fields = s.css_schema?.fields;
+            const fieldCount = Array.isArray(fields) ? fields.length : Object.keys(s.css_schema || {}).length;
+            return (
+              <div key={`${s.pattern || s.label}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate font-mono text-sm text-foreground">{s.pattern || (s.sitemaps ? `sitemap: ${s.sitemaps.length}` : '—')}</div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {s.label ? <span>{s.label}</span> : null}
+                    <Badge variant="muted">{s.css_schema ? `${fieldCount} alan` : 'şemasız'}</Badge>
+                    {s.source ? <Badge variant={s.source === 'user_reviewed' ? 'primary' : 'muted'}>{s.source}</Badge> : null}
+                    {s.knowledge_source ? <span>· {s.knowledge_source}</span> : null}
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button variant="ghost" size="icon" className="size-7" title="Düzenle" onClick={() => openDraft(s, i)}>
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="size-7" title="Sil" disabled={replacing} onClick={() => removeSchema(i)}>
+                    <Trash2 className="size-3.5 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!draft && (
+        <Button variant="outline" size="sm" onClick={() => openDraft(null, null)}>
+          <Plus className="size-3.5" /> Şema ekle
+        </Button>
+      )}
+
+      {draft && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="space-y-2.5 p-4">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-2sm font-medium">URL pattern *</label>
+                <Input value={draft.pattern} onChange={(e) => setDraft((d) => ({ ...d, pattern: e.target.value }))} placeholder="/urun/*" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-2sm font-medium">Etiket</label>
+                <Input value={draft.label} onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))} placeholder="product_page" />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-2sm font-medium">Bilgi kaynağı (opsiyonel)</label>
+              <Input value={draft.knowledge_source} onChange={(e) => setDraft((d) => ({ ...d, knowledge_source: e.target.value }))} placeholder="RAG havuzunu ayırmak için" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-2sm font-medium">css_schema (JSON — boş bırakılabilir)</label>
+              <textarea
+                value={draft.css}
+                onChange={(e) => setDraft((d) => ({ ...d, css: e.target.value }))}
+                spellCheck={false}
+                placeholder={'{\n  "name": "product",\n  "baseSelector": ".product",\n  "fields": [{ "name": "title", "selector": "h1", "type": "text" }]\n}'}
+                className="h-40 w-full resize-y rounded-lg border border-border bg-background p-3 font-mono text-xs leading-relaxed"
+              />
+            </div>
+
+            {testResult && (
+              <Alert variant={testResult.verdict === 'pass' ? undefined : 'destructive'}>
+                <AlertTitle>Test: {testResult.verdict === 'pass' ? 'geçti' : 'kaldı'} ({testResult.passed}/{testResult.total})</AlertTitle>
+                <AlertDescription>
+                  <div className="mt-1 space-y-1">
+                    {(testResult.samples || []).map((s, i) => (
+                      <div key={i} className="truncate text-xs">
+                        {s.ok ? '✓' : '✗'} {s.url} {s.ok ? `· ${nfmt(s.chars)} karakter` : `· ${s.error || 'içerik alınamadı'}`}
+                      </div>
+                    ))}
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" size="sm" disabled={testing} onClick={runTest} title="Örnek sayfalarda çalıştırır — 1 dakikaya kadar sürebilir">
+                {testing ? <Loader2 className="size-3.5 animate-spin" /> : <FlaskConical className="size-3.5" />} Test et
+              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setDraft(null); setTestResult(null); }}>İptal</Button>
+                <Button size="sm" disabled={committing} onClick={saveDraft}>
+                  {committing ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Kaydet
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="rounded-lg border border-border p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Şemayı otomatik ürettir</p>
+        <p className="mb-2 text-xs text-muted-foreground">
+          Analizör örnek sayfalardan css_schema çıkarır. Arka planda çalışır — kuyruğa alındıktan
+          birkaç dakika sonra bu listede belirir.
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[180px] flex-1 space-y-1">
+            <label className="text-2sm font-medium">Pattern</label>
+            <Input value={genPattern.pattern} onChange={(e) => setGenPattern((g) => ({ ...g, pattern: e.target.value }))} placeholder="/blog/*" />
+          </div>
+          <div className="w-36 space-y-1">
+            <label className="text-2sm font-medium">Aile</label>
+            <Select value={genPattern.family} onValueChange={(v) => setGenPattern((g) => ({ ...g, family: v }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SCHEMA_FAMILIES.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" size="sm" disabled={generating} onClick={runGenerate}>
+            {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />} Ürettir
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DomainFormModal({ mode, domain, onSubmit, onClose }) {
   const isEdit = mode === 'edit';
   const [form, setForm] = useState({
@@ -335,6 +561,7 @@ function DomainFormModal({ mode, domain, onSubmit, onClose }) {
   });
   const [err, setErr] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState('general'); // düzenlemede: general | schemas
 
   const submit = async () => {
     const payload = {};
@@ -362,12 +589,31 @@ function DomainFormModal({ mode, domain, onSubmit, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm" onClick={onClose}>
-      <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+      <Card className={cn('flex max-h-[90vh] w-full flex-col', isEdit ? 'max-w-2xl' : 'max-w-md')} onClick={(e) => e.stopPropagation()}>
         <CardHeader>
           <CardTitle className="truncate">{isEdit ? `Domain düzenle · ${domain.domain}` : 'Domain ekle'}</CardTitle>
           <CardToolbar><Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button></CardToolbar>
         </CardHeader>
-        <CardContent className="space-y-3 p-5">
+        {isEdit && (
+          <div className="flex gap-1 border-b border-border px-5">
+            {[{ k: 'general', label: 'Genel', icon: SlidersHorizontal }, { k: 'schemas', label: 'Şemalar', icon: Braces }].map((t) => (
+              <button
+                key={t.k}
+                type="button"
+                onClick={() => setTab(t.k)}
+                className={cn(
+                  'flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+                  tab === t.k ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <t.icon className="size-3.5" /> {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <CardContent className={cn('space-y-3 overflow-y-auto p-5', isEdit && tab === 'schemas' && 'space-y-0')}>
+          {isEdit && tab === 'schemas' ? <DomainSchemasPanel domain={domain.domain} /> : (
+          <>
           {err && <Alert variant="destructive"><AlertDescription>{err.error || 'İşlem başarısız.'}</AlertDescription></Alert>}
           {!isEdit && (
             <div className="space-y-1.5">
@@ -425,6 +671,8 @@ function DomainFormModal({ mode, domain, onSubmit, onClose }) {
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />} {isEdit ? 'Kaydet' : 'Ekle'}
             </Button>
           </div>
+          </>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -515,6 +763,11 @@ function DeleteDomainModal({ domain, onConfirm, onClose }) {
             <AlertTitle>Bu işlem geri alınamaz</AlertTitle>
             <AlertDescription>Domain, crawl'ı ve türetilmiş ürünler (productization) <b>kalıcı</b> silinir. Paylaşımlı bir crawl ise diğer tüketiciler de etkilenir. Yalnızca firma bağını koparmak istiyorsan bunun yerine aboneliği kaldır.</AlertDescription>
           </Alert>
+          <p className="text-xs text-muted-foreground">
+            Domain hemen taramadan çıkarılır; bağlı crawl verisinin temizliği veri hacmine göre
+            arka planda dakikalar sürebilir. İlerlemeyi listedeki <b>Siliniyor…</b> rozetinden
+            izleyebilirsiniz — takılırsa aynı silmeyi tekrar çalıştırmak güvenlidir.
+          </p>
           {err && <Alert variant="destructive"><AlertDescription>{err.error || err.details || 'Silme başarısız.'}</AlertDescription></Alert>}
           <div className="space-y-1.5">
             <label className="text-2sm font-medium">Onaylamak için domaini yaz: <span className="font-mono">{domain.domain}</span></label>
@@ -702,13 +955,32 @@ function ResetModal({ domain, onConfirm, onClose }) {
 function DomainsSection({ authorized }) {
   const [status, setStatus] = useState('all');
   const [sort, setSort] = useState('createdAt:desc'); // varsayılan: son eklenen en üstte
+  const [verified, setVerified] = useState('all');
+  const [hasSchema, setHasSchema] = useState('all');
+  const [companyId, setCompanyId] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState(null);
+
+  // Filtre değişince ilk sayfaya dön — aksi halde 5. sayfada boş liste görünür.
+  const reset = (fn) => (v) => { fn(v); setPage(1); };
 
   const [sortBy, order] = sort.split(':');
   const params = { page, limit: PAGE_SIZE, sort: sortBy, order };
   if (status !== 'all') params.status = status;
+  if (verified !== 'all') params.verified = verified;
+  if (hasSchema !== 'all') params.hasSchema = hasSchema;
+  if (companyId) params.companyId = companyId;
+  if (search) params.search = search;
   const { data, isFetching, isError, refetch } = useGetFetcherDomainsQuery(params, { skip: !authorized });
+  const activeFilters = [
+    status !== 'all', verified !== 'all', hasSchema !== 'all', Boolean(companyId), Boolean(search),
+  ].filter(Boolean).length;
+  const clearFilters = () => {
+    setStatus('all'); setVerified('all'); setHasSchema('all');
+    setCompanyId(''); setSearch(''); setSearchInput(''); setPage(1);
+  };
   const domains = data?.domains ?? [];
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -734,33 +1006,75 @@ function DomainsSection({ authorized }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <div className="w-44">
-            <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="Durum" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tüm Durumlar</SelectItem>
-                <SelectItem value="ACTIVE">ACTIVE</SelectItem>
-                <SelectItem value="RESTRICTED">RESTRICTED</SelectItem>
-                <SelectItem value="PAUSED">PAUSED</SelectItem>
-              </SelectContent>
-            </Select>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-[240px] flex-1 items-center gap-2">
+              <Input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput.trim()); setPage(1); } }}
+                placeholder="Domain adında ara…"
+              />
+              <Button variant="outline" size="icon" onClick={() => { setSearch(searchInput.trim()); setPage(1); }}>
+                <Search className="size-4" />
+              </Button>
+            </div>
+            <div className="ms-auto flex gap-2">
+              <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
+                <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setModal({ type: 'add' })}><Plus className="size-4" /> Domain Ekle</Button>
+              <Button size="sm" onClick={() => setModal({ type: 'wizard' })}><Wand2 className="size-4" /> Sihirbaz</Button>
+            </div>
           </div>
-          <div className="w-52">
-            <Select value={sort} onValueChange={(v) => { setSort(v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="Sıralama" /></SelectTrigger>
-              <SelectContent>
-                {DOMAIN_SORTS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <span className="text-xs text-muted-foreground">{total} domain</span>
-          <div className="ms-auto flex gap-2">
-            <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
-              <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setModal({ type: 'add' })}><Plus className="size-4" /> Domain Ekle</Button>
-            <Button size="sm" onClick={() => setModal({ type: 'wizard' })}><Wand2 className="size-4" /> Sihirbaz</Button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-40">
+              <Select value={status} onValueChange={reset(setStatus)}>
+                <SelectTrigger><SelectValue placeholder="Durum" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tüm durumlar</SelectItem>
+                  {DOMAIN_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-40">
+              <Select value={verified} onValueChange={reset(setVerified)}>
+                <SelectTrigger><SelectValue placeholder="Doğrulama" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Doğrulama: hepsi</SelectItem>
+                  <SelectItem value="true">Doğrulanmış</SelectItem>
+                  <SelectItem value="false">Doğrulanmamış</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-40">
+              <Select value={hasSchema} onValueChange={reset(setHasSchema)}>
+                <SelectTrigger><SelectValue placeholder="Şema" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Şema: hepsi</SelectItem>
+                  <SelectItem value="true">Şeması var</SelectItem>
+                  <SelectItem value="false">Şeması yok</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-56">
+              <CompanySelect value={companyId} onChange={reset(setCompanyId)} placeholder="Firmaya göre filtrele" />
+            </div>
+            <div className="w-56">
+              <Select value={sort} onValueChange={reset(setSort)}>
+                <SelectTrigger><SelectValue placeholder="Sıralama" /></SelectTrigger>
+                <SelectContent>
+                  {DOMAIN_SORTS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <span className="text-xs text-muted-foreground">{nfmt(total)} domain</span>
+            {activeFilters > 0 && (
+              <Button variant="ghost" size="sm" className="h-8" onClick={clearFilters}>
+                <Undo2 className="size-3.5" /> Filtreleri temizle ({activeFilters})
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -783,26 +1097,56 @@ function DomainsSection({ authorized }) {
                   <TableRow>
                     <TableHead>Domain</TableHead>
                     <TableHead>Durum</TableHead>
-                    <TableHead>Ülke</TableHead>
                     <TableHead>Firma / Kullanıcı</TableHead>
+                    <TableHead className="text-right">Abone</TableHead>
+                    <TableHead className="text-right">Şema</TableHead>
+                    <TableHead className="text-right">Sayfa</TableHead>
+                    <TableHead>Son Tarama</TableHead>
                     <TableHead>Doğrulama</TableHead>
-                    <TableHead>Eklenme</TableHead>
                     <TableHead className="text-right">İşlemler</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {domains.map((d) => (
-                    <TableRow key={d.domain} className="cursor-pointer" onClick={() => setDetail(d.domain)}>
-                      <TableCell className="font-medium text-foreground">{d.domain}</TableCell>
-                      <TableCell><Badge variant={domainStatusVariant(d.status)}>{d.status || '—'}</Badge></TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{d.locate || '—'}</TableCell>
+                  {domains.map((d) => {
+                    const del = deletionState(d);
+                    const schemaCount = domainSchemas(d).length;
+                    return (
+                    <TableRow key={d.domain} className={cn('cursor-pointer', del && 'opacity-70')} onClick={() => setDetail(d.domain)}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{d.domain}</div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span>{d.locate || '—'}</span>
+                          {d.site_profile?.site_type ? <><span>·</span><span>{d.site_profile.site_type}</span></> : null}
+                          {d.robots?.status && d.robots.status !== 'OK'
+                            ? <><span>·</span><span className="text-amber-600">robots: {d.robots.status}</span></> : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {del
+                          ? <Badge variant={del.variant} title={del.error || undefined}>{del.label}</Badge>
+                          : <Badge variant={domainStatusVariant(d.status)}>{d.status || '—'}</Badge>}
+                        {d.sitemap_stats?.processing_status === 'RUNNING'
+                          ? <div className="mt-0.5 text-xs text-muted-foreground">sitemap işleniyor</div> : null}
+                      </TableCell>
                       <TableCell className="max-w-[200px]"><CompanyOwnerCell companyId={d.companyId} context={d.companyContext} /></TableCell>
+                      <TableCell className="text-right text-sm tabular-nums text-muted-foreground"
+                        title={`Abonelik: ${d.subscriptionCount ?? 0} · Legacy bilgi sahibi: ${d.legacyOwnerCount ?? 0}`}>
+                        {d.subscriberCount ? d.subscriberCount : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                        {schemaCount ? schemaCount : <span className="text-amber-600">yok</span>}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                        {nfmt(d.stats?.total_pages_crawled)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground" title={formatTr(d.stats?.last_crawl_at)}>
+                        {relativeTr(d.stats?.last_crawl_at)}
+                      </TableCell>
                       <TableCell>
                         {d.verification?.isVerified
                           ? <Badge variant="success">Doğrulandı</Badge>
                           : <Badge variant="muted">{d.verification?.status || 'Beklemede'}</Badge>}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTr(d.createdAt)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="icon" className="size-7" title="Başlat"
@@ -817,13 +1161,13 @@ function DomainsSection({ authorized }) {
                             disabled={busy === `${d.domain}:restart`} onClick={() => act(restartScraping, d.domain, 'restart')}>
                             {busy === `${d.domain}:restart` ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCw className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="icon" className="size-7" title="Düzenle" onClick={() => setModal({ type: 'edit', domain: d })}>
+                          <Button variant="ghost" size="icon" className="size-7" title="Düzenle & şemalar" onClick={() => setModal({ type: 'edit', domain: d })}>
                             <Pencil className="size-3.5" />
                           </Button>
                           <Button variant="ghost" size="icon" className="size-7" title="Doğrula" onClick={() => setModal({ type: 'verify', domain: d })}>
                             <ShieldCheck className="size-3.5 text-primary" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="size-7" title="Scraping config" onClick={() => setModal({ type: 'config', domain: d })}>
+                          <Button variant="ghost" size="icon" className="size-7" title="Ham scraping config (JSON)" onClick={() => setModal({ type: 'config', domain: d })}>
                             <SlidersHorizontal className="size-3.5" />
                           </Button>
                           <Button variant="ghost" size="icon" className="size-7" title="Kalıcı sil" onClick={() => setModal({ type: 'delete', domain: d })}>
@@ -832,7 +1176,8 @@ function DomainsSection({ authorized }) {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -911,21 +1256,74 @@ function DomainDetail({ domain, onClose }) {
               <p className="text-sm text-muted-foreground">Domain bulunamadı.</p>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-2 text-sm">
+                {deletionState(doc) && (
+                  <Alert variant={doc.deletion?.state === 'failed' ? 'destructive' : undefined}>
+                    <AlertTitle className="flex items-center gap-1.5">
+                      {doc.deletion?.state === 'failed' ? <AlertTriangle className="size-4" /> : <Loader2 className="size-4 animate-spin" />}
+                      {deletionState(doc).label}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {doc.deletion?.state === 'failed'
+                        ? <>Arka plan temizliği hata verdi: {doc.deletion.error || 'bilinmeyen hata'}. Silmeyi tekrar deneyebilirsiniz — işlem idempotent.</>
+                        : <>Domain taramadan çıkarıldı; bağlı crawl verisi arka planda siliniyor. Başladı: {formatTr(doc.deletion?.startedAt)}</>}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
                   <div><span className="text-muted-foreground">Ülke: </span>{doc.locate || '—'}</div>
-                  <div className="min-w-0">
+                  <div><span className="text-muted-foreground">Site tipi: </span>{doc.site_profile?.site_type || '—'}</div>
+                  <div><span className="text-muted-foreground">Öncelik: </span>{doc.priority ?? '—'}</div>
+                  <div className="col-span-2 min-w-0">
                     <span className="text-muted-foreground">Firma / Kullanıcı: </span>
                     <CompanyOwnerCell companyId={doc.companyId} context={doc.companyContext} />
                   </div>
+                  <div><span className="text-muted-foreground">Abone: </span>{doc.subscriberCount ?? (doc.informationOwners?.length || 0)}</div>
                   <div><span className="text-muted-foreground">Doğrulama: </span>{doc.verification?.isVerified ? 'Doğrulandı' : (doc.verification?.status || 'Beklemede')}</div>
                   <div><span className="text-muted-foreground">Strateji: </span>{doc.scraping_config?.strategy || '—'}</div>
+                  <div><span className="text-muted-foreground">Şema: </span>{domainSchemas(doc).length || 'yok'}</div>
+                  <div><span className="text-muted-foreground">Kapsam: </span>{doc.config?.crawl_scope || '—'}</div>
+                  <div><span className="text-muted-foreground">Maks. sayfa: </span>{nfmt(doc.config?.max_pages)}</div>
+                  <div><span className="text-muted-foreground">Recrawl: </span>{doc.config?.recrawl_interval_days != null ? `${doc.config.recrawl_interval_days} gün` : '—'}</div>
+                  <div><span className="text-muted-foreground">Oto-başlat: </span>{doc.autoStartScraping === false ? 'Kapalı' : doc.autoStartScraping ? 'Açık' : '—'}</div>
+                  <div><span className="text-muted-foreground">robots: </span>{doc.robots?.status || '—'}</div>
+                  <div><span className="text-muted-foreground">Keşif modu: </span>{doc.discovery_mode || 'sitemap'}</div>
+                  <div><span className="text-muted-foreground">Analiz: </span>{doc.extraction_analysis?.state || '—'}</div>
                   <div><span className="text-muted-foreground">Oluşturma: </span>{formatTr(doc.createdAt)}</div>
                   <div><span className="text-muted-foreground">Güncelleme: </span>{formatTr(doc.updatedAt)}</div>
                 </div>
 
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tarama Metrikleri</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
+                    <div><span className="text-muted-foreground">Taranan sayfa: </span>{nfmt(doc.stats?.total_pages_crawled)}</div>
+                    <div><span className="text-muted-foreground">Tur sayısı: </span>{nfmt(doc.stats?.cycle_count)}</div>
+                    <div><span className="text-muted-foreground">İlk tarama: </span>{formatTr(doc.stats?.first_crawl_at)}</div>
+                    <div><span className="text-muted-foreground">Son tarama: </span>{formatTr(doc.stats?.last_crawl_at)}</div>
+                    <div><span className="text-muted-foreground">Son tur: </span>{formatTr(doc.stats?.last_cycle_at)}</div>
+                    <div><span className="text-muted-foreground">Sıradaki: </span>{formatTr(stats?.next_scheduled?.at)}</div>
+                  </div>
+                </div>
+
+                {doc.sitemap_stats && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sitemap</p>
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge variant={doc.sitemap_stats.processing_status === 'DONE' ? 'success' : doc.sitemap_stats.processing_status === 'ERROR' ? 'destructive' : 'warning'}>
+                        {doc.sitemap_stats.processing_status || '—'}
+                      </Badge>
+                      <span className="text-muted-foreground">{nfmt(doc.sitemap_stats.total_urls)} URL</span>
+                      <span className="text-muted-foreground">Son ayrıştırma: {formatTr(doc.sitemap_stats.last_parsed_at)}</span>
+                    </div>
+                    {doc.sitemap_stats.last_error
+                      ? <p className="mt-1 text-xs text-destructive">{doc.sitemap_stats.last_error}</p> : null}
+                  </div>
+                )}
+
                 {Array.isArray(doc.sitemap_urls) && doc.sitemap_urls.length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {doc.sitemap_urls.slice(0, 6).map((s, i) => <Badge key={i} variant="muted">{s}</Badge>)}
+                    {doc.sitemap_urls.length > 6 ? <Badge variant="muted">+{doc.sitemap_urls.length - 6}</Badge> : null}
                   </div>
                 )}
 
@@ -978,22 +1376,27 @@ function DomainDetail({ domain, onClose }) {
   );
 }
 
-/* ════════════ URL'ler ════════════ */
-function UrlsSection({ authorized }) {
+/* ════════════ Crawl Logları ════════════ */
+/**
+ * DİKKAT: bu uç artık toplam kayıt SAYMIYOR ve zaman penceresi zorunlu.
+ * `crawl_logs` her fetch için bir satır yazıyor ve hiç budanmıyor; eski hâlinde
+ * her istek `count_documents` ile koleksiyonu tam tarayıp timeout'a gidiyordu.
+ * Bu yüzden burada "N kayıt" rozeti yok — sayfalama `has_more` ile yürüyor.
+ */
+function LogsSection({ authorized }) {
   const [domainInput, setDomainInput] = useState('');
   const [domain, setDomain] = useState('');
-  const [status, setStatus] = useState('all');
+  const [hours, setHours] = useState('24');
   const [page, setPage] = useState(1);
 
-  const params = { page, limit: PAGE_SIZE };
+  const params = { page, limit: PAGE_SIZE, hours: Number(hours) };
   if (domain) params.domain = domain;
-  if (status !== 'all') params.status = status;
-  const { data, isFetching, isError, refetch } = useGetFetcherUrlsQuery(params, { skip: !authorized });
-  const urls = data?.urls ?? [];
-  const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const { data, isFetching, isError, refetch } = useGetFetcherLogsQuery(params, { skip: !authorized });
+  const logs = data?.logs ?? [];
+  const hasMore = Boolean(data?.has_more);
 
   const applyDomain = () => { setDomain(domainInput.trim()); setPage(1); };
+  const windowLabel = LOG_WINDOWS.find((w) => w.value === hours)?.label ?? `Son ${hours} saat`;
 
   return (
     <div className="space-y-4">
@@ -1006,15 +1409,10 @@ function UrlsSection({ authorized }) {
             <Button variant="outline" size="icon" onClick={applyDomain}><Search className="size-4" /></Button>
           </div>
           <div className="w-40">
-            <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="Durum" /></SelectTrigger>
+            <Select value={hours} onValueChange={(v) => { setHours(v); setPage(1); }}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Tüm Durumlar</SelectItem>
-                <SelectItem value="READY">READY</SelectItem>
-                <SelectItem value="WAIT">WAIT</SelectItem>
-                <SelectItem value="DONE">DONE</SelectItem>
-                <SelectItem value="ERROR">ERROR</SelectItem>
-                <SelectItem value="PAUSED">PAUSED</SelectItem>
+                {LOG_WINDOWS.map((w) => <SelectItem key={w.value} value={w.value}>{w.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1026,100 +1424,29 @@ function UrlsSection({ authorized }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>URL'ler</CardTitle>
-          <CardToolbar><Badge variant="muted">{total.toLocaleString('tr-TR')} kayıt</Badge></CardToolbar>
-        </CardHeader>
-        <CardContent className="px-0 py-0">
-          {isError ? (
-            <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>URL listesi alınamadı.</AlertDescription></Alert></div>
-          ) : isFetching && urls.length === 0 ? (
-            <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
-          ) : urls.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-14 text-center"><Inbox className="size-6 text-muted-foreground" /><p className="font-semibold text-foreground">URL yok</p></div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>URL</TableHead>
-                    <TableHead>Durum</TableHead>
-                    <TableHead>Öncelik</TableHead>
-                    <TableHead>Derinlik</TableHead>
-                    <TableHead>Son Tarama</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {urls.map((u) => (
-                    <TableRow key={u._id || u.url}>
-                      <TableCell className="max-w-[360px] truncate text-sm text-foreground">{u.url}</TableCell>
-                      <TableCell><Badge variant={urlStatusVariant(u.status)}>{u.status}</Badge></TableCell>
-                      <TableCell className="text-sm tabular-nums text-muted-foreground">{u.priority ?? '—'}</TableCell>
-                      <TableCell className="text-sm tabular-nums text-muted-foreground">{u.depth ?? '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTr(u.lastCrawledAt)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-          {total > PAGE_SIZE && (
-            <div className="flex items-center justify-between border-t border-border p-3">
-              <span className="text-xs text-muted-foreground">Sayfa {page} / {pageCount}</span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled={page <= 1 || isFetching} onClick={() => setPage((p) => p - 1)}>Önceki</Button>
-                <Button variant="outline" size="sm" disabled={page >= pageCount || isFetching} onClick={() => setPage((p) => p + 1)}>Sonraki</Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-/* ════════════ Crawl Logları ════════════ */
-function LogsSection({ authorized }) {
-  const [domainInput, setDomainInput] = useState('');
-  const [domain, setDomain] = useState('');
-  const [page, setPage] = useState(1);
-
-  const params = { page, limit: PAGE_SIZE };
-  if (domain) params.domain = domain;
-  const { data, isFetching, isError, refetch } = useGetFetcherLogsQuery(params, { skip: !authorized });
-  const logs = data?.logs ?? [];
-  const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  const applyDomain = () => { setDomain(domainInput.trim()); setPage(1); };
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <div className="flex min-w-[220px] flex-1 items-center gap-2">
-            <Input value={domainInput} onChange={(e) => setDomainInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && applyDomain()}
-              placeholder="Domaine göre filtrele…" />
-            <Button variant="outline" size="icon" onClick={applyDomain}><Search className="size-4" /></Button>
-          </div>
-          <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
-            <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle>Crawl Logları</CardTitle>
-          <CardToolbar><Badge variant="muted">{total.toLocaleString('tr-TR')} kayıt</Badge></CardToolbar>
+          <CardToolbar>
+            <Badge variant="muted" className="gap-1"><Clock className="size-3" /> {windowLabel}</Badge>
+          </CardToolbar>
         </CardHeader>
         <CardContent className="px-0 py-0">
+          <div className="px-5 pb-3 pt-1">
+            <p className="text-xs text-muted-foreground">
+              Log koleksiyonu her taranan sayfa için satır yazar ve çok büyür; bu yüzden liste
+              yalnız seçili zaman penceresini gösterir ve toplam kayıt sayılmaz. Daha dar bir
+              pencere ya da domain filtresi sorguyu belirgin şekilde hızlandırır.
+            </p>
+          </div>
           {isError ? (
-            <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>Log listesi alınamadı.</AlertDescription></Alert></div>
+            <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>Log listesi alınamadı. Daha dar bir zaman penceresi deneyin.</AlertDescription></Alert></div>
           ) : isFetching && logs.length === 0 ? (
             <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
           ) : logs.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-14 text-center"><Inbox className="size-6 text-muted-foreground" /><p className="font-semibold text-foreground">Log yok</p></div>
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <Inbox className="size-6 text-muted-foreground" />
+              <p className="font-semibold text-foreground">Bu pencerede log yok</p>
+              <p className="text-sm text-muted-foreground">Zaman aralığını genişletin veya domain filtresini kaldırın.</p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -1146,12 +1473,12 @@ function LogsSection({ authorized }) {
               </Table>
             </div>
           )}
-          {total > PAGE_SIZE && (
+          {(page > 1 || hasMore) && (
             <div className="flex items-center justify-between border-t border-border p-3">
-              <span className="text-xs text-muted-foreground">Sayfa {page} / {pageCount}</span>
+              <span className="text-xs text-muted-foreground">Sayfa {page}</span>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" disabled={page <= 1 || isFetching} onClick={() => setPage((p) => p - 1)}>Önceki</Button>
-                <Button variant="outline" size="sm" disabled={page >= pageCount || isFetching} onClick={() => setPage((p) => p + 1)}>Sonraki</Button>
+                <Button variant="outline" size="sm" disabled={!hasMore || isFetching} onClick={() => setPage((p) => p + 1)}>Sonraki</Button>
               </div>
             </div>
           )}
@@ -1160,6 +1487,7 @@ function LogsSection({ authorized }) {
     </div>
   );
 }
+
 
 /* ════════════ Node'lar ════════════ */
 function NodesSection({ authorized }) {
@@ -1340,7 +1668,7 @@ function SubscriptionDetail({ sub, onClose }) {
         </CardHeader>
         <CardContent className="space-y-4 overflow-y-auto p-5 text-sm">
           <div className="grid grid-cols-2 gap-2">
-            <div className="truncate"><span className="text-muted-foreground">Firma: </span>{sub.companyId || '—'}</div>
+            <div className="min-w-0"><span className="text-muted-foreground">Firma: </span><CompanyOwnerCell companyId={sub.companyId} /></div>
             <div><span className="text-muted-foreground">Güncelleme: </span>{formatTr(sub.updatedAt)}</div>
           </div>
           <div>
@@ -1419,6 +1747,71 @@ function DeleteSubModal({ sub, busy, onConfirm, onClose }) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Domain başına abone dökümü.
+ *
+ * Kaynak iki türlü olabilir ve dönen satır bunu `source` ile söyler:
+ *  • "subscriptions"      → domain_subscriptions koleksiyonu (yeni akış)
+ *  • "informationOwners"  → legacy "firma bu siteyi bilgi tabanına ekledi" kaydı
+ * Abonelik akışı feature-flag arkasında olduğu için birçok kurulumda koleksiyon
+ * boş kalıyor; o durumda liste sessizce boş görünmesin diye legacy'ye düşülüyor.
+ */
+function SubscriberStatsCard({ authorized }) {
+  const { data, isFetching, isError, refetch } = useGetFetcherSubscriptionStatsQuery(undefined, { skip: !authorized });
+  const [expanded, setExpanded] = useState(false);
+  const rows = data?.domains ?? [];
+  const shown = expanded ? rows : rows.slice(0, 8);
+  const legacy = data?.source === 'informationOwners';
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Users className="size-4" /> Domain Başına Abone</CardTitle>
+        <CardToolbar>
+          {legacy ? <Badge variant="warning">legacy kayıt</Badge> : null}
+          <span className="text-xs text-muted-foreground">{rows.length} domain</span>
+          <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
+            <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
+          </Button>
+        </CardToolbar>
+      </CardHeader>
+      <CardContent className="space-y-2 p-5">
+        {legacy && (
+          <p className="text-xs text-muted-foreground">
+            Abonelik koleksiyonu boş; sayılar domain kaydındaki legacy bilgi-sahibi
+            listesinden türetildi. Abonelik akışı açılana kadar normal olan budur.
+          </p>
+        )}
+        {isError ? (
+          <Alert variant="destructive"><AlertDescription>Abone dökümü alınamadı.</AlertDescription></Alert>
+        ) : isFetching && rows.length === 0 ? (
+          <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Hiçbir domaine abone firma yok.</p>
+        ) : (
+          <>
+            <div className="space-y-1">
+              {shown.map((r) => (
+                <div key={r.domain} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-1.5">
+                  <span className="min-w-0 truncate text-sm text-foreground">{r.domain}</span>
+                  <Badge variant={r.subscriberCount > 1 ? 'primary' : 'muted'}>
+                    {r.subscriberCount} firma
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            {rows.length > 8 && (
+              <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
+                {expanded ? 'Daha az göster' : `Tümünü göster (${rows.length})`}
+              </Button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1504,9 +1897,13 @@ function SubscriptionsSection({ authorized }) {
     <div className="space-y-4">
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
-          <div className="space-y-1.5">
-            <label className="text-2sm font-medium">Firma ID</label>
-            <Input value={filters.companyId} onChange={(e) => setFilters((f) => ({ ...f, companyId: e.target.value }))} placeholder="ObjectId (opsiyonel)" className="w-56" />
+          <div className="w-56 space-y-1.5">
+            <label className="text-2sm font-medium">Firma</label>
+            <CompanySelect
+              value={filters.companyId}
+              onChange={(id) => setFilters((f) => ({ ...f, companyId: id }))}
+              placeholder="Firma ara ve seç"
+            />
           </div>
           <div className="space-y-1.5">
             <label className="text-2sm font-medium">Domain</label>
@@ -1531,14 +1928,30 @@ function SubscriptionsSection({ authorized }) {
         </Alert>
       )}
 
+      <SubscriberStatsCard authorized={authorized} />
+
       <Card>
+        <CardHeader>
+          <CardTitle>Abonelik Kayıtları</CardTitle>
+          <CardToolbar><span className="text-xs text-muted-foreground">{nfmt(data?.total)} kayıt</span></CardToolbar>
+        </CardHeader>
         <CardContent className="px-0 py-0">
           {isError ? (
             <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>Abonelik listesi alınamadı.</AlertDescription></Alert></div>
           ) : isFetching && subs.length === 0 ? (
             <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
           ) : subs.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-14 text-center"><Rss className="size-6 text-muted-foreground" /><p className="font-semibold text-foreground">Abonelik yok</p><p className="text-sm text-muted-foreground">Filtreleri değiştirip tekrar deneyin.</p></div>
+            <div className="flex flex-col items-center gap-2 px-6 py-14 text-center">
+              <Rss className="size-6 text-muted-foreground" />
+              <p className="font-semibold text-foreground">Abonelik kaydı yok</p>
+              <p className="max-w-lg text-sm text-muted-foreground">
+                Filtreler boşken de liste boşsa abonelik koleksiyonu gerçekten boştur:
+                "web sitesi ekle" akışı, <b>INFORMATION_SUBSCRIPTIONS_ENABLED</b> bayrağı
+                açılana kadar abonelik yazmaz ve firma bağları domain kaydındaki legacy
+                bilgi-sahibi listesinde tutulur. Yukarıdaki "Domain Başına Abone" kartı bu
+                durumda legacy kayıtlardan beslenir.
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -1557,7 +1970,7 @@ function SubscriptionsSection({ authorized }) {
                   {subs.map((s) => (
                     <TableRow key={s.id}>
                       <TableCell className="font-medium text-foreground">{s.domainName || '—'}</TableCell>
-                      <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{s.companyId || '—'}</TableCell>
+                      <TableCell className="max-w-[180px]"><CompanyOwnerCell companyId={s.companyId} /></TableCell>
                       <TableCell><Badge variant={subStateVariant(s.state)}>{s.state}</Badge></TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {s.embedding?.status ? <Badge variant="muted">{s.embedding.status}</Badge> : '—'}
@@ -1591,6 +2004,245 @@ function SubscriptionsSection({ authorized }) {
       {modal?.type === 'detail' && <SubscriptionDetail sub={modal.sub} onClose={() => setModal(null)} />}
       {modal?.type === 'reindex' && <ReindexModal sub={modal.sub} busy={reindexing} onSubmit={submitReindex} onClose={() => setModal(null)} />}
       {modal?.type === 'delete' && <DeleteSubModal sub={modal.sub} busy={deleting} onConfirm={submitDelete} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+/* ════════════ Hız Kontrolü (scheduler tuning) ════════════ */
+
+/**
+ * Knob metadata — fetcher'daki adaptive_tuning.TUNABLES ile birebir eşleşir.
+ * `step` yalnız input hassasiyeti içindir; doğrulama fetcher tarafında.
+ */
+const TUNING_GROUPS = [
+  {
+    title: 'Domain başına hız',
+    hint: 'Token bucket her domain için ayrı işler ama değerler GLOBAL — tek bir domaine özel hız verilemez.',
+    keys: [
+      { key: 'per_domain_rps', label: 'Saniyedeki istek (RPS)', step: 0.01, desc: '0.05 = domain başına 20 saniyede 1 istek.' },
+      { key: 'per_domain_burst', label: 'Patlama (burst)', step: 1, desc: 'Bucket kapasitesi; biriken jeton sayısı.' },
+      { key: 'fairness_per_domain_per_tick', label: 'Tick başına URL', step: 1, desc: 'Bir domainden tek turda alınacak en fazla URL.' },
+      { key: 'scheduler_tick_seconds', label: 'Tick süresi (sn)', step: 0.1, desc: 'Zamanlayıcı döngü aralığı.' },
+    ],
+  },
+  {
+    title: 'Global eşzamanlılık',
+    hint: 'Sert tavan ile yumuşak diz. Inflight yumuşak eşiği geçince kabul oranı kademeli kısılır.',
+    keys: [
+      { key: 'global_max_inflight', label: 'Maks. eşzamanlı URL', step: 10, desc: 'Sert tavan — hiçbir koşulda aşılmaz.' },
+      { key: 'soft_inflight_threshold', label: 'Yumuşak eşik', step: 5, desc: 'Kısma bu inflight değerinden sonra başlar.' },
+      { key: 'soft_inflight_ceiling', label: 'Yumuşak tavan', step: 5, desc: 'Kısmanın en dibe indiği inflight değeri.' },
+      { key: 'min_throttle_factor', label: 'En düşük kısma katsayısı', step: 0.05, desc: '0.15 = en yoğun anda bile %15 hızla devam eder.' },
+    ],
+  },
+  {
+    title: 'Node başına adaptif kapasite (AIMD)',
+    hint: 'Node CPU/RAM bildirmiyor; yük sinyali crawl SÜRESİ. Yavaşlarsa tavan çarpanla düşer, hızlanırsa adım adım artar.',
+    keys: [
+      { key: 'max_inflight_per_node', label: 'Node maks. eşzamanlı', step: 1 },
+      { key: 'min_inflight_per_node', label: 'Node min. eşzamanlı', step: 1 },
+      { key: 'node_slow_latency_seconds', label: 'Yavaş eşiği (sn)', step: 1, desc: 'Bu sürenin üstü "yavaş" sayılır, tavan düşürülür.' },
+      { key: 'node_fast_latency_seconds', label: 'Hızlı eşiği (sn)', step: 1, desc: 'Bu sürenin altı "hızlı" sayılır, tavan artırılır.' },
+      { key: 'node_latency_ewma_alpha', label: 'EWMA katsayısı', step: 0.05, desc: 'Yüksek = son ölçüme daha duyarlı.' },
+      { key: 'node_cap_decrease_factor', label: 'Azaltma çarpanı', step: 0.05, desc: '0.7 = yavaşlayınca tavan %30 düşer.' },
+      { key: 'node_cap_increase_step', label: 'Artırma adımı', step: 1 },
+    ],
+  },
+];
+
+function TuningSection({ authorized }) {
+  const { data, isFetching, isError, refetch } = useGetSchedulerTuningQuery(undefined, {
+    skip: !authorized,
+    pollingInterval: 20000,
+  });
+  const [updateTuning, { isLoading: saving }] = useUpdateSchedulerTuningMutation();
+
+  const [edits, setEdits] = useState({}); // { knob: string } — yalnız dokunulanlar
+  const [msg, setMsg] = useState(null);
+
+  const tunables = data?.tunables || {};
+  const dirty = Object.keys(edits).filter((k) => String(edits[k]) !== String(tunables[k]?.value ?? ''));
+
+  const apply = async () => {
+    if (dirty.length === 0) return;
+    const body = {};
+    for (const k of dirty) {
+      const raw = String(edits[k]).trim();
+      if (raw === '') { setMsg({ tone: 'destructive', text: `${k} boş bırakılamaz — varsayılana dönmek için "Sıfırla" kullanın.` }); return; }
+      const num = Number(raw);
+      if (!Number.isFinite(num)) { setMsg({ tone: 'destructive', text: `${k} sayısal olmalı.` }); return; }
+      body[k] = num;
+    }
+    setMsg(null);
+    try {
+      const res = await updateTuning(body).unwrap();
+      setEdits({});
+      setMsg({ tone: 'success', text: `Uygulandı · ${Object.keys(res?.applied || body).length} parametre. Restart gerekmez.` });
+    } catch (e) {
+      const u = upstreamErr(e);
+      setMsg({ tone: 'destructive', text: u.error || 'Ayarlar uygulanamadı.' });
+    }
+  };
+
+  // null göndermek Redis override'ını siler → env varsayılanına döner.
+  const resetKnob = async (key) => {
+    setMsg(null);
+    try {
+      await updateTuning({ [key]: null }).unwrap();
+      setEdits((e) => { const next = { ...e }; delete next[key]; return next; });
+      setMsg({ tone: 'success', text: `${key} varsayılana döndürüldü.` });
+    } catch (e) {
+      setMsg({ tone: 'destructive', text: upstreamErr(e).error || 'Sıfırlanamadı.' });
+    }
+  };
+
+  if (isError) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Hız ayarları alınamadı</AlertTitle>
+        <AlertDescription>
+          Fetcher'ın Redis bağlantısı yoksa uyarlanabilir hız kontrolü devre dışıdır ve bu uç hata döner.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const throttle = data?.throttle_factor;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+          {data?.enabled
+            ? <Badge variant="success">Uyarlanabilir hız açık</Badge>
+            : <Badge variant="warning">Kapalı (ADAPTIVE_PACING_ENABLED)</Badge>}
+          <span className="text-sm text-muted-foreground">
+            İşlemdeki URL: <b className="tabular-nums text-foreground">{nfmt(data?.inflight_total)}</b>
+          </span>
+          <span className="text-sm text-muted-foreground">
+            Kısma katsayısı: <b className={cn('tabular-nums', throttle != null && throttle < 1 ? 'text-amber-600' : 'text-foreground')}>
+              {throttle != null ? throttle : '—'}
+            </b>
+          </span>
+          <div className="ms-auto flex items-center gap-2">
+            {dirty.length > 0 && <span className="text-xs text-amber-600">{dirty.length} değişiklik bekliyor</span>}
+            <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}>
+              <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} />
+            </Button>
+            <Button size="sm" disabled={dirty.length === 0 || saving} onClick={apply}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Uygula
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {msg && <Alert variant={msg.tone === 'destructive' ? 'destructive' : undefined}><AlertDescription>{msg.text}</AlertDescription></Alert>}
+
+      {data?.enabled === false && (
+        <Alert>
+          <AlertTitle>Değişiklikler şu an etkisiz</AlertTitle>
+          <AlertDescription>
+            Uyarlanabilir hız kontrolü kapalı. Buradaki değerler kaydedilir ama
+            <b> ADAPTIVE_PACING_ENABLED</b> açılana kadar uygulanmaz — bu bayrak env'de ve restart ister.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {isFetching && !data ? (
+        <Card><CardContent className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</CardContent></Card>
+      ) : TUNING_GROUPS.map((group) => (
+        <Card key={group.title}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Gauge className="size-4" /> {group.title}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 p-5">
+            <p className="text-xs text-muted-foreground">{group.hint}</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {group.keys.map(({ key, label, step, desc }) => {
+                const knob = tunables[key];
+                if (!knob) return null;
+                const overridden = knob.source === 'redis';
+                const value = edits[key] ?? String(knob.value ?? '');
+                const changed = String(value) !== String(knob.value ?? '');
+                return (
+                  <div key={key} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-2sm font-medium">{label}</label>
+                      {overridden
+                        ? <Badge variant="primary" className="h-5">elle ayarlı</Badge>
+                        : <Badge variant="muted" className="h-5">varsayılan</Badge>}
+                    </div>
+                    <div className="flex gap-1.5">
+                      <Input
+                        value={value}
+                        inputMode="decimal"
+                        step={step}
+                        onChange={(e) => setEdits((s) => ({ ...s, [key]: e.target.value }))}
+                        className={cn(changed && 'border-amber-500')}
+                      />
+                      <Button
+                        variant="outline" size="icon" className="size-9 shrink-0"
+                        title={`Varsayılana dön (${knob.default} · ${knob.env_var})`}
+                        disabled={!overridden || saving}
+                        onClick={() => resetKnob(key)}
+                      >
+                        <RotateCcw className="size-3.5" />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {desc ? `${desc} ` : ''}Varsayılan: <span className="font-mono">{String(knob.default)}</span>
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Server className="size-4" /> Node Kapasiteleri</CardTitle>
+          <CardToolbar><span className="text-xs text-muted-foreground">{data?.nodes?.length ?? 0} node</span></CardToolbar>
+        </CardHeader>
+        <CardContent className="px-0 py-0">
+          {(data?.nodes ?? []).length === 0 ? (
+            <p className="p-5 text-sm text-muted-foreground">Node verisi yok.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Node</TableHead>
+                    <TableHead className="text-right">İşlemde</TableHead>
+                    <TableHead className="text-right">Tavan (AIMD)</TableHead>
+                    <TableHead className="text-right">Ort. süre (sn)</TableHead>
+                    <TableHead>Güncelleme</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.nodes.map((n) => {
+                    const lat = n.latency_ewma_seconds;
+                    const slow = lat != null && tunables.node_slow_latency_seconds?.value != null
+                      && lat > tunables.node_slow_latency_seconds.value;
+                    return (
+                      <TableRow key={n.node_id}>
+                        <TableCell className="font-medium text-foreground">{n.node_id}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{n.inflight ?? 0}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{n.cap ?? '—'}</TableCell>
+                        <TableCell className={cn('text-right tabular-nums', slow ? 'text-amber-600' : 'text-muted-foreground')}>
+                          {lat != null ? Number(lat).toFixed(1) : '—'}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTr(n.updated_at)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -1718,7 +2370,7 @@ export default function FetcherServicePage() {
           {section === 'status' && <StatusSection authorized={authorized} />}
           {section === 'domains' && <DomainsSection authorized={authorized} />}
           {section === 'subscriptions' && <SubscriptionsSection authorized={authorized} />}
-          {section === 'urls' && <UrlsSection authorized={authorized} />}
+          {section === 'tuning' && <TuningSection authorized={authorized} />}
           {section === 'logs' && <LogsSection authorized={authorized} />}
           {section === 'nodes' && <NodesSection authorized={authorized} />}
           {section === 'reports' && <ReportsSection authorized={authorized} />}
