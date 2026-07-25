@@ -147,6 +147,13 @@ export default function DomainWizard({ onClose, onDone }) {
     const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n;
   });
 
+  // Şema üretimi/testi ailesi kullanıcının "Ürün/İçerik" seçiminden türer (agent'ın
+  // family'sinden değil): ürün → LLM ürün alanlarını hedefler + alan-varlığı doğrulaması.
+  const familyFor = (p) => {
+    const src = knowledge[p.pattern] || (p.family === 'product' ? 'product' : 'content');
+    return src === 'product' ? 'product' : 'article';
+  };
+
   /* ── URL ağacı düğümü seç/kaldır (dashboard ile aynı mantık) ── */
   const toggleTreeNode = (node) => {
     const pattern = `${node.path}/*`;
@@ -204,7 +211,7 @@ export default function DomainWizard({ onClose, onDone }) {
     setDrafts(pending); setBusy(true); setBusyLabel('Şema üretimi başlatılıyor…'); goTo(2);
     try {
       const patterns = allPatterns.filter((p) => selected.has(p.pattern))
-        .map((p) => ({ pattern: p.pattern, family: p.family || 'article' }));
+        .map((p) => ({ pattern: p.pattern, family: familyFor(p) }));
       await genSchemas({ domain, patterns }).unwrap();
       setBusyLabel(`Şemalar arka planda üretiliyor… (0/${sel.length} hazır)`);
       pollSchemaGen(domain, sel, 0);
@@ -215,8 +222,9 @@ export default function DomainWizard({ onClose, onDone }) {
     const d = drafts[pattern]; if (!d?.cssSchema) return;
     setTesting(pattern); setErr(null);
     try {
-      const samples = allPatterns.find((p) => p.pattern === pattern)?.samples || [];
-      const res = await testSchema({ domain, pattern, css_schema: d.cssSchema, urls: samples.slice(0, 3) }).unwrap();
+      const pObj = allPatterns.find((p) => p.pattern === pattern);
+      const samples = pObj?.samples || [];
+      const res = await testSchema({ domain, pattern, css_schema: d.cssSchema, urls: samples.slice(0, 3), family: pObj ? familyFor(pObj) : undefined }).unwrap();
       setDrafts((prev) => ({ ...prev, [pattern]: { ...prev[pattern], test: res } }));
     } catch (e) { setErr({ text: upstreamErr(e) }); }
     finally { setTesting(null); }
@@ -546,12 +554,19 @@ function SchemaCard({ d, testing, disabled, onTest, onEdit }) {
 
       {d.test && (
         <div className="space-y-2 border-t border-border px-3 py-2.5">
-          <p className="text-[11px] font-medium text-muted-foreground">Çıkarılan içerik önizlemesi</p>
+          <p className="text-[11px] font-medium text-muted-foreground">
+            Çıkarılan içerik önizlemesi
+            <span className="ml-1 font-normal text-muted-foreground/70">
+              {d.test.threshold?.criterion === 'product'
+                ? `(ürün eşiği: ≥${d.test.threshold?.minFields ?? 2} dolu alan)`
+                : `(eşik: ≥${d.test.threshold?.minChars ?? 300} kar, proza ≥${d.test.threshold?.minProseRatio ?? 0.5})`}
+            </span>
+          </p>
           {d.test.samples.map((s) => (
             <div key={s.url} className={cn('rounded border p-2', s.ok ? 'border-success/25 bg-success/5' : 'border-destructive/25 bg-destructive/5')}>
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-mono text-[10px] text-muted-foreground">{s.url}</span>
-                <span className="shrink-0 text-[10px] text-muted-foreground">{s.error ? 'hata' : `${s.chars ?? 0} kar · proza ${s.proseRatio ?? 0}`}</span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">{s.error ? 'hata' : (d.test.threshold?.criterion === 'product' ? `${s.fields ?? 0} alan · ${s.chars ?? 0} kar` : `${s.chars ?? 0} kar · proza ${s.proseRatio ?? 0}`)}</span>
               </div>
               {s.error ? <p className="mt-1 text-[11px] text-destructive">{s.error}</p>
                 : <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[11px] text-foreground/75">{s.preview?.trim() || '(boş — şema bu sayfada eşleşmedi)'}</p>}
