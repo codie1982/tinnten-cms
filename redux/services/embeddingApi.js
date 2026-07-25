@@ -29,9 +29,40 @@ export const embeddingApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { item, logs }
       providesTags: (r, e, id) => [{ type: 'EmbeddingDoc', id }],
     }),
+    getEmbeddingCompanies: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.embedding.cmsCompanies, params }), // { q, sort, order, limit, skip }
+      transformResponse: (res) => res?.data ?? res, // { items, total, limit, skip }
+      providesTags: (r) => (r?.items
+        ? [
+            ...r.items.map((c) => ({ type: 'EmbeddingCompany', id: c.companyId ?? 'NONE' })),
+            { type: 'EmbeddingCompany', id: 'LIST' },
+          ]
+        : [{ type: 'EmbeddingCompany', id: 'LIST' }]),
+    }),
+    getEmbeddingCompanyIndexStats: build.query({
+      query: (id) => ENDPOINTS.embedding.cmsCompanyIndexStats(id),
+      transformResponse: (res) => res?.data ?? res, // { ntotal, indexBytes, mongoChunks, drift, ... }
+      providesTags: (r, e, id) => [{ type: 'EmbeddingCompany', id: `STATS-${id}` }],
+      keepUnusedDataFor: 120,
+    }),
+    getEmbeddingConfig: build.query({
+      query: () => ENDPOINTS.embedding.cmsConfig,
+      transformResponse: (res) => res?.data ?? res, // { per_company_faiss_enabled, hybrid_search_enabled, ... }
+      providesTags: [{ type: 'EmbeddingStatus', id: 'CONFIG' }],
+    }),
     reindexEmbeddingDocument: build.mutation({
-      query: (id) => ({ url: ENDPOINTS.embedding.cmsReindex(id), method: 'POST' }),
-      invalidatesTags: (r, e, id) => [{ type: 'EmbeddingDoc', id }, { type: 'EmbeddingDoc', id: 'LIST' }, { type: 'EmbeddingStatus', id: 'STATS' }],
+      query: ({ id }) => ({ url: ENDPOINTS.embedding.cmsReindex(id), method: 'POST' }),
+      // `STATS-${companyId}` BİLEREK invalidate EDİLMİYOR: reindex sırasında FAISS
+      // önce yeni vektörleri ekleyip sonra eskileri düşürdüğü için ntotal geçici
+      // olarak şişer; hemen refetch sahte bir drift uyarısı üretir.
+      invalidatesTags: (r, e, { id, companyId }) => [
+        { type: 'EmbeddingDoc', id },
+        { type: 'EmbeddingDoc', id: 'LIST' },
+        { type: 'EmbeddingStatus', id: 'STATS' },
+        ...(companyId
+          ? [{ type: 'EmbeddingCompany', id: companyId }, { type: 'EmbeddingCompany', id: 'LIST' }]
+          : []),
+      ],
     }),
     embeddingSearch: build.mutation({
       query: (body) => ({ url: ENDPOINTS.embedding.cmsSearch, method: 'POST', body }), // { query, companyId?, k? }
@@ -46,6 +77,9 @@ export const {
   useGetEmbeddingStatsQuery,
   useGetEmbeddingDocumentsQuery,
   useGetEmbeddingDocumentQuery,
+  useGetEmbeddingCompaniesQuery,
+  useGetEmbeddingCompanyIndexStatsQuery,
+  useGetEmbeddingConfigQuery,
   useReindexEmbeddingDocumentMutation,
   useEmbeddingSearchMutation,
 } = embeddingApi;

@@ -340,6 +340,11 @@ export const ENDPOINTS = {
     cmsDocument: (id) => `/embedding/cms/documents/${id}`,
     cmsReindex: (id) => `/embedding/cms/documents/${id}/reindex`,
     cmsSearch: '/embedding/cms/search',
+    // Firma bazlı indeks görünümü. index-stats ve config, tinnten-server üzerinden
+    // tinnten-embedding'e proxy'lenir (CMS embedding servisine doğrudan erişemez).
+    cmsCompanies: '/embedding/cms/companies',
+    cmsCompanyIndexStats: (id) => `/embedding/cms/companies/${encodeURIComponent(id)}/index-stats`,
+    cmsConfig: '/embedding/cms/config',
   },
   fetcher: {
     status: '/fetcher/scraping/status',

@@ -98,6 +98,7 @@ export const baseApi = createApi({
     'FetcherTuning',
     'EmbeddingStatus',
     'EmbeddingDoc',
+    'EmbeddingCompany',
     'CronStatus',
     'CronJob',
     'CronList',
