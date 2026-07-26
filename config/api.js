@@ -420,4 +420,11 @@ export const ENDPOINTS = {
     cmsCallbackConfirm: (id) => `/support/cms/callbacks/${id}/confirm`,
     cmsCallbackOutcome: (id) => `/support/cms/callbacks/${id}/outcome`,
   },
+  // Partner Programı ön başvuruları. Backend
+  // `requireAnyPermission("cms:editor", "cms:admin")` ile korur — ALL-OF olan
+  // `requirePermission` DEĞİL, yoksa admin menüyü görür ama API'den 403 alır.
+  partner: {
+    cmsApplications: '/partner/cms/applications',
+    cmsApplicationStatus: (id) => `/partner/cms/applications/${id}/status`,
+  },
 };

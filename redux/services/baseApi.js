@@ -120,6 +120,7 @@ export const baseApi = createApi({
     'ConnectorCategory',
     'OAuthProvider',
     'SupportTicket',
+    'PartnerApplication',
     'SupportCallback',
   ],
   // Endpoint'ler ayrı servis dosyalarında injectEndpoints ile eklenir

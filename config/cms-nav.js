@@ -16,6 +16,7 @@ import {
   MessagesSquare,
   Package,
   LifeBuoy,
+  Handshake,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -107,6 +108,15 @@ export const CMS_NAV = [
       { title: 'Satıcı Başvuruları', path: '/cms/company-approvals/applications', roles: [CMS_ROLES.ADMIN] },
       { title: 'KYC / Evrak Kontrolü', path: '/cms/company-approvals/kyc', roles: [CMS_ROLES.ADMIN] },
     ],
+  },
+  {
+    // Public /partner sayfasındaki ön başvuru formundan gelen kayıtlar.
+    // Rol EDITOR: backend `requireAnyPermission("cms:editor", "cms:admin")`
+    // ile koruyor; menüde ADMIN yazsaydı editör API'ye erişip menüyü göremezdi.
+    title: 'Partnerlik Başvuruları',
+    icon: Handshake,
+    path: '/cms/partners/applications',
+    roles: [CMS_ROLES.EDITOR],
   },
   {
     title: 'Ürünler & Hizmetler',
