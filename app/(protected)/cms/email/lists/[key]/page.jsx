@@ -4,7 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Trash2, Loader2, ArrowLeft, Clock, Database, Play, RefreshCw, Settings2 } from 'lucide-react';
+import {
+  Trash2, Loader2, ArrowLeft, Clock, Database, Play, RefreshCw, Settings2,
+  Pencil, Save, X, Undo2,
+} from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
@@ -19,13 +22,25 @@ import {
   useGetMailChannelsQuery,
   useGetChannelMembersQuery,
   useRemoveChannelMemberMutation,
+  useUpdateChannelMemberMutation,
   useGetCronListsQuery,
   useRunCronListMutation,
 } from '@/redux/services';
 import { AddMembersPanel } from '@/components/email/add-members-panel';
+import { cn } from '@/lib/utils';
 
 const PAGE = 50;
 const isManualList = (channel) => channel?.type === 'custom' || channel?.type === 'private';
+
+// Listedeki üyelik durumu (channelStatus) — abonenin genel durumundan (active/bounced) ayrı.
+const MEMBER_VIEWS = [
+  { key: 'subscribed', label: 'Listede' },
+  { key: 'unsubscribed', label: 'Çıkarılanlar' },
+  { key: 'all', label: 'Tümü' },
+];
+
+const countFormatter = new Intl.NumberFormat('tr-TR');
+const formatCount = (value) => countFormatter.format(Number(value) || 0);
 
 const SOURCE_LABELS = { company: 'Firmalar', users: 'Kullanıcılar', products: 'Ürünler' };
 const RECIPE_STATUS_META = {
@@ -45,7 +60,11 @@ export default function ListMembersPage() {
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
   const { data: channels = [] } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
   const channel = channels.find((ch) => ch.key === String(key || '').toLowerCase());
+  const isArchived = channel?.status === 'archived';
   const canEditMembers = isManualList(channel);
+  // Arşiv kanalına yeni üye eklenemez (backend pasif kanal aboneliğini reddeder);
+  // mevcut üyeler görüntülenir, düzenlenir ve çıkarılabilir.
+  const canAddMembers = canEditMembers && !isArchived;
   const isCron = channel?.type === 'cron';
 
   // Cron kanalı ise bağlı "reçete" (cron listesi) tanımını bul → zamanlama/kaynak özeti + şimdi çalıştır.
@@ -55,17 +74,62 @@ export default function ListMembersPage() {
 
   const [skip, setSkip] = useState(0);
   const [q, setQ] = useState('');
+  const [memberView, setMemberView] = useState('subscribed');
   const { data, isLoading, error, isFetching } = useGetChannelMembersQuery(
-    { key, limit: PAGE, skip, q },
+    { key, limit: PAGE, skip, q, status: memberView },
     { skip: !authorized || !key },
   );
   const members = data?.items ?? [];
+  const total = data?.total ?? 0;
 
-  const [removeMember] = useRemoveChannelMemberMutation();
+  const [removeMember, { isLoading: removing }] = useRemoveChannelMemberMutation();
+  const [updateMember, { isLoading: savingMember }] = useUpdateChannelMemberMutation();
   const [notice, setNotice] = useState('');
+  const [confirmEmail, setConfirmEmail] = useState(null);
+  const [editEmail, setEditEmail] = useState(null);
+  const [editName, setEditName] = useState('');
 
   const handleRemove = async (email) => {
-    await removeMember({ key, email }).unwrap().catch((e) => setNotice(e?.data?.message || 'Çıkarılamadı'));
+    setConfirmEmail(null);
+    const r = await removeMember({ key, email })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Çıkarılamadı' }));
+    setNotice(r?.__err || `${email} listeden çıkarıldı. “Çıkarılanlar” sekmesinden geri alabilirsiniz.`);
+  };
+
+  // Çıkarılan üyeyi listeye geri al (kanal aboneliğini yeniden aç).
+  const handleResubscribe = async (email) => {
+    const r = await updateMember({ key, email, channelStatus: 'subscribed' })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Geri alınamadı' }));
+    setNotice(r?.__err || `${email} listeye geri eklendi.`);
+  };
+
+  const startEdit = (m) => {
+    setConfirmEmail(null);
+    setEditEmail(m.email);
+    setEditName(m.profile?.name || '');
+  };
+
+  const cancelEdit = () => {
+    setEditEmail(null);
+    setEditName('');
+  };
+
+  const saveMember = async (m) => {
+    const r = await updateMember({
+      key,
+      email: m.email,
+      profile: { ...(m.profile || {}), name: editName.trim() },
+    })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Güncellenemedi' }));
+    if (r?.__err) {
+      setNotice(r.__err);
+      return;
+    }
+    cancelEdit();
+    setNotice(`${m.email} güncellendi.`);
   };
 
   const handleRunCron = async () => {
@@ -79,6 +143,8 @@ export default function ListMembersPage() {
     : canEditMembers
       ? 'Bu kullanıcı listesine bağlı alıcılar'
       : 'Bu liste kaynak akış tarafından güncellenir';
+
+  const membersGridClass = canAddMembers ? 'grid gap-5 lg:grid-cols-[340px_1fr]' : 'space-y-5';
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
@@ -187,8 +253,20 @@ export default function ListMembersPage() {
         </Alert>
       )}
 
-      <div className={canEditMembers ? 'grid gap-5 lg:grid-cols-[340px_1fr]' : 'space-y-5'}>
-        {canEditMembers && (
+      {isArchived && (
+        <Alert variant="warning" className="mb-4">
+          <AlertTitle>Bu liste arşivde</AlertTitle>
+          <AlertDescription>
+            Arşivdeki listeye yeni üye eklenemez ve kampanya gönderilemez. Mevcut üyeleri
+            görüntüleyip çıkarabilirsiniz. Yeniden kullanmak için{' '}
+            <Link href="/cms/email/lists" className="font-medium underline">Mail Listeleri</Link>{' '}
+            → Arşivlenenler sekmesinden geri alın.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className={membersGridClass}>
+        {canAddMembers && (
           <AddMembersPanel
             channelKey={key}
             authorized={authorized}
@@ -198,8 +276,29 @@ export default function ListMembersPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Üyeler</CardTitle>
+            <CardTitle>Üyeler {total > 0 && <span className="text-muted-foreground">({formatCount(total)})</span>}</CardTitle>
             <CardToolbar className="gap-2">
+              <div className="flex overflow-hidden rounded-md border border-border">
+                {MEMBER_VIEWS.map((v) => (
+                  <button
+                    key={v.key}
+                    onClick={() => {
+                      setMemberView(v.key);
+                      setSkip(0);
+                      setConfirmEmail(null);
+                      cancelEdit();
+                    }}
+                    className={cn(
+                      'px-2.5 py-1.5 text-xs font-medium transition-colors',
+                      memberView === v.key
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
               <Input
                 value={q}
                 onChange={(e) => {
@@ -227,7 +326,11 @@ export default function ListMembersPage() {
                 ))}
               </div>
             ) : members.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">Bu listede üye yok.</p>
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                {memberView === 'unsubscribed'
+                  ? 'Bu listeden çıkarılmış üye yok.'
+                  : 'Bu listede üye yok.'}
+              </p>
             ) : (
               <>
                 <Table>
@@ -235,36 +338,115 @@ export default function ListMembersPage() {
                     <TableRow>
                       <TableHead>E-posta</TableHead>
                       <TableHead>Ad</TableHead>
-                      <TableHead>Durum</TableHead>
+                      <TableHead>Listede</TableHead>
+                      <TableHead>Abone Durumu</TableHead>
                       {canEditMembers && <TableHead className="text-right">İşlem</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {members.map((m) => (
-                      <TableRow key={m._id || m.email}>
-                        <TableCell className="font-mono text-xs">{m.email}</TableCell>
-                        <TableCell>{m.profile?.name || '—'}</TableCell>
-                        <TableCell>
-                          <Badge variant={m.status === 'active' ? 'success' : 'destructive'}>{m.status}</Badge>
-                        </TableCell>
-                        {canEditMembers && (
-                          <TableCell className="text-right">
-                            <Button size="sm" variant="ghost" onClick={() => handleRemove(m.email)} title="Çıkar">
-                              <Trash2 className="size-3.5" />
-                            </Button>
+                    {members.map((m) => {
+                      const removed = m.channelStatus === 'unsubscribed';
+                      const editing = editEmail === m.email;
+                      const confirming = confirmEmail === m.email;
+                      return (
+                        <TableRow key={m._id || m.email}>
+                          <TableCell className="font-mono text-xs">{m.email}</TableCell>
+                          <TableCell>
+                            {editing ? (
+                              <Input
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                className="h-8 max-w-[220px]"
+                                placeholder="Ad Soyad"
+                                autoFocus
+                              />
+                            ) : (
+                              m.profile?.name || '—'
+                            )}
                           </TableCell>
-                        )}
-                      </TableRow>
-                    ))}
+                          <TableCell>
+                            <Badge variant={removed ? 'muted' : 'success'}>
+                              {removed ? 'Çıkarıldı' : 'Aktif'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={m.status === 'active' ? 'secondary' : 'destructive'}>{m.status}</Badge>
+                          </TableCell>
+                          {canEditMembers && (
+                            <TableCell>
+                              <div className="flex items-center justify-end gap-1">
+                                {editing ? (
+                                  <>
+                                    <Button size="sm" onClick={() => saveMember(m)} disabled={savingMember}>
+                                      {savingMember ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                                    </Button>
+                                    <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={savingMember}>
+                                      <X className="size-3.5" />
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Button size="sm" variant="ghost" onClick={() => startEdit(m)} title="Adı düzenle">
+                                      <Pencil className="size-3.5" />
+                                    </Button>
+                                    {removed ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleResubscribe(m.email)}
+                                        disabled={savingMember}
+                                      >
+                                        <Undo2 className="mr-1 size-3.5" /> Listeye geri al
+                                      </Button>
+                                    ) : confirming ? (
+                                      <>
+                                        <Button
+                                          size="sm"
+                                          variant="destructive"
+                                          onClick={() => handleRemove(m.email)}
+                                          disabled={removing}
+                                        >
+                                          {removing ? <Loader2 className="size-3.5 animate-spin" /> : 'Çıkar'}
+                                        </Button>
+                                        <Button size="sm" variant="ghost" onClick={() => setConfirmEmail(null)} disabled={removing}>
+                                          Vazgeç
+                                        </Button>
+                                      </>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => { cancelEdit(); setConfirmEmail(m.email); }}
+                                        title="Listeden çıkar"
+                                      >
+                                        <Trash2 className="size-3.5" />
+                                      </Button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
                 <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
-                  <span className="text-muted-foreground">{skip + 1}–{skip + members.length}</span>
+                  <span className="text-muted-foreground">
+                    {skip + 1}–{skip + members.length}
+                    {total > 0 && ` / ${formatCount(total)}`}
+                  </span>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - PAGE))}>
                       Önceki
                     </Button>
-                    <Button size="sm" variant="outline" disabled={members.length < PAGE} onClick={() => setSkip(skip + PAGE)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={total ? skip + members.length >= total : members.length < PAGE}
+                      onClick={() => setSkip(skip + PAGE)}
+                    >
                       Sonraki
                     </Button>
                   </div>

@@ -26,8 +26,17 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.email.channel(id), method: 'PATCH', body }),
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
+    // `force: true` → listede üye olsa bile kalıcı sil (backend aksi halde arşivler).
     deleteMailChannel: build.mutation({
-      query: (id) => ({ url: ENDPOINTS.email.channel(id), method: 'DELETE' }),
+      query: (arg) => {
+        const { id, force } = typeof arg === 'object' && arg !== null ? arg : { id: arg };
+        return {
+          url: ENDPOINTS.email.channel(id),
+          method: 'DELETE',
+          ...(force ? { params: { force: 'true' } } : {}),
+        };
+      },
+      transformResponse: (res) => ({ ...(res?.data ?? {}), message: res?.message }),
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
 
@@ -39,6 +48,20 @@ export const mailCampaignApi = baseApi.injectEndpoints({
     }),
     addChannelMembers: build.mutation({
       query: ({ key, ...body }) => ({ url: ENDPOINTS.email.channelMembers(key), method: 'POST', body }),
+      invalidatesTags: (r, e, { key }) => [
+        { type: 'MailChannelMember', id: key },
+        { type: 'MailChannel', id: 'LIST' },
+      ],
+    }),
+    // Üye güncelleme: profil bilgisi ve/veya kanal aboneliği
+    // (channelStatus: 'subscribed' | 'unsubscribed' → çıkarma/geri alma).
+    updateChannelMember: build.mutation({
+      query: ({ key, ...body }) => ({
+        url: ENDPOINTS.email.channelMembers(key),
+        method: 'PATCH',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, { key }) => [
         { type: 'MailChannelMember', id: key },
         { type: 'MailChannel', id: 'LIST' },
@@ -193,6 +216,7 @@ export const {
   useDeleteMailChannelMutation,
   useGetChannelMembersQuery,
   useAddChannelMembersMutation,
+  useUpdateChannelMemberMutation,
   useRemoveChannelMemberMutation,
   useGetMailTemplatesQuery,
   useGetMailTemplateQuery,

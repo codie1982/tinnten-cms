@@ -1,12 +1,12 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Fragment, Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
-  Loader2, Pencil, Save, X,
+  Loader2, Pencil, Save, X, AlertTriangle,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -147,11 +147,16 @@ function CustomListsSection({ authorized }) {
   const [confirmId, setConfirmId] = useState(null);
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({ title: '', description: '' });
+  // Arşivlenen listeler aktif listeden kalkar, bu sekmede görünür.
+  const [view, setView] = useState('active');
 
   const { data: channels = [], isLoading, error } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
-  const customChannels = channels
-    .filter((ch) => ch.type === 'custom' || ch.type === 'private')
-    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.title || '').localeCompare(String(b.title || ''), 'tr'));
+  const sortByTitle = (a, b) =>
+    (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.title || '').localeCompare(String(b.title || ''), 'tr');
+  const allCustom = channels.filter((ch) => ch.type === 'custom' || ch.type === 'private');
+  const activeChannels = allCustom.filter((ch) => ch.status !== 'archived').sort(sortByTitle);
+  const archivedChannels = allCustom.filter((ch) => ch.status === 'archived').sort(sortByTitle);
+  const customChannels = view === 'archived' ? archivedChannels : activeChannels;
 
   const [createChannel, { isLoading: creating }] = useCreateMailChannelMutation();
   const [updateChannel, { isLoading: updating }] = useUpdateMailChannelMutation();
@@ -203,7 +208,9 @@ function CustomListsSection({ authorized }) {
   };
 
   const toggleArchive = async (ch) => {
-    const nextStatus = ch.status === 'active' ? 'archived' : 'active';
+    const nextStatus = ch.status === 'archived' ? 'active' : 'archived';
+    setConfirmId(null);
+    setEditId(null);
     const r = await updateChannel({ id: ch._id, status: nextStatus })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Güncellenemedi' }));
@@ -213,12 +220,20 @@ function CustomListsSection({ authorized }) {
     }
     setNotice({
       variant: 'info',
-      message: nextStatus === 'archived' ? 'Liste arşivlendi.' : 'Liste aktifleştirildi.',
+      message:
+        nextStatus === 'archived'
+          ? `“${ch.title}” arşivlendi — Arşiv sekmesinden geri alabilirsiniz.`
+          : `“${ch.title}” yeniden aktifleştirildi.`,
     });
   };
 
-  const handleDelete = async (id) => {
-    const r = await deleteChannel(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Silinemedi' }));
+  // Üyeli listelerde backend varsayılan olarak silmez, arşivler. CMS'te silme
+  // onayı zaten sonucu açıkça anlatıyor → her zaman `force` gönderilir; aksi halde
+  // (ör. yalnızca "çıkarılmış" üyelik kaydı olan listede) silme sessizce arşive döner.
+  const handleDelete = async (ch) => {
+    const r = await deleteChannel({ id: ch._id, force: true })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Silinemedi' }));
     setConfirmId(null);
     if (r?.__err) {
       setNotice({ variant: 'destructive', message: r.__err });
@@ -241,14 +256,35 @@ function CustomListsSection({ authorized }) {
       <Card>
         <CardHeader>
           <CardTitle>Özel Listeler</CardTitle>
-          <CardToolbar>
-            <Button onClick={() => setShowCreate((v) => !v)}>
-              <Plus className="size-4" /> Yeni Liste
-            </Button>
+          <CardToolbar className="gap-2">
+            <div className="flex overflow-hidden rounded-md border border-border">
+              {[
+                { key: 'active', label: 'Aktif', count: activeChannels.length },
+                { key: 'archived', label: 'Arşivlenenler', count: archivedChannels.length },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => { setView(t.key); setConfirmId(null); setEditId(null); }}
+                  className={cn(
+                    'px-3 py-1.5 text-xs font-medium transition-colors',
+                    view === t.key
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                  )}
+                >
+                  {t.label} ({t.count})
+                </button>
+              ))}
+            </div>
+            {view === 'active' && (
+              <Button onClick={() => setShowCreate((v) => !v)}>
+                <Plus className="size-4" /> Yeni Liste
+              </Button>
+            )}
           </CardToolbar>
         </CardHeader>
         <CardContent className="p-0">
-          {showCreate && (
+          {showCreate && view === 'active' && (
             <div className="border-b border-border p-4">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[200px] flex-1">
@@ -285,7 +321,11 @@ function CustomListsSection({ authorized }) {
               {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
             </div>
           ) : customChannels.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Henüz özel liste yok. Yukarıdan oluşturun.</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {view === 'archived'
+                ? 'Arşivlenmiş liste yok.'
+                : 'Henüz özel liste yok. Yukarıdan oluşturun.'}
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -302,8 +342,11 @@ function CustomListsSection({ authorized }) {
                   const tm = TYPE_META[ch.type] || { label: ch.type, variant: 'muted' };
                   const sm = STATUS_META[ch.status] || { label: ch.status, variant: 'muted' };
                   const editing = editId === ch._id;
+                  const archived = ch.status === 'archived';
+                  const memberCount = Number(ch.memberCount) || 0;
                   return (
-                    <TableRow key={ch._id}>
+                    <Fragment key={ch._id}>
+                    <TableRow>
                       <TableCell className="font-medium">
                         {editing ? (
                           <div className="max-w-[420px] space-y-2">
@@ -373,31 +416,71 @@ function CustomListsSection({ authorized }) {
                           </Link>
                           <Button
                             size="sm"
-                            variant="ghost"
+                            variant={archived ? 'outline' : 'ghost'}
                             onClick={() => toggleArchive(ch)}
-                            title={ch.status === 'active' ? 'Arşivle' : 'Aktifleştir'}
+                            disabled={updating}
+                            title={archived ? 'Arşivden çıkar (aktifleştir)' : 'Arşivle'}
                           >
-                            {ch.status === 'active'
-                              ? <Archive className="size-3.5" />
-                              : <ArchiveRestore className="size-3.5" />}
+                            {archived ? (
+                              <><ArchiveRestore className="mr-1 size-3.5" /> Geri Al</>
+                            ) : (
+                              <Archive className="size-3.5" />
+                            )}
                           </Button>
-                          {confirmId === ch._id ? (
-                            <Button size="sm" variant="destructive" onClick={() => handleDelete(ch._id)} disabled={deleting}>
-                              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : 'Emin?'}
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => { setEditId(null); setConfirmId(ch._id); }}
-                              title="Listeyi kaldır"
-                            >
-                              <Trash2 className="size-3.5" />
-                            </Button>
-                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setEditId(null);
+                              setConfirmId(confirmId === ch._id ? null : ch._id);
+                            }}
+                            title="Listeyi kaldır"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
+
+                    {/* Silme onayı — üyeli listede ne olacağı açıkça yazılır. */}
+                    {confirmId === ch._id && (
+                      <TableRow className="bg-destructive/5 hover:bg-destructive/5">
+                        <TableCell colSpan={5}>
+                          <div className="flex flex-wrap items-center justify-between gap-3 py-1">
+                            <div className="flex items-start gap-2 text-sm">
+                              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+                              <span>
+                                <b>“{ch.title}”</b> kalıcı olarak silinecek.
+                                {memberCount > 0 ? (
+                                  <>
+                                    {' '}Bu listede <b>{formatCount(memberCount)} üye</b> var; liste silindiğinde
+                                    üyelerin bu listeye kayıtları da kaldırılır. Üyeler diğer listelerde ve
+                                    abone kayıtlarında kalmaya devam eder.
+                                    {!archived && ' Silmek yerine arşivleyerek üyelikleri koruyabilirsiniz.'}
+                                  </>
+                                ) : (
+                                  ' Listede üye yok.'
+                                )}
+                              </span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {memberCount > 0 && !archived && (
+                                <Button size="sm" variant="outline" onClick={() => toggleArchive(ch)} disabled={updating}>
+                                  <Archive className="mr-1 size-3.5" /> Arşivle
+                                </Button>
+                              )}
+                              <Button size="sm" variant="destructive" onClick={() => handleDelete(ch)} disabled={deleting}>
+                                {deleting ? <Loader2 className="size-3.5 animate-spin" /> : 'Yine de sil'}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setConfirmId(null)} disabled={deleting}>
+                                Vazgeç
+                              </Button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </Fragment>
                   );
                 })}
               </TableBody>
