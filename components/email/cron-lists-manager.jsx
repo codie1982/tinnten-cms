@@ -28,6 +28,9 @@ const CRON_PRESETS = [
   { label: 'Saatte bir', cron: '0 * * * *' },
 ];
 
+const countFormatter = new Intl.NumberFormat('tr-TR');
+const formatCount = (value) => countFormatter.format(Number(value) || 0);
+
 const OP_LABELS = {
   eq: '= eşit', ne: '≠ değil', in: 'içinde (virgülle)', nin: 'dışında (virgülle)',
   gt: '> büyük', gte: '≥ büyük/eşit', lt: '< küçük', lte: '≤ küçük/eşit', exists: 'var/yok',
@@ -384,6 +387,7 @@ export function CronListsManager({ authorized }) {
                   <tr className="border-b text-left text-xs text-muted-foreground">
                     <th className="p-3">Ad</th>
                     <th className="p-3">Kaynak</th>
+                    <th className="p-3 text-right">Üye</th>
                     <th className="p-3">Zamanlama</th>
                     <th className="p-3">Son üretim</th>
                     <th className="p-3">Durum</th>
@@ -393,9 +397,11 @@ export function CronListsManager({ authorized }) {
                 <tbody>
                   {lists.map((row) => {
                     // "new" modunda taban kanal boştur → son üretilen tarihli listeye bağla.
-                    const detailKey = row.buildMode === 'new'
-                      ? (row.lastBuiltChannelKey || row.channelKey)
-                      : row.channelKey;
+                    // Backend `targetChannelKey` döndürür; eski yanıtlar için fallback korunur.
+                    const detailKey = row.targetChannelKey
+                      || (row.buildMode === 'new'
+                        ? (row.lastBuiltChannelKey || row.channelKey)
+                        : row.channelKey);
                     return (
                     <tr key={row._id} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="p-3">
@@ -412,12 +418,29 @@ export function CronListsManager({ authorized }) {
                         {row.description && <div className="text-xs text-muted-foreground">{row.description}</div>}
                       </td>
                       <td className="p-3">{sources[row.source]?.label || row.source}</td>
+                      <td className="p-3 text-right">
+                        {detailKey ? (
+                          <Link
+                            href={`/cms/email/lists/${detailKey}`}
+                            className="inline-flex items-center gap-1.5 font-medium hover:underline"
+                            title="Listedeki güncel abone sayısı"
+                          >
+                            <Users className="size-3.5 text-muted-foreground" />
+                            {formatCount(row.memberCount)}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                       <td className="p-3 font-mono text-xs">
                         {row.schedule?.cron}{' '}
                         <span className="text-muted-foreground">({row.schedule?.timezone})</span>
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
-                        {row.lastBuiltAt ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · ${row.lastBuiltCount ?? 0} kişi` : '—'}
+                        {/* lastBuiltCount = son koşuda YENİ eklenen; listenin toplamı Üye sütununda. */}
+                        {row.lastBuiltAt
+                          ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(row.lastBuiltCount)} yeni`
+                          : '—'}
                         {row.lastError && <div className="text-destructive">{row.lastError}</div>}
                       </td>
                       <td className="p-3">

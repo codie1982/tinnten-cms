@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Trash2, Loader2, ArrowLeft, Clock, Database, Play, RefreshCw, Settings2,
-  Pencil, Save, X, Undo2,
+  Pencil, Save, X, Undo2, Users,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -202,10 +202,17 @@ export default function ListMembersPage() {
                   <dd>{SOURCE_LABELS[recipe.source] || recipe.source}</dd>
                 </div>
                 <div>
+                  <dt className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Users className="size-3.5" /> Listedeki üye
+                  </dt>
+                  <dd className="font-medium">{formatCount(total)}</dd>
+                </div>
+                <div>
                   <dt className="mb-1 text-xs text-muted-foreground">Son üretim</dt>
                   <dd className="text-xs">
+                    {/* lastBuiltCount = o koşuda YENİ eklenen kişi (append modunda çoğu koşu 0). */}
                     {recipe.lastBuiltAt
-                      ? `${new Date(recipe.lastBuiltAt).toLocaleString('tr-TR')} · ${recipe.lastBuiltCount ?? 0} kişi`
+                      ? `${new Date(recipe.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(recipe.lastBuiltCount)} yeni kişi`
                       : 'Henüz oluşturulmadı'}
                   </dd>
                   {recipe.lastError && <dd className="text-xs text-destructive">{recipe.lastError}</dd>}

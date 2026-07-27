@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Loader2, ArrowLeft, Eye, Send, X } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Eye, Send, X, Type, LayoutTemplate } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +29,15 @@ import {
   addDemoRecipients,
   removeDemoRecipient,
 } from '@/lib/mail-demo-recipients';
+
+// GrapesJS DOM'a bağlı ve ağır → yalnızca builder modu seçilince istemcide yüklenir.
+const MailBuilderEditor = dynamic(
+  () => import('@/components/cms/mail-builder-editor').then((m) => m.MailBuilderEditor),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="h-[70vh]" />,
+  },
+);
 
 const STATUSES = [
   { value: 'draft', label: 'Taslak' },
@@ -55,7 +65,15 @@ export default function CampaignTemplateEditPage() {
   const [previewTemplate, { isLoading: previewing }] = usePreviewMailTemplateMutation();
   const [testSendTemplate] = useTestSendMailTemplateMutation();
 
-  const [form, setForm] = useState({ name: '', subject: '', bodyHtml: '', locale: 'tr', status: 'draft' });
+  const [form, setForm] = useState({
+    name: '',
+    subject: '',
+    bodyHtml: '',
+    locale: 'tr',
+    status: 'draft',
+    editorType: 'tiptap',
+    design: null,
+  });
   const [preview, setPreview] = useState(null);
   const [notice, setNotice] = useState('');
 
@@ -81,11 +99,32 @@ export default function CampaignTemplateEditPage() {
         bodyHtml: tpl.bodyHtml || '',
         locale: tpl.locale || 'tr',
         status: tpl.status || 'draft',
+        editorType: tpl.editorType === 'builder' ? 'builder' : 'tiptap',
+        design: tpl.design || null,
       });
     }
   }, [tpl]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Builder her değişiklikte hem gönderilecek HTML'i hem proje JSON'unu üretir;
+  // ikisi TEK set'te yazılır (ayrı ayrı yazılırsa araya giren render, eski
+  // design ile yeni html'i eşleştirebilir).
+  const setBuilderContent = ({ html, design }) =>
+    setForm((f) => ({ ...f, bodyHtml: html, design }));
+
+  // Mod değiştirme: mevcut bodyHtml korunur (builder'a geçişte içe aktarılır,
+  // Tiptap'e dönüşte son üretilen HTML düzenlenmeye devam eder). `design`
+  // silinmez → builder'a geri dönüldüğünde tasarım kaybolmaz.
+  const switchEditor = (editorType) => {
+    if (form.editorType === editorType) return;
+    setForm((f) => ({ ...f, editorType }));
+    setNotice(
+      editorType === 'builder'
+        ? 'Builder moduna geçildi. Mevcut içerik içe aktarıldı; kaydetmeyi unutmayın.'
+        : 'Basit editöre geçildi. Builder tasarımı saklı kalır; ancak burada bir düzenleme yaparsanız tablo/buton düzeni sadeleşir.',
+    );
+  };
 
   const save = async () => {
     const r = await updateTemplate({ id, ...form }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Kaydedilemedi' }));
@@ -154,7 +193,8 @@ export default function CampaignTemplateEditPage() {
       {isLoading ? (
         <Skeleton className="h-96" />
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+        // Builder tam genişlik ister (kendi blok/stil panelleri var) → tek kolon.
+        <div className={form.editorType === 'builder' ? 'grid gap-5' : 'grid gap-5 lg:grid-cols-[1fr_360px]'}>
           <div className="space-y-4">
             <Card>
               <CardContent className="space-y-4 p-4">
@@ -183,8 +223,35 @@ export default function CampaignTemplateEditPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Gövde</label>
-                  <MailTemplateEditor value={form.bodyHtml} onChange={(html) => set('bodyHtml', html)} variables={variables} />
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs text-muted-foreground">Gövde</label>
+                    <div className="flex items-center gap-1 rounded-md border border-input p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => switchEditor('tiptap')}
+                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${form.editorType === 'tiptap' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent'}`}
+                      >
+                        <Type className="size-3.5" /> Basit editör
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => switchEditor('builder')}
+                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${form.editorType === 'builder' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent'}`}
+                      >
+                        <LayoutTemplate className="size-3.5" /> Sürükle-bırak builder
+                      </button>
+                    </div>
+                  </div>
+                  {form.editorType === 'builder' ? (
+                    <MailBuilderEditor
+                      value={form.bodyHtml}
+                      design={form.design}
+                      onChange={setBuilderContent}
+                      variables={variables}
+                    />
+                  ) : (
+                    <MailTemplateEditor value={form.bodyHtml} onChange={(html) => set('bodyHtml', html)} variables={variables} />
+                  )}
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     Unsubscribe linki gönderimde otomatik eklenir. Değişkenler {`{{USER_NAME}}`} gibi düz metin olarak saklanır.
                   </p>
@@ -194,7 +261,7 @@ export default function CampaignTemplateEditPage() {
           </div>
 
           {/* Önizleme */}
-          <Card className="lg:sticky lg:top-4 lg:self-start">
+          <Card className={form.editorType === 'builder' ? '' : 'lg:sticky lg:top-4 lg:self-start'}>
             <CardHeader><CardTitle>Önizleme</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4">
               {tpl?.variables?.length > 0 && (

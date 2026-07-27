@@ -28,12 +28,17 @@ export default function CampaignTemplatesPage() {
   const [createTemplate, { isLoading: creating }] = useCreateMailTemplateMutation();
 
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', subject: '' });
+  const [form, setForm] = useState({ name: '', subject: '', editorType: 'tiptap' });
   const [notice, setNotice] = useState('');
 
   const submit = async () => {
     if (!form.name.trim() || !form.subject.trim()) return;
-    const r = await createTemplate({ name: form.name, subject: form.subject, bodyHtml: '<p>Merhaba {{USER_NAME}},</p>' })
+    const r = await createTemplate({
+      name: form.name,
+      subject: form.subject,
+      bodyHtml: '<p>Merhaba {{USER_NAME}},</p>',
+      editorType: form.editorType,
+    })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Oluşturulamadı' }));
     if (r?.__err) return setNotice(r.__err);
@@ -70,6 +75,17 @@ export default function CampaignTemplatesPage() {
               <label className="mb-1 block text-xs text-muted-foreground">Konu</label>
               <Input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Merhaba {{USER_NAME}}, yeniliklerimiz var!" />
             </div>
+            <div className="w-48">
+              <label className="mb-1 block text-xs text-muted-foreground">Editör</label>
+              <select
+                value={form.editorType}
+                onChange={(e) => setForm((f) => ({ ...f, editorType: e.target.value }))}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+              >
+                <option value="tiptap">Basit editör</option>
+                <option value="builder">Sürükle-bırak builder</option>
+              </select>
+            </div>
             <Button onClick={submit} disabled={creating || !form.name.trim() || !form.subject.trim()}>
               {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Oluştur &amp; Düzenle
             </Button>
@@ -96,6 +112,7 @@ export default function CampaignTemplatesPage() {
                 <TableRow>
                   <TableHead>Ad</TableHead>
                   <TableHead>Konu</TableHead>
+                  <TableHead>Editör</TableHead>
                   <TableHead>Değişkenler</TableHead>
                   <TableHead>Durum</TableHead>
                 </TableRow>
@@ -107,6 +124,11 @@ export default function CampaignTemplatesPage() {
                       <Link href={`/cms/email/campaign-templates/${t._id}`} className="text-primary hover:underline">{t.name}</Link>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{t.subject}</TableCell>
+                    <TableCell>
+                      <Badge variant={t.editorType === 'builder' ? 'primary' : 'secondary'}>
+                        {t.editorType === 'builder' ? 'Builder' : 'Basit'}
+                      </Badge>
+                    </TableCell>
                     <TableCell>
                       <span className="font-mono text-[11px] text-muted-foreground">{(t.variables || []).join(', ') || '—'}</span>
                     </TableCell>
