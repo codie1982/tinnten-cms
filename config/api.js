@@ -117,6 +117,9 @@ export const ENDPOINTS = {
     cmsDetail: (id) => `/asistans/cms/${id}`,
     cmsToolDefinitions: (id) => `/asistans/cms/${id}/tool-definitions`,
     cmsToolList: '/asistans/cms/tool-definitions',
+    // CMS: firmasız asistan oluşturma + sonradan bir firmaya aktarma.
+    cmsCreate: '/asistans/cms',
+    cmsAssignCompany: (id) => `/asistans/cms/${id}/company`,
   },
   aiConversations: {
     // CMS admin: tüm kullanıcılar arası konuşmalar (genel + asistan).

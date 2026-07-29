@@ -27,6 +27,28 @@ export const aiApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'Assistant', id: `tools-${id}` }],
     }),
+    /**
+     * Yeni asistan — `companyId` OPSİYONEL. Verilmezse asistan firmasız
+     * (atanmamış) doğar ve sonradan assignAssistantCompany ile aktarılır.
+     */
+    createAssistant: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.assistants.cmsCreate, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res, // { assistant, scopeWarnings? }
+      invalidatesTags: [{ type: 'Assistant', id: 'LIST' }],
+    }),
+    /** Asistanı bir firmaya aktarır (sahiplik + faturalandırma + kapsam devri). */
+    assignAssistantCompany: build.mutation({
+      query: ({ id, companyId }) => ({
+        url: ENDPOINTS.assistants.cmsAssignCompany(id),
+        method: 'PATCH',
+        body: { companyId },
+      }),
+      transformResponse: (res) => res?.data ?? res, // { assistant, previousCompanyId, unpublished }
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'Assistant', id },
+        { type: 'Assistant', id: 'LIST' },
+      ],
+    }),
     getWorkflows: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.workflows.cmsList, params }), // { query, status, page, limit }
       transformResponse: (res) => res?.data ?? res,
@@ -51,6 +73,8 @@ export const {
   useGetAssistantsQuery,
   useGetAssistantQuery,
   useGetAssistantToolDefinitionsQuery,
+  useCreateAssistantMutation,
+  useAssignAssistantCompanyMutation,
   useGetWorkflowsQuery,
   useGetUsageSeriesQuery,
 } = aiApi;

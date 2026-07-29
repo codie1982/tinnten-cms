@@ -173,7 +173,12 @@ function GeneralSection({ a }) {
           <Field label="Dil" value={a.locale?.toUpperCase() || '—'} />
           <Field label="Assistant ID" value={a.assistantId || '—'} mono />
           <Field label="Sahip (userId)" value={a.userId || '—'} mono />
-          <Field label="Firma (companyId)" value={a.companyId || '—'} mono />
+          {/* Firmasız asistanlar CMS'te oluşturulup henüz aktarılmamış olabilir. */}
+          <Field
+            label="Firma"
+            value={a.companyId ? a.companyName || a.companyId : 'Atanmamış'}
+            mono={Boolean(a.companyId) && !a.companyName}
+          />
           <Field label="Yayın Tarihi" value={formatTrDate(a.publishedAt)} />
           <Field label="Oluşturulma" value={formatTrDate(a.createdAt)} />
         </CardContent>
