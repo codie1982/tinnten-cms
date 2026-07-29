@@ -120,6 +120,12 @@ export const ENDPOINTS = {
     // CMS: firmasız asistan oluşturma + sonradan bir firmaya aktarma.
     cmsCreate: '/asistans/cms',
     cmsAssignCompany: (id) => `/asistans/cms/${id}/company`,
+    // Sihirbazın ürettiği intent metinlerini yazar (cms:admin, sahiplik aranmaz).
+    cmsToolDefinition: (id, toolKey) => `/asistans/cms/${id}/tool-definitions/${toolKey}`,
+    // Ortak (cms öneki YOK) — asistan gerektirmeyen stateless uçlar:
+    // taslak config'ten LLM ile intent metni üretir / global tool default'ları.
+    previewIntents: '/asistans/tool-definitions/preview-intents',
+    toolDefaults: '/asistans/tool-definition-defaults',
   },
   aiConversations: {
     // CMS admin: tüm kullanıcılar arası konuşmalar (genel + asistan).

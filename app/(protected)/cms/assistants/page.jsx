@@ -38,8 +38,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -53,7 +52,6 @@ import CompanySelect, { shortId } from '@/components/cms/company-select';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetAssistantsQuery,
-  useCreateAssistantMutation,
   useAssignAssistantCompanyMutation,
 } from '@/redux/services';
 
@@ -66,18 +64,6 @@ const statusMeta = {
   disabled: { label: 'Devre Dışı', variant: 'warning' },
   archived: { label: 'Arşivli', variant: 'muted' },
 };
-
-const LOCALES = [
-  { value: 'tr', label: 'Türkçe' },
-  { value: 'en', label: 'İngilizce' },
-  { value: 'de', label: 'Almanca' },
-  { value: 'fr', label: 'Fransızca' },
-  { value: 'es', label: 'İspanyolca' },
-  { value: 'it', label: 'İtalyanca' },
-  { value: 'ar', label: 'Arapça' },
-  { value: 'ru', label: 'Rusça' },
-  { value: 'el', label: 'Yunanca' },
-];
 
 function formatTrDate(input) {
   if (!input) return '—';
@@ -100,7 +86,6 @@ export default function AssistantsPage() {
   const [page, setPage] = useState(1);
   const [notice, setNotice] = useState(null); // { type: 'success'|'error', text }
 
-  const [createOpen, setCreateOpen] = useState(false);
   const [transferTarget, setTransferTarget] = useState(null); // asistan satırı
 
   useEffect(() => {
@@ -132,10 +117,10 @@ export default function AssistantsPage() {
         description="Tüm AI asistanlarını görüntüleyin ve yönetin"
         actions={
           canManage ? (
-            <Button onClick={() => setCreateOpen(true)}>
+            <Link href="/cms/assistants/new" className={buttonVariants()}>
               <Plus className="size-4" />
               Yeni Asistan
-            </Button>
+            </Link>
           ) : null
         }
       />
@@ -318,11 +303,6 @@ export default function AssistantsPage() {
 
       {canManage && (
         <>
-          <CreateAssistantDialog
-            open={createOpen}
-            onOpenChange={setCreateOpen}
-            onDone={(msg) => setNotice({ type: 'success', text: msg })}
-          />
           <TransferAssistantDialog
             assistant={transferTarget}
             onOpenChange={(open) => !open && setTransferTarget(null)}
@@ -331,132 +311,6 @@ export default function AssistantsPage() {
         </>
       )}
     </RoleGuard>
-  );
-}
-
-/* ─── yeni asistan ─── */
-function CreateAssistantDialog({ open, onOpenChange, onDone }) {
-  const [form, setForm] = useState({
-    asistan_name: '',
-    title: '',
-    description: '',
-    locale: 'tr',
-    companyId: '',
-  });
-  const [formError, setFormError] = useState(null);
-  const [create, { isLoading }] = useCreateAssistantMutation();
-
-  // Dialog her açılışta temiz başlasın (kapanış animasyonu bitmeden sıfırlamayalım).
-  useEffect(() => {
-    if (!open) return;
-    setForm({ asistan_name: '', title: '', description: '', locale: 'tr', companyId: '' });
-    setFormError(null);
-  }, [open]);
-
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
-
-  const submit = async () => {
-    const name = form.asistan_name.trim();
-    if (!name) {
-      setFormError('Asistan adı zorunludur.');
-      return;
-    }
-    try {
-      const res = await create({
-        asistan_name: name,
-        title: form.title.trim() || undefined,
-        description: form.description.trim() || undefined,
-        locale: form.locale,
-        companyId: form.companyId || undefined,
-      }).unwrap();
-      const created = res?.assistant;
-      onDone(
-        created?.companyId
-          ? `“${created.name}” oluşturuldu ve ${created.companyName || 'firmaya'} atandı. Taslak olarak kaydedildi.`
-          : `“${created?.name || name}” taslak olarak oluşturuldu. Henüz bir firmaya atanmadı.`,
-      );
-      onOpenChange(false);
-    } catch (e) {
-      setFormError(errText(e, 'Asistan oluşturulamadı.'));
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Yeni Asistan</DialogTitle>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          {formError && (
-            <Alert variant="destructive">
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
-
-          <Field label="Asistan Adı" required>
-            <Input
-              autoFocus
-              value={form.asistan_name}
-              onChange={set('asistan_name')}
-              placeholder="Örn. Satış Asistanı"
-            />
-          </Field>
-
-          <Field label="Başlık" hint="Sohbet ekranında görünen başlık (opsiyonel)">
-            <Input value={form.title} onChange={set('title')} placeholder="Örn. Size nasıl yardımcı olabilirim?" />
-          </Field>
-
-          <Field label="Açıklama">
-            <textarea
-              rows={3}
-              value={form.description}
-              onChange={set('description')}
-              placeholder="Asistanın ne yaptığına dair kısa not (opsiyonel)"
-              className="w-full rounded-lg border border-input bg-background p-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
-            />
-          </Field>
-
-          <Field label="Dil">
-            <Select value={form.locale} onValueChange={(v) => setForm((f) => ({ ...f, locale: v }))}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LOCALES.map((l) => (
-                  <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-
-          <Field
-            label="Firma"
-            hint="Boş bırakırsanız asistan firmasız oluşturulur ve listeden istediğiniz zaman bir firmaya aktarabilirsiniz."
-          >
-            <CompanySelect
-              value={form.companyId}
-              onChange={(companyId) => setForm((f) => ({ ...f, companyId }))}
-              placeholder="Firma seç (opsiyonel)"
-            />
-          </Field>
-
-          <p className="text-xs text-muted-foreground">
-            Yeni asistan her zaman <span className="font-medium text-foreground">taslak</span> olarak
-            oluşturulur; yayına alma işlemi firma tarafında sözleşme ve kota kontrolünden geçer.
-          </p>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
-            Vazgeç
-          </Button>
-          <Button onClick={submit} disabled={isLoading}>
-            {isLoading && <Loader2 className="size-4 animate-spin" />}
-            Oluştur
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

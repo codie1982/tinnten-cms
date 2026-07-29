@@ -36,6 +36,45 @@ export const aiApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { assistant, scopeWarnings? }
       invalidatesTags: [{ type: 'Assistant', id: 'LIST' }],
     }),
+    /**
+     * Taslak asistan config'inden LLM ile tool intent metinleri üretir —
+     * asistan HENÜZ OLUŞMADAN çağrılır (stateless). Sonuç create'ten sonra
+     * updateAssistantToolDefinition ile kalıcılaştırılır.
+     * Backend'de dakikada 5 istekle sınırlı.
+     */
+    previewAssistantIntents: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.assistants.previewIntents, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res, // { toolDefinitions: [...] }
+    }),
+    /**
+     * Global (orijinal) tool tanımları — sihirbazda "varsayılan intent" göstermek için.
+     *
+     * Query string ELLE kurulur: backend `tools[]=A&tools[]=B` bekliyor ama
+     * fetchBaseQuery'nin URLSearchParams'ı diziyi virgülle birleştirip tek
+     * değere çevirir ("tools=A,B") — o hâlde backend tek bir tool adı sanır.
+     * `businessMode` bilinçli olarak GÖNDERİLMEZ: verilmediğinde backend
+     * filtreyi atlar ve CMS tüm tool'ların varsayılanını alabilir.
+     */
+    getAssistantToolDefaults: build.query({
+      query: (tools = []) => {
+        const qs = tools
+          .filter(Boolean)
+          .map((t) => `tools[]=${encodeURIComponent(t)}`)
+          .join('&');
+        return { url: `${ENDPOINTS.assistants.toolDefaults}${qs ? `?${qs}` : ''}` };
+      },
+      transformResponse: (res) => res?.data ?? res, // { toolDefinitions: [...] }
+    }),
+    /** Asistana bağlı tool tanımı override'ı (CMS — sahiplik aranmaz). */
+    updateAssistantToolDefinition: build.mutation({
+      query: ({ id, toolKey, ...patch }) => ({
+        url: ENDPOINTS.assistants.cmsToolDefinition(id, toolKey),
+        method: 'PATCH',
+        body: patch,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [{ type: 'Assistant', id: `tools-${id}` }],
+    }),
     /** Asistanı bir firmaya aktarır (sahiplik + faturalandırma + kapsam devri). */
     assignAssistantCompany: build.mutation({
       query: ({ id, companyId }) => ({
@@ -75,6 +114,9 @@ export const {
   useGetAssistantToolDefinitionsQuery,
   useCreateAssistantMutation,
   useAssignAssistantCompanyMutation,
+  usePreviewAssistantIntentsMutation,
+  useGetAssistantToolDefaultsQuery,
+  useUpdateAssistantToolDefinitionMutation,
   useGetWorkflowsQuery,
   useGetUsageSeriesQuery,
 } = aiApi;
