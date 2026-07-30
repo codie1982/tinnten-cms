@@ -41,6 +41,11 @@ export const mailCampaignApi = baseApi.injectEndpoints({
     }),
 
     // ── Liste üyeliği (karar #6) ──
+    getChannelStats: build.query({
+      query: (key) => ({ url: ENDPOINTS.email.channelStats(key) }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, key) => [{ type: 'MailChannelMember', id: key }],
+    }),
     getChannelMembers: build.query({
       query: ({ key, ...params }) => ({ url: ENDPOINTS.email.channelMembers(key), params }),
       transformResponse: (res) => res?.data ?? res,
@@ -72,6 +77,20 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         url: ENDPOINTS.email.channelMembers(key),
         method: 'DELETE',
         body: { email },
+      }),
+      invalidatesTags: (r, e, { key }) => [
+        { type: 'MailChannelMember', id: key },
+        { type: 'MailChannel', id: 'LIST' },
+      ],
+    }),
+    // Adresi GLOBAL bastırma listesine ekle (engelle) — tüm kanallardan çıkar.
+    // Listeden çıkarmadan (removeChannelMember) farkı: kişi hiçbir listede
+    // yeniden mail alamaz; reason "manual" (operatör aksiyonu) yazılır.
+    blockSubscriber: build.mutation({
+      query: ({ email, reason }) => ({
+        url: ENDPOINTS.mailList.cmsSuppressions,
+        method: 'POST',
+        body: { email, reason: reason || 'manual' },
       }),
       invalidatesTags: (r, e, { key }) => [
         { type: 'MailChannelMember', id: key },
@@ -229,10 +248,12 @@ export const {
   useCreateMailChannelMutation,
   useUpdateMailChannelMutation,
   useDeleteMailChannelMutation,
+  useGetChannelStatsQuery,
   useGetChannelMembersQuery,
   useAddChannelMembersMutation,
   useUpdateChannelMemberMutation,
   useRemoveChannelMemberMutation,
+  useBlockSubscriberMutation,
   useGetMailTemplatesQuery,
   useGetMailTemplateQuery,
   useCreateMailTemplateMutation,

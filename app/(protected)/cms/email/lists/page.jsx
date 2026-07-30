@@ -6,7 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
-  Loader2, Pencil, Save, X, AlertTriangle,
+  Loader2, Pencil, Save, X, AlertTriangle, ChevronDown, ChevronRight,
+  UserCheck, UserMinus,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -17,6 +18,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
@@ -43,7 +47,7 @@ const SECTIONS = [
 ];
 
 const TYPE_META = {
-  custom: { label: 'Kullanıcı Listesi', variant: 'secondary' },
+  custom: { label: 'E-posta Listesi', variant: 'secondary' },
   private: { label: 'Gizli Liste', variant: 'muted' },
 };
 
@@ -54,6 +58,28 @@ const STATUS_META = {
 
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
+
+/** Küçük özet kartı — liste panosunun üst şeridi. */
+function SummaryCard({ icon: Icon, label, value, tone = 'primary' }) {
+  const toneClass = {
+    primary: 'bg-primary/10 text-primary',
+    success: 'bg-emerald-500/10 text-emerald-600',
+    warning: 'bg-amber-500/10 text-amber-600',
+  }[tone] || 'bg-primary/10 text-primary';
+  return (
+    <Card>
+      <CardContent className="flex items-center gap-3 p-4">
+        <div className={`flex size-9 shrink-0 items-center justify-center rounded-md ${toneClass}`}>
+          <Icon className="size-4.5" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xl font-semibold leading-tight">{formatCount(value)}</div>
+          <div className="truncate text-xs text-muted-foreground">{label}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 /* ── Genel Liste ── */
 function GeneralSection({ authorized }) {
@@ -139,14 +165,74 @@ function GeneralSection({ authorized }) {
   );
 }
 
+/* ── Kanal ağacı yardımcıları (parentKey → iç içe görünüm) ──
+ * Backend `parentKey` alanını flat listede döndürür (bkz. mail-channel.model.js,
+ * tinnten-server); burada CLIENT-SIDE ağaca çevrilir — ayrı bir `?tree=true`
+ * isteğine gerek yok, elimizdeki flat veri zaten yeterli.
+ */
+function buildChannelTree(list) {
+  const byKey = new Map(list.map((c) => [c.key, { ...c, children: [] }]));
+  const roots = [];
+  for (const c of list) {
+    const node = byKey.get(c.key);
+    const parent = c.parentKey ? byKey.get(c.parentKey) : null;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+function sortTreeNodes(nodes) {
+  const sorted = [...nodes].sort(
+    (a, b) =>
+      (a.sortOrder || 0) - (b.sortOrder || 0) ||
+      String(a.title || '').localeCompare(String(b.title || ''), 'tr'),
+  );
+  return sorted.map((n) => ({ ...n, children: n.children.length ? sortTreeNodes(n.children) : n.children }));
+}
+
+/** DFS-preorder flatten. `collapsedKeys` verilirse daralt açık bir atanın altındaki satırlar `hidden:true` olur. */
+function flattenTreeRows(nodes, depth, collapsedKeys, parentHidden, result) {
+  for (const n of nodes) {
+    const hasChildren = n.children.length > 0;
+    result.push({ ...n, depth, hasChildren, childCount: n.children.length, hidden: parentHidden });
+    if (hasChildren) {
+      const childHidden = parentHidden || collapsedKeys.has(n.key);
+      flattenTreeRows(n.children, depth + 1, collapsedKeys, childHidden, result);
+    }
+  }
+  return result;
+}
+
+function findTreeNode(nodes, key) {
+  for (const n of nodes) {
+    if (n.key === key) return n;
+    if (n.children.length) {
+      const found = findTreeNode(n.children, key);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function collectDescendantKeys(node, acc = new Set()) {
+  for (const child of node.children) {
+    acc.add(child.key);
+    collectDescendantKeys(child, acc);
+  }
+  return acc;
+}
+
 /* ── Özel Listeler ── */
 function CustomListsSection({ authorized }) {
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '' });
+  const [form, setForm] = useState({ title: '', description: '', parentKey: '' });
   const [notice, setNotice] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
   const [editId, setEditId] = useState(null);
-  const [editForm, setEditForm] = useState({ title: '', description: '' });
+  const [editForm, setEditForm] = useState({ title: '', description: '', parentKey: '' });
+  // Genişletilmiş varsayılan: gruplama ilk bakışta görünsün. Daraltılan grup key'leri.
+  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
   // Arşivlenen listeler aktif listeden kalkar, bu sekmede görünür.
   const [view, setView] = useState('active');
 
@@ -158,30 +244,53 @@ function CustomListsSection({ authorized }) {
   const archivedChannels = allCustom.filter((ch) => ch.status === 'archived').sort(sortByTitle);
   const customChannels = view === 'archived' ? archivedChannels : activeChannels;
 
+  // Üst-liste seçici (create/edit) her zaman AKTİF listelerden kurulur — arşivlenmiş
+  // bir listenin altına yeni bağlama yapılmaz, hangi sekmede olunursa olunsun.
+  const activeTree = sortTreeNodes(buildChannelTree(activeChannels));
+  const parentOptions = flattenTreeRows(activeTree, 0, new Set(), false, []);
+
+  // Görüntülenen sekmenin (aktif/arşiv) kendi ağacı — parentKey'e göre iç içe sıralanır.
+  const treeRows = flattenTreeRows(sortTreeNodes(buildChannelTree(customChannels)), 0, collapsedKeys, false, []);
+  const visibleRows = treeRows.filter((r) => !r.hidden);
+
+  const toggleCollapse = (key) => {
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const [createChannel, { isLoading: creating }] = useCreateMailChannelMutation();
   const [updateChannel, { isLoading: updating }] = useUpdateMailChannelMutation();
   const [deleteChannel, { isLoading: deleting }] = useDeleteMailChannelMutation();
 
   const handleCreate = async () => {
     if (!form.title.trim()) return;
-    const r = await createChannel({ ...form, type: 'custom' })
+    const r = await createChannel({
+      title: form.title,
+      description: form.description,
+      type: 'custom',
+      parentKey: form.parentKey || null,
+    })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Oluşturulamadı' }));
     if (r?.__err) return setNotice({ variant: 'destructive', message: r.__err });
     setShowCreate(false);
-    setForm({ title: '', description: '' });
+    setForm({ title: '', description: '', parentKey: '' });
     setNotice({ variant: 'info', message: 'Liste oluşturuldu.' });
   };
 
   const openEdit = (ch) => {
     setConfirmId(null);
     setEditId(ch._id);
-    setEditForm({ title: ch.title || '', description: ch.description || '' });
+    setEditForm({ title: ch.title || '', description: ch.description || '', parentKey: ch.parentKey || '' });
   };
 
   const cancelEdit = () => {
     setEditId(null);
-    setEditForm({ title: '', description: '' });
+    setEditForm({ title: '', description: '', parentKey: '' });
   };
 
   const saveEdit = async (ch) => {
@@ -195,6 +304,7 @@ function CustomListsSection({ authorized }) {
       id: ch._id,
       title,
       description: editForm.description.trim(),
+      parentKey: editForm.parentKey || null,
     })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Liste güncellenemedi' }));
@@ -245,12 +355,34 @@ function CustomListsSection({ authorized }) {
     });
   };
 
+  // Aktif özel listeler üzerinden pano özeti (abone/çıkan/liste sayısı).
+  const summary = activeChannels.reduce(
+    (acc, ch) => ({
+      subscribed: acc.subscribed + (Number(ch.memberCount) || 0),
+      unsubscribed: acc.unsubscribed + (Number(ch.unsubscribedCount) || 0),
+    }),
+    { subscribed: 0, unsubscribed: 0 },
+  );
+
   return (
     <div className="space-y-4">
       {notice?.message && (
         <Alert variant={notice.variant || 'info'}>
           <AlertDescription>{notice.message}</AlertDescription>
         </Alert>
+      )}
+
+      {!isLoading && activeChannels.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <SummaryCard icon={ListFilter} label="Aktif liste" value={activeChannels.length} />
+          <SummaryCard icon={UserCheck} tone="success" label="Toplam aktif abone" value={summary.subscribed} />
+          <SummaryCard icon={UserMinus} tone="warning" label="Toplam çıkan / çıkarılan" value={summary.unsubscribed} />
+          <SummaryCard
+            icon={Users}
+            label="Toplam kayıt"
+            value={summary.subscribed + summary.unsubscribed}
+          />
+        </div>
       )}
 
       <Card>
@@ -302,6 +434,23 @@ function CustomListsSection({ authorized }) {
                     onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                   />
                 </div>
+                <div className="min-w-[200px] flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground">Üst liste</label>
+                  <Select
+                    value={form.parentKey || 'none'}
+                    onValueChange={(v) => setForm((f) => ({ ...f, parentKey: v === 'none' ? '' : v }))}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Ana seviye (opsiyonel)" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Ana seviye</SelectItem>
+                      {parentOptions.map((c) => (
+                        <SelectItem key={c.key} value={c.key}>
+                          {'— '.repeat(c.depth)}{c.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button onClick={handleCreate} disabled={creating || !form.title.trim()}>
                   {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Oluştur
                 </Button>
@@ -338,54 +487,102 @@ function CustomListsSection({ authorized }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {customChannels.map((ch) => {
+                {visibleRows.map((ch) => {
                   const tm = TYPE_META[ch.type] || { label: ch.type, variant: 'muted' };
                   const sm = STATUS_META[ch.status] || { label: ch.status, variant: 'muted' };
                   const editing = editId === ch._id;
                   const archived = ch.status === 'archived';
                   const memberCount = Number(ch.memberCount) || 0;
+                  const selfNode = editing ? findTreeNode(activeTree, ch.key) : null;
+                  const excludedKeys = editing
+                    ? new Set([ch.key, ...(selfNode ? collectDescendantKeys(selfNode) : [])])
+                    : null;
                   return (
                     <Fragment key={ch._id}>
                     <TableRow>
                       <TableCell className="font-medium">
-                        {editing ? (
-                          <div className="max-w-[420px] space-y-2">
-                            <Input
-                              value={editForm.title}
-                              onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                              className="h-8"
-                              autoFocus
-                            />
-                            <Input
-                              value={editForm.description}
-                              onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                              className="h-8"
-                              placeholder="Açıklama"
-                            />
-                          </div>
-                        ) : (
-                          <>
-                            <span className="inline-flex items-center gap-1.5">
-                              {ch.title}
-                              {ch.metadata?.generatedFromCron && (
-                                <Badge variant="muted" className="gap-1 font-normal">
-                                  <RefreshCw className="size-3" /> Cron
-                                </Badge>
-                              )}
-                            </span>
-                            {ch.description && (
-                              <div className="mt-0.5 max-w-[360px] truncate text-xs font-normal text-muted-foreground">
-                                {ch.description}
+                        <div className="flex items-start gap-1.5" style={{ paddingLeft: `${ch.depth * 20}px` }}>
+                          {ch.hasChildren ? (
+                            <button
+                              type="button"
+                              className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                              onClick={() => toggleCollapse(ch.key)}
+                              title={collapsedKeys.has(ch.key) ? 'Genişlet' : 'Daralt'}
+                            >
+                              {collapsedKeys.has(ch.key)
+                                ? <ChevronRight className="size-3.5" />
+                                : <ChevronDown className="size-3.5" />}
+                            </button>
+                          ) : (
+                            <span className="size-4 shrink-0" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            {editing ? (
+                              <div className="max-w-[420px] space-y-2">
+                                <Input
+                                  value={editForm.title}
+                                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                                  className="h-8"
+                                  autoFocus
+                                />
+                                <Input
+                                  value={editForm.description}
+                                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                                  className="h-8"
+                                  placeholder="Açıklama"
+                                />
+                                <Select
+                                  value={editForm.parentKey || 'none'}
+                                  onValueChange={(v) => setEditForm((f) => ({ ...f, parentKey: v === 'none' ? '' : v }))}
+                                >
+                                  <SelectTrigger className="h-8"><SelectValue placeholder="Ana seviye" /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">Ana seviye</SelectItem>
+                                    {parentOptions
+                                      .filter((c) => !excludedKeys?.has(c.key))
+                                      .map((c) => (
+                                        <SelectItem key={c.key} value={c.key}>
+                                          {'— '.repeat(c.depth)}{c.title}
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
+                            ) : (
+                              <>
+                                <span className="inline-flex flex-wrap items-center gap-1.5">
+                                  {ch.title}
+                                  {ch.hasChildren && (
+                                    <Badge variant="muted" className="font-normal">{ch.childCount} alt liste</Badge>
+                                  )}
+                                  {ch.metadata?.generatedFromCron && (
+                                    <Badge variant="muted" className="gap-1 font-normal">
+                                      <RefreshCw className="size-3" /> Cron
+                                    </Badge>
+                                  )}
+                                </span>
+                                {ch.description && (
+                                  <div className="mt-0.5 max-w-[360px] truncate text-xs font-normal text-muted-foreground">
+                                    {ch.description}
+                                  </div>
+                                )}
+                              </>
                             )}
-                          </>
-                        )}
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <span className="inline-flex items-center justify-end gap-1.5 font-medium">
-                          <Users className="size-3.5 text-muted-foreground" />
-                          {formatCount(ch.memberCount)}
-                        </span>
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="inline-flex items-center justify-end gap-1.5 font-medium">
+                            <Users className="size-3.5 text-muted-foreground" />
+                            {formatCount(ch.memberCount)}
+                          </span>
+                          {(Number(ch.unsubscribedCount) || 0) > 0 && (
+                            <span className="text-xs text-muted-foreground">
+                              {formatCount(ch.unsubscribedCount)} çıkmış · {formatCount(ch.totalCount)} toplam
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell><Badge variant={tm.variant}>{tm.label}</Badge></TableCell>
                       <TableCell><Badge variant={sm.variant}>{sm.label}</Badge></TableCell>
@@ -460,6 +657,12 @@ function CustomListsSection({ authorized }) {
                                   </>
                                 ) : (
                                   ' Listede üye yok.'
+                                )}
+                                {ch.hasChildren && (
+                                  <>
+                                    {' '}Bu listenin <b>{ch.childCount} alt listesi</b> var; onlar silinmez,
+                                    yalnızca üst bağlantıları kalkar (ana seviyeye taşınır).
+                                  </>
                                 )}
                               </span>
                             </div>

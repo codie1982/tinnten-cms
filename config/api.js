@@ -272,6 +272,7 @@ export const ENDPOINTS = {
     channels: '/email/channels',
     channel: (id) => `/email/channels/${id}`,
     channelMembers: (key) => `/email/channels/${key}/members`,
+    channelStats: (key) => `/email/channels/${key}/members/stats`,
     // DB kampanya şablonları (dosya .flt editöründen AYRI)
     templates: '/email/templates',
     template: (id) => `/email/templates/${id}`,
@@ -311,6 +312,8 @@ export const ENDPOINTS = {
     cmsList: '/mail-list/cms',
     cmsStats: '/mail-list/cms/stats',
     cmsDetail: '/mail-list/cms/detail',
+    cmsSuppressions: '/mail-list/cms/suppressions',
+    cmsSuppressionRelease: '/mail-list/cms/suppressions/release',
   },
   files: {
     cmsStats: '/files/cms/stats',
