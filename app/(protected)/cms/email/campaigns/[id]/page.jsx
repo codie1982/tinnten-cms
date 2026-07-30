@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -200,6 +200,11 @@ export default function CampaignEditPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Link href="/cms/email/campaigns"><Button variant="outline"><ArrowLeft className="size-4" /> Liste</Button></Link>
+            {!isNew && status !== 'draft' && (
+              <Link href={`/cms/email/campaigns/${id}/dashboard`}>
+                <Button variant="outline"><BarChart3 className="size-4" /> Dashboard</Button>
+              </Link>
+            )}
             {!isNew && (
               <Button variant="outline" onClick={refreshCampaign} disabled={campaignFetching || statsFetching}>
                 {campaignFetching || statsFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}

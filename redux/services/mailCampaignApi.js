@@ -164,6 +164,21 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:stats` }],
     }),
+    // Dashboard: alıcı bazında açılma/tıklama listesi (sayfalı, engagement filtreli).
+    getMailCampaignRecipients: build.query({
+      query: ({ id, page = 1, limit = 25, engagement = 'all' }) => ({
+        url: ENDPOINTS.email.campaignRecipients(id),
+        params: { page, limit, engagement },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, { id }) => [{ type: 'EmailCampaign', id: `${id}:recipients` }],
+    }),
+    // Dashboard: saatlik açılma/tıklama zaman serisi (grafik).
+    getMailCampaignTimeSeries: build.query({
+      query: (id) => ENDPOINTS.email.campaignTimeseries(id),
+      transformResponse: (res) => res?.data?.points ?? [],
+      providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:timeseries` }],
+    }),
 
     // ── Yardımcı ──
     getMergeVariables: build.query({
@@ -232,6 +247,8 @@ export const {
   useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
   useGetMailCampaignStatsQuery,
+  useGetMailCampaignRecipientsQuery,
+  useGetMailCampaignTimeSeriesQuery,
   useGetMergeVariablesQuery,
   useGetRecipientCountQuery,
   useLazyGetRecipientCountQuery,

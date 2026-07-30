@@ -131,7 +131,12 @@ export default function CampaignsPage() {
                   return (
                     <TableRow key={c._id}>
                       <TableCell className="font-medium">
-                        <Link href={`/cms/email/campaigns/${c._id}`} className="text-primary hover:underline">{c.name}</Link>
+                        <Link
+                          href={c.status === 'draft' ? `/cms/email/campaigns/${c._id}` : `/cms/email/campaigns/${c._id}/dashboard`}
+                          className="text-primary hover:underline"
+                        >
+                          {c.name}
+                        </Link>
                       </TableCell>
                       <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
                       <TableCell><Badge variant={m.variant}>{m.label}</Badge></TableCell>

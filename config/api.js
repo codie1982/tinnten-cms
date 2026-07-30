@@ -282,6 +282,8 @@ export const ENDPOINTS = {
     campaign: (id) => `/email/campaigns/${id}`,
     campaignSend: (id) => `/email/campaigns/${id}/send`,
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
+    campaignRecipients: (id) => `/email/campaigns/${id}/recipients`,
+    campaignTimeseries: (id) => `/email/campaigns/${id}/timeseries`,
     // Yardımcı
     mergeVariables: '/email/merge-variables',
     // Merge değişken katalogu (admin)
