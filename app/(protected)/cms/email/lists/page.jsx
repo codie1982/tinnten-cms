@@ -498,7 +498,7 @@ function NewsSection({ authorized }) {
   const [q, setQ] = useState('');
 
   const { data, isLoading, isFetching, error } = useGetChannelMembersQuery(
-    { key: 'news_content', limit: MEMBER_PAGE, skip, q },
+    { key: 'news', limit: MEMBER_PAGE, skip, q },
     { skip: !authorized },
   );
   const members = data?.items ?? [];
