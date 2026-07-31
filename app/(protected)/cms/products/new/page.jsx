@@ -165,7 +165,7 @@ function CreateProductForm() {
             <div>
               <p className="text-xs text-muted-foreground">Firma adına ekleniyor</p>
               <Link
-                href={`/cms/companies/${companyId}?section=urunler`}
+                href={`/cms/companies/${companyId}?tab=urunler`}
                 className="text-sm font-medium text-foreground hover:text-primary"
               >
                 {companyName}
@@ -186,7 +186,7 @@ function CreateProductForm() {
             {limitInfo.limitType === 'services.amount' ? 'Hizmet' : 'Ürün'}{' '}
             limiti dolu ({limitInfo.usage ?? '—'}/{limitInfo.limit ?? '—'}).{' '}
             <Link
-              href={`/cms/companies/${companyId}?section=limitler`}
+              href={`/cms/companies/${companyId}?tab=limitler`}
               className="font-medium text-primary hover:underline"
             >
               Limitleri düzenle
@@ -221,7 +221,7 @@ function CreateProductForm() {
           type="button"
           variant="outline"
           onClick={() =>
-            router.push(`/cms/companies/${companyId}?section=urunler`)
+            router.push(`/cms/companies/${companyId}?tab=urunler`)
           }
           disabled={isCreating}
         >
