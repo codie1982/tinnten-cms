@@ -2,7 +2,7 @@
 
 import { Fragment, Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
@@ -922,10 +922,13 @@ function MailListsPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const [section, setSection] = useState('general');
 
-  // Sekme URL ile eşitlenir → /cms/email/lists?tab=cron (nav + eski Cron Listeleri
-  // yönlendirmesi). Parametre değişince (aynı sayfada bile) doğru sekme açılır.
+  // Sekme ↔ URL çift yönlü. Tıklama ?tab=<key> yazar (aşağıda, router.replace);
+  // bu efekt de URL değişimini (ileri/geri, liste detayından dönüş, nav derin linki)
+  // sekmeye yansıtır. Böylece sekme sayfa gezintisinde sıfırlanmaz.
   useEffect(() => {
     const tab = searchParams.get('tab');
     setSection(tab && SECTION_KEYS.includes(tab) ? tab : 'general');
@@ -949,7 +952,13 @@ function MailListsPageInner() {
                 return (
                   <button
                     key={s.key}
-                    onClick={() => setSection(s.key)}
+                    onClick={() => {
+                      setSection(s.key);
+                      router.replace(
+                        s.key === 'general' ? pathname : `${pathname}?tab=${s.key}`,
+                        { scroll: false },
+                      );
+                    }}
                     className={cn(
                       'flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
                       active ? 'bg-primary/10 text-primary' : 'text-foreground/70 hover:bg-accent hover:text-foreground',
