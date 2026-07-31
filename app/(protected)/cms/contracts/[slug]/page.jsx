@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useCallback, useEffect, useState } from 'react';
+import { Suspense, use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   ChevronDown, ChevronRight, Check, FileText, Users,
@@ -100,10 +100,14 @@ function LocaleTabs({ selectedLocale, onSelect, localeForms, translating }) {
 }
 
 /* ─── Ana sayfa ─── */
-export default function ContractDetailPage({ params }) {
+const DEFAULT_SECTION = 'icerik';
+
+function ContractDetailPageInner({ params }) {
   const { slug } = use(params);
   const isNew = slug === 'new';
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
@@ -116,8 +120,12 @@ export default function ContractDetailPage({ params }) {
   const [publishAgreement, { isLoading: publishing }] = usePublishAgreementMutation();
   const [translate, { isLoading: translating }] = useTranslateMutation();
 
-  /* UI state */
-  const [section, setSection] = useState('icerik');
+  /* UI state — aktif sekme URL'de: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL). */
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
   const [selectedLocale, setSelectedLocale] = useState('tr');
   const [selectedId, setSelectedId] = useState(isNew ? 'NEW' : null);
 
@@ -538,6 +546,15 @@ export default function ContractDetailPage({ params }) {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function ContractDetailPage({ params }) {
+  return (
+    <Suspense fallback={null}>
+      <ContractDetailPageInner params={params} />
+    </Suspense>
   );
 }
 
