@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   ArrowLeft, Clock, Database, Play, RefreshCw, Settings2, Users, Loader2,
-  UserCheck, UserMinus, ListChecks,
+  UserCheck, UserMinus, ListChecks, Send,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -25,6 +25,7 @@ import {
   useGetChannelStatsQuery,
   useGetCronListsQuery,
   useRunCronListMutation,
+  useGetMailCampaignsQuery,
 } from '@/redux/services';
 import { MemberListDialog } from '@/components/email/member-list-dialog';
 import { toCategorySegments, categoryMeta } from '@/lib/unsubscribeReasons';
@@ -44,6 +45,15 @@ const BUILD_MODE_LABELS = {
   append: 'Biriktir (aynı liste)',
   replace: 'Yenile (aynı liste)',
   new: 'Her döngüde yeni tarihli liste',
+};
+const CAMPAIGN_STATUS_META = {
+  draft: { label: 'Taslak', variant: 'muted' },
+  queued: { label: 'Kuyrukta', variant: 'secondary' },
+  sending: { label: 'Gönderiliyor', variant: 'secondary' },
+  sent: { label: 'Gönderildi', variant: 'success' },
+  partial: { label: 'Kısmi', variant: 'warning' },
+  failed: { label: 'Başarısız', variant: 'destructive' },
+  paused: { label: 'Duraklatıldı', variant: 'warning' },
 };
 
 function StatCard({ icon: Icon, label, value, sub, tone = 'primary' }) {
@@ -141,6 +151,12 @@ export default function ListDashboardPage() {
   const { data: cronLists = [] } = useGetCronListsQuery({}, { skip: !authorized || !isCron });
   const recipe = isCron ? cronLists.find((r) => r.channelKey === channelKey) : null;
   const [runCron, { isLoading: running }] = useRunCronListMutation();
+
+  // Bu listeye (channelKey) gönderilen kampanyalar. Kampanyalar tek bir yaprak
+  // kanala gider; backend filtre uçu yok → tüm kampanya listesini çekip (≤200-500,
+  // cache'li) client-side süzeriz. Grup satırları detaya gelmez (üye yönetimi yok).
+  const { data: allCampaigns = [] } = useGetMailCampaignsQuery(undefined, { skip: !authorized });
+  const listCampaigns = allCampaigns.filter((c) => c.channelKey === channelKey);
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [notice, setNotice] = useState('');
@@ -312,6 +328,63 @@ export default function ListDashboardPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Send className="size-4 text-muted-foreground" /> Gönderilen Kampanyalar
+                {listCampaigns.length > 0 && (
+                  <span className="text-sm font-normal text-muted-foreground">({listCampaigns.length})</span>
+                )}
+              </CardTitle>
+              <CardToolbar>
+                <Link href="/cms/email/campaigns">
+                  <Button size="sm" variant="outline"><Send className="size-3.5" /> Tüm Kampanyalar</Button>
+                </Link>
+              </CardToolbar>
+            </CardHeader>
+            <CardContent className="p-0">
+              {listCampaigns.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">
+                  Bu listeye henüz kampanya gönderilmemiş.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Kampanya</TableHead>
+                      <TableHead>Durum</TableHead>
+                      <TableHead>Gönderim</TableHead>
+                      <TableHead className="text-right">Gönderilen / Toplam</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {listCampaigns.map((c) => {
+                      const cm = CAMPAIGN_STATUS_META[c.status] || { label: c.status, variant: 'muted' };
+                      const sent = c.progress?.sent ?? c.audience?.sentCount ?? 0;
+                      const totalTarget = c.progress?.total ?? c.audience?.total ?? 0;
+                      return (
+                        <TableRow key={c._id}>
+                          <TableCell className="font-medium">
+                            <Link href={`/cms/email/campaigns/${c._id}`} className="hover:underline">
+                              {c.name}
+                            </Link>
+                          </TableCell>
+                          <TableCell><Badge variant={cm.variant}>{cm.label}</Badge></TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {c.sentAt ? new Date(c.sentAt).toLocaleString('tr-TR') : '—'}
+                          </TableCell>
+                          <TableCell className="text-right font-medium">
+                            {formatCount(sent)}{totalTarget ? ` / ${formatCount(totalTarget)}` : ''}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </div>
       )}
 
