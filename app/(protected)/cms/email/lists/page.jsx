@@ -7,7 +7,7 @@ import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
   Loader2, Pencil, Save, X, AlertTriangle, ChevronDown, ChevronRight,
-  UserCheck, UserMinus,
+  UserCheck, UserMinus, FolderInput, FolderTree,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -223,6 +223,20 @@ function collectDescendantKeys(node, acc = new Set()) {
   return acc;
 }
 
+/** Her düğüme alt ağacındaki toplam üye sayısını (kendisi dâhil) iliştirir.
+ *  Grup (çocuğu olan) satırları kendi "0" üyesini değil, altındaki listelerin
+ *  toplamını gösterir. Node nesneleri her render'da yeniden üretildiği için
+ *  mutasyon güvenli. */
+function annotateSubtree(nodes) {
+  let total = 0;
+  for (const n of nodes) {
+    const childMembers = n.children.length ? annotateSubtree(n.children) : 0;
+    n.subtreeMemberCount = (Number(n.memberCount) || 0) + childMembers;
+    total += n.subtreeMemberCount;
+  }
+  return total;
+}
+
 /* ── Özel Listeler ── */
 function CustomListsSection({ authorized }) {
   const [showCreate, setShowCreate] = useState(false);
@@ -235,6 +249,10 @@ function CustomListsSection({ authorized }) {
   const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
   // Arşivlenen listeler aktif listeden kalkar, bu sekmede görünür.
   const [view, setView] = useState('active');
+  // Toplu seçim → "Gruba Al". Seçim _id ile tutulur; satır kaybolsa da güvenli.
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [groupTarget, setGroupTarget] = useState('none');
+  const [grouping, setGrouping] = useState(false);
 
   const { data: channels = [], isLoading, error } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
   const sortByTitle = (a, b) =>
@@ -250,8 +268,26 @@ function CustomListsSection({ authorized }) {
   const parentOptions = flattenTreeRows(activeTree, 0, new Set(), false, []);
 
   // Görüntülenen sekmenin (aktif/arşiv) kendi ağacı — parentKey'e göre iç içe sıralanır.
-  const treeRows = flattenTreeRows(sortTreeNodes(buildChannelTree(customChannels)), 0, collapsedKeys, false, []);
+  // Grup (çocuğu olan) düğümlere alt ağaçtaki toplam üye sayısı iliştirilir.
+  const displayTree = sortTreeNodes(buildChannelTree(customChannels));
+  annotateSubtree(displayTree);
+  const treeRows = flattenTreeRows(displayTree, 0, collapsedKeys, false, []);
   const visibleRows = treeRows.filter((r) => !r.hidden);
+
+  // ── Toplu seçim türetimleri ──
+  const selectedSet = new Set(selectedIds);
+  const selectedChannels = customChannels.filter((ch) => selectedSet.has(ch._id));
+  // Döngü guard'ı: seçili düğümler + tüm alt ağaçları hedef grup olamaz.
+  const excludedGroupKeys = new Set();
+  for (const ch of selectedChannels) {
+    excludedGroupKeys.add(ch.key);
+    const node = findTreeNode(activeTree, ch.key);
+    if (node) collectDescendantKeys(node, excludedGroupKeys);
+  }
+  const groupOptions = parentOptions.filter((c) => !excludedGroupKeys.has(c.key));
+  const visibleRowIds = visibleRows.map((r) => r._id);
+  const allVisibleSelected =
+    visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedSet.has(id));
 
   const toggleCollapse = (key) => {
     setCollapsedKeys((prev) => {
@@ -265,6 +301,43 @@ function CustomListsSection({ authorized }) {
   const [createChannel, { isLoading: creating }] = useCreateMailChannelMutation();
   const [updateChannel, { isLoading: updating }] = useUpdateMailChannelMutation();
   const [deleteChannel, { isLoading: deleting }] = useDeleteMailChannelMutation();
+
+  const toggleSelected = (id, checked) =>
+    setSelectedIds((cur) => (checked ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((x) => x !== id)));
+  const toggleAllVisible = (checked) => setSelectedIds(checked ? visibleRowIds : []);
+  const clearSelection = () => { setSelectedIds([]); setGroupTarget('none'); };
+
+  // Seçili listeleri tek hedef gruba (parentKey) taşır. Toplu uç yok → tek tek PATCH.
+  const handleGroupSelected = async () => {
+    if (!selectedChannels.length) return;
+    const target = groupTarget === 'none' ? null : groupTarget;
+    setGrouping(true);
+    const results = await Promise.all(
+      selectedChannels.map((ch) =>
+        updateChannel({ id: ch._id, parentKey: target })
+          .unwrap()
+          .then(() => null)
+          .catch((e) => e?.data?.message || `“${ch.title}” taşınamadı`),
+      ),
+    );
+    setGrouping(false);
+    const errs = results.filter(Boolean);
+    const moved = selectedChannels.length - errs.length;
+    clearSelection();
+    if (errs.length) {
+      setNotice({
+        variant: 'destructive',
+        message:
+          (moved > 0 ? `${moved} liste taşındı. ` : '') +
+          `${errs.length} başarısız: ${errs.slice(0, 2).join('; ')}${errs.length > 2 ? '…' : ''}`,
+      });
+      return;
+    }
+    const targetTitle = target
+      ? (parentOptions.find((c) => c.key === target)?.title || target)
+      : 'Ana seviye';
+    setNotice({ variant: 'info', message: `${moved} liste “${targetTitle}” grubuna taşındı.` });
+  };
 
   const handleCreate = async () => {
     if (!form.title.trim()) return;
@@ -396,7 +469,7 @@ function CustomListsSection({ authorized }) {
               ].map((t) => (
                 <button
                   key={t.key}
-                  onClick={() => { setView(t.key); setConfirmId(null); setEditId(null); }}
+                  onClick={() => { setView(t.key); setConfirmId(null); setEditId(null); setSelectedIds([]); setGroupTarget('none'); }}
                   className={cn(
                     'px-3 py-1.5 text-xs font-medium transition-colors',
                     view === t.key
@@ -416,6 +489,31 @@ function CustomListsSection({ authorized }) {
           </CardToolbar>
         </CardHeader>
         <CardContent className="p-0">
+          {selectedIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 border-b border-border bg-primary/5 p-4">
+              <span className="text-sm font-medium">{selectedIds.length} liste seçili</span>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Gruba al:</span>
+                <Select value={groupTarget} onValueChange={setGroupTarget}>
+                  <SelectTrigger className="h-8 w-60"><SelectValue placeholder="Hedef grup" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Ana seviye (gruptan çıkar)</SelectItem>
+                    {groupOptions.map((c) => (
+                      <SelectItem key={c.key} value={c.key}>
+                        {'— '.repeat(c.depth)}{c.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button size="sm" onClick={handleGroupSelected} disabled={grouping}>
+                  {grouping ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />} Gruba Al
+                </Button>
+                <Button size="sm" variant="ghost" onClick={clearSelection} disabled={grouping}>
+                  Seçimi temizle
+                </Button>
+              </div>
+            </div>
+          )}
           {showCreate && view === 'active' && (
             <div className="border-b border-border p-4">
               <div className="flex flex-wrap items-end gap-3">
@@ -479,6 +577,15 @@ function CustomListsSection({ authorized }) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      className="size-3.5 accent-primary"
+                      checked={allVisibleSelected}
+                      onChange={(e) => toggleAllVisible(e.target.checked)}
+                      aria-label="Görünen satırları seç"
+                    />
+                  </TableHead>
                   <TableHead>Liste</TableHead>
                   <TableHead className="text-right">Üye</TableHead>
                   <TableHead>Tip</TableHead>
@@ -493,13 +600,24 @@ function CustomListsSection({ authorized }) {
                   const editing = editId === ch._id;
                   const archived = ch.status === 'archived';
                   const memberCount = Number(ch.memberCount) || 0;
+                  const isGroup = ch.hasChildren;
+                  const selected = selectedSet.has(ch._id);
                   const selfNode = editing ? findTreeNode(activeTree, ch.key) : null;
                   const excludedKeys = editing
                     ? new Set([ch.key, ...(selfNode ? collectDescendantKeys(selfNode) : [])])
                     : null;
                   return (
                     <Fragment key={ch._id}>
-                    <TableRow>
+                    <TableRow className={cn(selected ? 'bg-primary/5' : isGroup && 'bg-muted/40')}>
+                      <TableCell className="w-10">
+                        <input
+                          type="checkbox"
+                          className="size-3.5 accent-primary"
+                          checked={selected}
+                          onChange={(e) => toggleSelected(ch._id, e.target.checked)}
+                          aria-label={`${ch.title} seç`}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">
                         <div className="flex items-start gap-1.5" style={{ paddingLeft: `${ch.depth * 20}px` }}>
                           {ch.hasChildren ? (
@@ -551,7 +669,8 @@ function CustomListsSection({ authorized }) {
                             ) : (
                               <>
                                 <span className="inline-flex flex-wrap items-center gap-1.5">
-                                  {ch.title}
+                                  {isGroup && <FolderTree className="size-4 shrink-0 text-primary" />}
+                                  <span className={cn(isGroup && 'font-semibold')}>{ch.title}</span>
                                   {ch.hasChildren && (
                                     <Badge variant="muted" className="font-normal">{ch.childCount} alt liste</Badge>
                                   )}
@@ -572,19 +691,33 @@ function CustomListsSection({ authorized }) {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex flex-col items-end gap-0.5">
-                          <span className="inline-flex items-center justify-end gap-1.5 font-medium">
-                            <Users className="size-3.5 text-muted-foreground" />
-                            {formatCount(ch.memberCount)}
+                        {isGroup ? (
+                          <span
+                            className="inline-flex items-center justify-end gap-1.5 text-sm text-muted-foreground"
+                            title="Alt listelerdeki toplam üye"
+                          >
+                            <Users className="size-3.5" />
+                            {formatCount(ch.subtreeMemberCount)}
                           </span>
-                          {(Number(ch.unsubscribedCount) || 0) > 0 && (
-                            <span className="text-xs text-muted-foreground">
-                              {formatCount(ch.unsubscribedCount)} çıkmış · {formatCount(ch.totalCount)} toplam
+                        ) : (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="inline-flex items-center justify-end gap-1.5 font-medium">
+                              <Users className="size-3.5 text-muted-foreground" />
+                              {formatCount(ch.memberCount)}
                             </span>
-                          )}
-                        </div>
+                            {(Number(ch.unsubscribedCount) || 0) > 0 && (
+                              <span className="text-xs text-muted-foreground">
+                                {formatCount(ch.unsubscribedCount)} çıkmış · {formatCount(ch.totalCount)} toplam
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </TableCell>
-                      <TableCell><Badge variant={tm.variant}>{tm.label}</Badge></TableCell>
+                      <TableCell>
+                        {isGroup
+                          ? <Badge variant="outline" className="gap-1"><FolderTree className="size-3" /> Grup</Badge>
+                          : <Badge variant={tm.variant}>{tm.label}</Badge>}
+                      </TableCell>
                       <TableCell><Badge variant={sm.variant}>{sm.label}</Badge></TableCell>
                       <TableCell>
                         <div className="flex items-center justify-end gap-1">
@@ -606,11 +739,13 @@ function CustomListsSection({ authorized }) {
                               <Pencil className="size-3.5" />
                             </Button>
                           )}
-                          <Link href={`/cms/email/lists/${ch.key}`}>
-                            <Button size="sm" variant="outline">
-                              <Users className="mr-1 size-3.5" /> Üyeleri Yönet
-                            </Button>
-                          </Link>
+                          {!isGroup && (
+                            <Link href={`/cms/email/lists/${ch.key}`}>
+                              <Button size="sm" variant="outline">
+                                <Users className="mr-1 size-3.5" /> Üyeleri Yönet
+                              </Button>
+                            </Link>
+                          )}
                           <Button
                             size="sm"
                             variant={archived ? 'outline' : 'ghost'}
@@ -642,7 +777,7 @@ function CustomListsSection({ authorized }) {
                     {/* Silme onayı — üyeli listede ne olacağı açıkça yazılır. */}
                     {confirmId === ch._id && (
                       <TableRow className="bg-destructive/5 hover:bg-destructive/5">
-                        <TableCell colSpan={5}>
+                        <TableCell colSpan={6}>
                           <div className="flex flex-wrap items-center justify-between gap-3 py-1">
                             <div className="flex items-start gap-2 text-sm">
                               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
