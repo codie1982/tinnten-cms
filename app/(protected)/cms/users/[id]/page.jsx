@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useState } from 'react';
+import { Suspense, use, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   ShieldOff,
@@ -113,12 +114,22 @@ function genderLabel(g) {
 }
 
 /* ─── page ─── */
-export default function CmsUserDetailPage({ params }) {
+const DEFAULT_SECTION = 'genel';
+
+function CmsUserDetailPageInner({ params }) {
   const { id } = use(params);
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
 
-  const [section, setSection] = useState('genel');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetDone, setResetDone] = useState(false);
@@ -284,6 +295,15 @@ export default function CmsUserDetailPage({ params }) {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function CmsUserDetailPage({ params }) {
+  return (
+    <Suspense fallback={null}>
+      <CmsUserDetailPageInner params={params} />
+    </Suspense>
   );
 }
 
