@@ -12,8 +12,9 @@
  * burada geçerli DEĞİL.
  */
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Plug, Plus, Pencil, Trash2, Check, X } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
@@ -336,10 +337,21 @@ function CategoriesTab({ authorized }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-export default function ConnectorCatalogPage() {
+const TAB_KEYS = ['catalog', 'categories'];
+const DEFAULT_TAB = 'catalog';
+
+function ConnectorCatalogPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
-  const [tab, setTab] = useState('catalog');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const tab = TAB_KEYS.includes(tabParam) ? tabParam : DEFAULT_TAB;
+  const setTab = (key) => {
+    router.replace(key === DEFAULT_TAB ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -362,5 +374,14 @@ export default function ConnectorCatalogPage() {
         </TabsContent>
       </Tabs>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function ConnectorCatalogPage() {
+  return (
+    <Suspense fallback={null}>
+      <ConnectorCatalogPageInner />
+    </Suspense>
   );
 }

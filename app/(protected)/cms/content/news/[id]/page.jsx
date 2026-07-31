@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Save,
@@ -434,10 +434,15 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
 }
 
 /* ─── page ─── */
-export default function NewsDetailPage({ params }) {
+const TAB_KEYS = ['content', 'social'];
+const DEFAULT_TAB = 'content';
+
+function NewsDetailPageInner({ params }) {
   const { id } = use(params);
   const isNew = id === 'new';
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
@@ -470,7 +475,12 @@ export default function NewsDetailPage({ params }) {
   const [coverAspect, setCoverAspect] = useState('16/9');
   const [coverFit, setCoverFit] = useState('cover');
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [activeTab, setActiveTab] = useState('content'); // content | social
+  // Aktif sekme URL'de tutulur: ?tab=<key> (content | social). Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const activeTab = TAB_KEYS.includes(tabParam) ? tabParam : DEFAULT_TAB;
+  const setActiveTab = (key) => {
+    router.replace(key === DEFAULT_TAB ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
   const [saveError, setSaveError] = useState('');
 
   const htmlTextareaRef = useRef(null);
@@ -1148,5 +1158,14 @@ export default function NewsDetailPage({ params }) {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function NewsDetailPage({ params }) {
+  return (
+    <Suspense fallback={null}>
+      <NewsDetailPageInner params={params} />
+    </Suspense>
   );
 }

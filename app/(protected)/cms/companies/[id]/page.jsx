@@ -145,18 +145,18 @@ function CmsCompanyDetailView({ id }) {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
 
-  // Sekme URL'e bağlı: ?section=urunler ile derin link verilebilsin ve oluşturma
+  // Sekme URL'e bağlı: ?tab=urunler ile derin link verilebilsin ve oluşturma
   // sayfasından geri dönüşte doğru sekme açılsın. Bilinmeyen değer 'genel'e düşer.
   const router = useRouter();
   const searchParams = useSearchParams();
-  const sectionParam = searchParams.get('section');
-  const section = SECTIONS.some((s) => s.key === sectionParam)
-    ? sectionParam
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam)
+    ? tabParam
     : 'genel';
   const setSection = (next) => {
     const query = new URLSearchParams(searchParams.toString());
-    if (next === 'genel') query.delete('section');
-    else query.set('section', next);
+    if (next === 'genel') query.delete('tab');
+    else query.set('tab', next);
     const qs = query.toString();
     router.replace(`/cms/companies/${id}${qs ? `?${qs}` : ''}`, {
       scroll: false,
@@ -1443,7 +1443,7 @@ function CmsCompanyDetailView({ id }) {
 }
 
 /**
- * Sekme durumu ?section= ile URL'de tutuluyor; useSearchParams bir Suspense
+ * Sekme durumu ?tab= ile URL'de tutuluyor; useSearchParams bir Suspense
  * sınırı gerektirdiği için asıl görünüm ayrı bileşende.
  */
 export default function CmsCompanyDetailPage({ params }) {

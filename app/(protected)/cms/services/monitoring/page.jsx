@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Gauge, Boxes, Radar, LineChart as LineIcon, RefreshCw, Inbox, Cpu, MemoryStick,
@@ -307,10 +308,20 @@ function GrafanaSection() {
 }
 
 /* ── Sayfa ── */
-export default function MonitoringPage() {
+const DEFAULT_SECTION = 'overview';
+
+function MonitoringPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
-  const [section, setSection] = useState('overview');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -353,5 +364,14 @@ export default function MonitoringPage() {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function MonitoringPage() {
+  return (
+    <Suspense fallback={null}>
+      <MonitoringPageInner />
+    </Suspense>
   );
 }

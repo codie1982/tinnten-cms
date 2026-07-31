@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Layers, Users, Plug, RefreshCw, Inbox, ArrowUpRight, ArrowDownRight, CheckCircle2,
@@ -265,10 +266,20 @@ function ConnectionsSection() {
 }
 
 /* ── Sayfa ── */
-export default function QueuesPage() {
+const DEFAULT_SECTION = 'queues';
+
+function QueuesPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
-  const [section, setSection] = useState('queues');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -312,5 +323,14 @@ export default function QueuesPage() {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function QueuesPage() {
+  return (
+    <Suspense fallback={null}>
+      <QueuesPageInner />
+    </Suspense>
   );
 }

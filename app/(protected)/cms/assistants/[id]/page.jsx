@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useState } from 'react';
+import { Suspense, use } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Info,
@@ -56,12 +57,22 @@ function formatTrDate(input) {
   return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-export default function CmsAssistantDetailPage({ params }) {
+const DEFAULT_SECTION = 'genel';
+
+function CmsAssistantDetailPageInner({ params }) {
   const { id } = use(params);
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ACCESS]);
 
-  const [section, setSection] = useState('genel');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
   const { data: a, isLoading, error } = useGetAssistantQuery(id, { skip: !authorized });
 
   if (isLoading) {
@@ -152,6 +163,15 @@ export default function CmsAssistantDetailPage({ params }) {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function CmsAssistantDetailPage({ params }) {
+  return (
+    <Suspense fallback={null}>
+      <CmsAssistantDetailPageInner params={params} />
+    </Suspense>
   );
 }
 
