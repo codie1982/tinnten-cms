@@ -20,7 +20,6 @@ import {
 import {
   applicationStatusMeta,
   partnerTypeMeta,
-  currencyMeta,
   statusFilterOptions,
   partnerTypeFilterOptions,
   statusActionOptions,
@@ -191,7 +190,7 @@ export default function PartnerApplicationsPage() {
                     <TableHead>Başvuran</TableHead>
                     <TableHead>Tip</TableHead>
                     <TableHead>Şirket / Kanal</TableHead>
-                    <TableHead>Para birimi</TableHead>
+                    <TableHead>Müşteri hesapları</TableHead>
                     <TableHead>Tarih</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead className="text-right">İşlem</TableHead>
@@ -202,7 +201,6 @@ export default function PartnerApplicationsPage() {
                     const id = app._id || app.id;
                     const statusInfo = metaOf(applicationStatusMeta, app.status);
                     const typeInfo = metaOf(partnerTypeMeta, app.partnerType);
-                    const currencyInfo = metaOf(currencyMeta, app.currency);
 
                     return (
                       <TableRow key={id} className="hover:bg-muted/40">
@@ -229,7 +227,13 @@ export default function PartnerApplicationsPage() {
                           </div>
                         </TableCell>
 
-                        <TableCell className="text-sm">{currencyInfo.label}</TableCell>
+                        <TableCell>
+                          {app.managesClientAccounts ? (
+                            <Badge variant="primary">Evet</Badge>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
 
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                           {formatDate(app.createdAt)}

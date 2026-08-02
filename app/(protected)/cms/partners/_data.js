@@ -21,12 +21,6 @@ export const partnerTypeMeta = {
   integrator: { label: 'Entegratör', variant: 'muted' },
 };
 
-export const currencyMeta = {
-  TRY: { label: '₺ TRY', variant: 'muted' },
-  USD: { label: '$ USD', variant: 'muted' },
-  EUR: { label: '€ EUR', variant: 'muted' },
-};
-
 export const statusFilterOptions = Object.keys(applicationStatusMeta);
 export const partnerTypeFilterOptions = Object.keys(partnerTypeMeta);
 
