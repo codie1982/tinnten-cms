@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { UserPlus, Search, Upload, Loader2, Plus } from 'lucide-react';
+import { useState, useRef, useMemo } from 'react';
+import { UserPlus, Search, Upload, Loader2, Plus, PenLine } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,18 @@ function parseCSVEmails(text) {
   return { emails: [...emails], totalRows, matchedRows, skippedRows: totalRows - matchedRows };
 }
 
+// Manuel giriş: satır/virgül/noktalı virgül/boşluk ayraçlı serbest metin.
+// Sisteme kayıtlı olmayan adresler de eklenebilir — backend e-postayla upsert eder.
+function parseManualEmails(text) {
+  const tokens = String(text || '')
+    .split(/[\s,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const emails = [...new Set(tokens.filter((t) => EMAIL_RE.test(t)).map((t) => t.toLowerCase()))];
+  const invalid = tokens.filter((t) => !EMAIL_RE.test(t));
+  return { emails, invalid };
+}
+
 export function AddMembersPanel({ channelKey, authorized, note }) {
   const [tab, setTab] = useState('search');
   const [notice, setNotice] = useState('');
@@ -49,6 +61,11 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
     { skip: !authorized || q.trim().length < 2 },
   );
   const searchResults = searchData?.items ?? [];
+
+  // Manuel sekmesi — kayıtlı olmayan adresleri elle ekleme
+  const [manualText, setManualText] = useState('');
+  const [manualName, setManualName] = useState('');
+  const manualParsed = useMemo(() => parseManualEmails(manualText), [manualText]);
 
   // CSV sekmesi
   const [csvEmails, setCsvEmails] = useState([]);
@@ -93,26 +110,39 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
   };
 
   const handleAdd = async () => {
-    const emails = tab === 'search' ? [...selected] : csvEmails;
+    const emails =
+      tab === 'search' ? [...selected] : tab === 'manual' ? manualParsed.emails : csvEmails;
     if (!emails.length) return;
     setNotice('');
-    const r = await addMembers({ key: channelKey, emails })
+    const payload = { key: channelKey, emails };
+    // Backend profile'ı yalnız tek-email eklemede uygular (addChannelMembers).
+    if (tab === 'manual' && emails.length === 1 && manualName.trim()) {
+      payload.profile = { name: manualName.trim() };
+    }
+    const r = await addMembers(payload)
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Eklenemedi' }));
     if (r?.__err) return setNotice(r.__err);
     setSelected(new Set());
+    setManualText('');
+    setManualName('');
     clearCsv();
     setNotice(`${r?.added ?? 0} üye eklendi.${r?.failed?.length ? ` ${r.failed.length} başarısız.` : ''}`);
   };
 
-  const canAdd = tab === 'search' ? selected.size > 0 : csvEmails.length > 0;
+  const canAdd =
+    tab === 'search'
+      ? selected.size > 0
+      : tab === 'manual'
+        ? manualParsed.emails.length > 0
+        : csvEmails.length > 0;
 
+  // Kenar yuvarlaması sekme sayısından bağımsız: kapsayıcı `overflow-hidden rounded-md` kırpıyor.
   const tabBtn = (key, icon, label) => (
     <button
       onClick={() => setTab(key)}
       className={cn(
         'flex flex-1 items-center justify-center gap-1.5 py-1.5 text-xs font-medium transition-colors',
-        key === 'search' ? 'rounded-l-md' : 'rounded-r-md',
         tab === key
           ? 'bg-primary text-primary-foreground'
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -130,8 +160,9 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
       <CardContent className="space-y-3 p-4">
         {/* Sekme geçişi */}
         <div className="flex overflow-hidden rounded-md border border-border">
-          {tabBtn('search', <Search className="size-3.5" />, 'Kullanıcı Ara')}
-          {tabBtn('csv', <Upload className="size-3.5" />, 'CSV Yükle')}
+          {tabBtn('search', <Search className="size-3.5" />, 'Ara')}
+          {tabBtn('manual', <PenLine className="size-3.5" />, 'Manuel')}
+          {tabBtn('csv', <Upload className="size-3.5" />, 'CSV')}
         </div>
 
         {/* Kullanıcı ara */}
@@ -150,7 +181,19 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
                     <Loader2 className="size-4 animate-spin text-muted-foreground" />
                   </div>
                 ) : searchResults.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-muted-foreground">Sonuç bulunamadı.</p>
+                  <div className="space-y-1.5 py-4 text-center">
+                    <p className="text-xs text-muted-foreground">Sonuç bulunamadı.</p>
+                    {/* Arama yalnız kayıtlı aboneleri tarar — kayıtsız adres için Manuel sekmesine geçir. */}
+                    <button
+                      onClick={() => {
+                        setTab('manual');
+                        if (EMAIL_RE.test(q.trim())) setManualText(q.trim());
+                      }}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Kayıtlı olmayan adresi manuel ekle →
+                    </button>
+                  </div>
                 ) : (
                   searchResults.map((s) => (
                     <label
@@ -183,6 +226,45 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
                 </button>
               </div>
             )}
+          </>
+        )}
+
+        {/* Manuel ekle — sisteme kayıtlı olmayan adresler dahil */}
+        {tab === 'manual' && (
+          <>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                E-posta adresleri — her satıra bir adres (virgülle de ayrılabilir)
+              </label>
+              <textarea
+                className="h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30"
+                value={manualText}
+                onChange={(e) => setManualText(e.target.value)}
+                spellCheck={false}
+                placeholder={'ornek@firma.com\nikinci@firma.com'}
+              />
+            </div>
+            {manualParsed.emails.length === 1 && (
+              <Input
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+                placeholder="İsim (opsiyonel)"
+                autoComplete="off"
+              />
+            )}
+            {manualParsed.emails.length > 0 && (
+              <Badge variant="secondary">{manualParsed.emails.length} geçerli adres</Badge>
+            )}
+            {manualParsed.invalid.length > 0 && (
+              <p className="text-xs text-destructive">
+                Geçersiz: {manualParsed.invalid.slice(0, 3).join(', ')}
+                {manualParsed.invalid.length > 3 ? ` +${manualParsed.invalid.length - 3}` : ''}
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Sisteme kayıtlı olmayan adresler de eklenebilir. Abonelikten çıkmış (bastırılmış)
+              adresler yeniden abone edilmez.
+            </p>
           </>
         )}
 
@@ -243,7 +325,11 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
             : <Plus className="size-4" />}
           {tab === 'search'
             ? selected.size > 0 ? `${selected.size} Kullanıcıyı Ekle` : 'Seçim yapılmadı'
-            : csvEmails.length > 0 ? `${csvEmails.length} Adresi Ekle` : 'Dosya seçilmedi'}
+            : tab === 'manual'
+              ? manualParsed.emails.length > 0
+                ? `${manualParsed.emails.length} Adresi Ekle`
+                : 'E-posta girilmedi'
+              : csvEmails.length > 0 ? `${csvEmails.length} Adresi Ekle` : 'Dosya seçilmedi'}
         </Button>
 
         {note && <p className="text-[11px] text-muted-foreground">{note}</p>}
