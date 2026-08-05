@@ -127,7 +127,19 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
     setManualText('');
     setManualName('');
     clearCsv();
-    setNotice(`${r?.added ?? 0} üye eklendi.${r?.failed?.length ? ` ${r.failed.length} başarısız.` : ''}`);
+    // Bastırılmış (abonelikten çıkmış/engellenmiş) adresler backend'de kanala abone
+    // EDİLMEZ ve `added` sayılmaz — operatör "eklendi" sanmasın diye ayrıca listelenir.
+    const suppressed = r?.suppressed ?? [];
+    const suppressedNote = suppressed.length
+      ? ` ${suppressed.length} adres bastırılmış olduğu için abone edilmedi: ${suppressed
+          .slice(0, 3)
+          .join(', ')}${suppressed.length > 3 ? ` +${suppressed.length - 3}` : ''}.`
+      : '';
+    setNotice(
+      `${r?.added ?? 0} üye eklendi.` +
+        suppressedNote +
+        (r?.failed?.length ? ` ${r.failed.length} başarısız.` : ''),
+    );
   };
 
   const canAdd =

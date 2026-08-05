@@ -94,7 +94,13 @@ export function MemberListDialog({ open, onOpenChange, channel, channelKey, auth
     const r = await updateMember({ key: channelKey, email, channelStatus: 'subscribed' })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Geri alınamadı' }));
-    setNotice(r?.__err || `${email} listeye geri eklendi.`);
+    // Bastırılmış (global engelli) adresi backend abone ETMEZ — "geri eklendi" deme.
+    setNotice(
+      r?.__err ||
+        (r?.suppressed
+          ? `${email} bastırılmış (tüm listelerden engellenmiş) olduğu için geri eklenmedi.`
+          : `${email} listeye geri eklendi.`),
+    );
   };
 
   const startEdit = (m) => {

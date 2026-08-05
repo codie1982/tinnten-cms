@@ -53,6 +53,9 @@ export const mailCampaignApi = baseApi.injectEndpoints({
     }),
     addChannelMembers: build.mutation({
       query: ({ key, ...body }) => ({ url: ENDPOINTS.email.channelMembers(key), method: 'POST', body }),
+      // Zarfı aç: panel `added`/`suppressed`/`failed` sayaçlarını doğrudan okur.
+      // (Önceden zarf açılmadığı için `r.added` hep undefined → "0 üye eklendi." idi.)
+      transformResponse: (res) => ({ ...(res?.data ?? {}), message: res?.message }),
       invalidatesTags: (r, e, { key }) => [
         { type: 'MailChannelMember', id: key },
         { type: 'MailChannel', id: 'LIST' },
