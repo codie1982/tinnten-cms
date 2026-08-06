@@ -18,6 +18,7 @@ import { useDeleteMailCampaignMutation, useGetMailCampaignsQuery } from '@/redux
 
 const statusMeta = {
   draft: { label: 'Taslak', variant: 'secondary' },
+  scheduled: { label: 'Zamanlandı', variant: 'primary' },
   queued: { label: 'Kuyrukta', variant: 'primary' },
   sending: { label: 'Gönderiliyor', variant: 'primary' },
   sent: { label: 'Gönderildi', variant: 'success' },
@@ -28,18 +29,35 @@ const statusMeta = {
 
 const numberFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => numberFormatter.format(Number(value) || 0);
+const dateTimeFormatter = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' });
+const formatStartAt = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '' : dateTimeFormatter.format(d);
+};
+const formatDuration = (min) => {
+  const m = Number(min) || 0;
+  if (!m) return '';
+  if (m % 1440 === 0) return `${m / 1440} gün`;
+  if (m % 60 === 0) return `${m / 60} saat`;
+  return `${m} dk`;
+};
 const getProgress = (campaign) => {
   const audience = campaign.audience || {};
   const progress = campaign.progress || {};
   const total = Number(progress.total ?? audience.total ?? 0) || 0;
   const sent = Number(progress.sent ?? audience.sentCount ?? 0) || 0;
   const failed = Number(progress.failed ?? audience.failedCount ?? 0) || 0;
+  // skipped tamamlanmış sayılır (sunucu semantiğiyle aynı) — sayılmazsa
+  // bastırılmış alıcısı olan kampanya "Gönderildi" olduğu halde %83 görünür.
+  const skipped = Number(progress.skipped ?? 0) || 0;
   const pending = Math.max(Number(progress.pending ?? progress.queued ?? audience.queuedCount ?? total - sent - failed) || 0, 0);
-  const done = sent + failed;
+  const done = sent + failed + skipped;
   return {
     total,
     sent,
     failed,
+    skipped,
     pending,
     percent: total ? Math.min(100, Math.round((done / total) * 100)) : 0,
   };
@@ -132,14 +150,23 @@ export default function CampaignsPage() {
                     <TableRow key={c._id}>
                       <TableCell className="font-medium">
                         <Link
-                          href={c.status === 'draft' ? `/cms/email/campaigns/${c._id}` : `/cms/email/campaigns/${c._id}/dashboard`}
+                          // scheduled da edit sayfasına: dashboard'da iptal kontrolü yok.
+                          href={['draft', 'scheduled'].includes(c.status) ? `/cms/email/campaigns/${c._id}` : `/cms/email/campaigns/${c._id}/dashboard`}
                           className="text-primary hover:underline"
                         >
                           {c.name}
                         </Link>
                       </TableCell>
                       <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
-                      <TableCell><Badge variant={m.variant}>{m.label}</Badge></TableCell>
+                      <TableCell>
+                        <Badge variant={m.variant}>{m.label}</Badge>
+                        {c.status === 'scheduled' && c.schedule?.startAt && (
+                          <div className="mt-0.5 text-[11px] text-muted-foreground">
+                            {formatStartAt(c.schedule.startAt)}
+                            {c.schedule.durationMinutes ? ` · ${formatDuration(c.schedule.durationMinutes)} yayılır` : ''}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="min-w-[220px]">
                         {progress.total ? (
                           <div className="space-y-1.5">

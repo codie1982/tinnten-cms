@@ -181,6 +181,61 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'EmailCampaign', id: 'LIST' },
       ],
     }),
+    // Zamanlanmış yayın: draft → scheduled (startAt geldiğinde cron başlatır,
+    // durationMinutes verilirse kitle o süreye eşit yayılır).
+    scheduleMailCampaign: build.mutation({
+      query: ({ id, startAt, durationMinutes }) => ({
+        url: ENDPOINTS.email.campaignSchedule(id),
+        method: 'POST',
+        body: { startAt, durationMinutes },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      // stats de invalidate edilir: getById 300 sn Redis cache'inden zamanlama
+      // öncesi hâli göstermesin.
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    unscheduleMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignUnschedule(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    pauseMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignPause(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    resumeMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignResume(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    // Kampanya önizlemesi — "önizlenen = gönderilen": şablon + konu override +
+    // globalVars + gönderim anındaki header/footer chrome'u. `as` verilirse
+    // token'lar o alıcının GERÇEK profil verisiyle çözülür (resolveEmailVars).
+    previewMailCampaign: build.mutation({
+      query: ({ id, as }) => ({
+        url: ENDPOINTS.email.campaignPreview(id),
+        method: 'POST',
+        body: { ...(as ? { as } : {}) },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
     getMailCampaignStats: build.query({
       query: (id) => ENDPOINTS.email.campaignStats(id),
       transformResponse: (res) => res?.data ?? res,
@@ -270,6 +325,11 @@ export const {
   useUpdateMailCampaignMutation,
   useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
+  useScheduleMailCampaignMutation,
+  useUnscheduleMailCampaignMutation,
+  usePauseMailCampaignMutation,
+  useResumeMailCampaignMutation,
+  usePreviewMailCampaignMutation,
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
   useGetMailCampaignTimeSeriesQuery,

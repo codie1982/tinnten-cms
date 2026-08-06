@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3 } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3, CalendarClock, Eye, Pause, Play, XCircle } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,22 +21,78 @@ import {
   useUpdateMailCampaignMutation,
   useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
+  useScheduleMailCampaignMutation,
+  useUnscheduleMailCampaignMutation,
+  usePauseMailCampaignMutation,
+  useResumeMailCampaignMutation,
   useGetMailChannelsQuery,
   useGetMailTemplatesQuery,
   useGetRecipientCountQuery,
   useGetMailCampaignStatsQuery,
 } from '@/redux/services';
+import { MailPreviewPanel } from '@/components/email/mail-preview-panel';
 
 const DEFAULT_SEND = {
   ratePerSec: 5,
   batchSize: 500,
   maxRecipients: '',
+  // buildPayload bu iki alanı taşımazsa sanitizeSendConfig sıfırdan kurduğu
+  // sendConfig'te fromAddress null'a, günlük sınır 1'e düşer — her CMS kaydı
+  // kampanyanın özel gönderenini silerdi.
+  fromAddress: '',
+  maxPerRecipientPerDay: 1,
   circuitBreaker: { enabled: true, bounceRatePct: 3, complaintRatePct: 0.08 },
+};
+
+const DEFAULT_SCHEDULE = { startAt: '', durationMinutes: '' };
+
+// Yayılma süresi hazır seçenekleri (dakika). '' = tek seferde (drip yok).
+const DURATION_PRESETS = [
+  { value: '', label: 'Tek seferde (yayılma yok)' },
+  { value: '60', label: '1 saate yay' },
+  { value: '360', label: '6 saate yay' },
+  { value: '720', label: '12 saate yay' },
+  { value: '1440', label: '24 saate yay' },
+  { value: '4320', label: '3 güne yay' },
+];
+
+const STATUS_META = {
+  draft: { label: 'Taslak', variant: 'secondary' },
+  scheduled: { label: 'Zamanlandı', variant: 'primary' },
+  queued: { label: 'Kuyrukta', variant: 'primary' },
+  sending: { label: 'Gönderiliyor', variant: 'primary' },
+  sent: { label: 'Gönderildi', variant: 'success' },
+  partial: { label: 'Kısmi', variant: 'warning' },
+  failed: { label: 'Başarısız', variant: 'destructive' },
+  paused: { label: 'Duraklatıldı', variant: 'warning' },
 };
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
 const numberFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => numberFormatter.format(Number(value) || 0);
+const dateTimeFormatter = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' });
+const formatDateTime = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '—' : dateTimeFormatter.format(d);
+};
+
+/** ISO/Date → <input type="datetime-local"> değeri (yerel saat). */
+const toLocalInput = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const formatDuration = (min) => {
+  const m = Number(min) || 0;
+  if (!m) return '';
+  if (m % 1440 === 0) return `${m / 1440} gün`;
+  if (m % 60 === 0) return `${m / 60} saat`;
+  return `${m} dk`;
+};
 
 export default function CampaignEditPage() {
   const { id } = useParams();
@@ -50,7 +106,12 @@ export default function CampaignEditPage() {
     isLoading,
     isFetching: campaignFetching,
     refetch: refetchCampaign,
-  } = useGetMailCampaignQuery(id, { skip: !authorized || isNew });
+  } = useGetMailCampaignQuery(id, {
+    skip: !authorized || isNew,
+    // Zamanlanmış kampanyanın "sending"e geçişini operatör görebilsin.
+    pollingInterval: 30000,
+    skipPollingIfUnfocused: true,
+  });
   const { data: channels = [] } = useGetMailChannelsQuery({}, { skip: !authorized });
   const { data: templates = [] } = useGetMailTemplatesQuery({}, { skip: !authorized });
 
@@ -58,6 +119,10 @@ export default function CampaignEditPage() {
   const [updateCampaign, { isLoading: saving }] = useUpdateMailCampaignMutation();
   const [deleteCampaign, { isLoading: deleting }] = useDeleteMailCampaignMutation();
   const [sendCampaign, { isLoading: sending }] = useSendMailCampaignMutation();
+  const [scheduleCampaign, { isLoading: scheduling }] = useScheduleMailCampaignMutation();
+  const [unscheduleCampaign, { isLoading: unscheduling }] = useUnscheduleMailCampaignMutation();
+  const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
+  const [resumeCampaign, { isLoading: resuming }] = useResumeMailCampaignMutation();
 
   const [form, setForm] = useState({
     name: '',
@@ -65,14 +130,22 @@ export default function CampaignEditPage() {
     templateId: '',
     subjectOverride: '',
     sendConfig: DEFAULT_SEND,
+    schedule: DEFAULT_SCHEDULE,
   });
   const [vars, setVars] = useState([]); // [{key, value}]
   const [notice, setNotice] = useState('');
   const [confirmSend, setConfirmSend] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const status = campaign?.status || 'draft';
   const isDraft = isNew || status === 'draft';
+  const isScheduled = status === 'scheduled';
+  const isActive = ['queued', 'sending'].includes(status);
+  const isPaused = status === 'paused';
+  // Süre seçiliyse drip: stats polling'i gevşet — getStats her çağrıda kampanyanın
+  // TÜM maillog'unu tarayan tracking aggregation'ı koşturur; 24 saat × 5 sn ağır.
+  const hasDrip = Boolean(campaign?.schedule?.durationMinutes);
 
   const { data: recipientInfo } = useGetRecipientCountQuery(form.channelKey, {
     skip: !authorized || !form.channelKey,
@@ -82,8 +155,8 @@ export default function CampaignEditPage() {
     isFetching: statsFetching,
     refetch: refetchStats,
   } = useGetMailCampaignStatsQuery(id, {
-    skip: !authorized || isNew || status === 'draft',
-    pollingInterval: ['queued', 'sending'].includes(status) ? 5000 : 0,
+    skip: !authorized || isNew || status === 'draft' || status === 'scheduled',
+    pollingInterval: isActive ? (hasDrip ? 30000 : 5000) : 0,
   });
   const stats = statsData?.stats;
   const currentAudience = statsData?.campaign?.audience || campaign?.audience || {};
@@ -91,10 +164,13 @@ export default function CampaignEditPage() {
     total: Number(stats?.total ?? currentAudience.total ?? 0) || 0,
     sent: Number(stats?.sent ?? currentAudience.sentCount ?? 0) || 0,
     failed: Number(stats?.failed ?? currentAudience.failedCount ?? 0) || 0,
+    skipped: Number(stats?.skipped ?? 0) || 0,
     pending: Number(stats?.queued ?? currentAudience.queuedCount ?? 0) || 0,
   };
+  // skipped tamamlanmış sayılır (sunucu semantiği) — sayılmazsa bastırılmış
+  // alıcısı olan kampanya %100'e hiç ulaşmaz.
   progress.percent = progress.total
-    ? Math.min(100, Math.round(((progress.sent + progress.failed) / progress.total) * 100))
+    ? Math.min(100, Math.round(((progress.sent + progress.failed + progress.skipped) / progress.total) * 100))
     : 0;
 
   useEffect(() => {
@@ -108,11 +184,19 @@ export default function CampaignEditPage() {
           ratePerSec: campaign.sendConfig?.ratePerSec ?? 5,
           batchSize: campaign.sendConfig?.batchSize ?? 500,
           maxRecipients: campaign.sendConfig?.maxRecipients ?? '',
+          fromAddress: campaign.sendConfig?.fromAddress ?? '',
+          maxPerRecipientPerDay: campaign.sendConfig?.maxPerRecipientPerDay ?? 1,
           circuitBreaker: {
             enabled: campaign.sendConfig?.circuitBreaker?.enabled !== false,
             bounceRatePct: campaign.sendConfig?.circuitBreaker?.bounceRatePct ?? 3,
             complaintRatePct: campaign.sendConfig?.circuitBreaker?.complaintRatePct ?? 0.08,
           },
+        },
+        schedule: {
+          startAt: toLocalInput(campaign.schedule?.startAt),
+          durationMinutes: campaign.schedule?.durationMinutes
+            ? String(campaign.schedule.durationMinutes)
+            : '',
         },
       });
       setVars(Object.entries(campaign.globalVars || {}).map(([key, value]) => ({ key, value: String(value) })));
@@ -123,8 +207,12 @@ export default function CampaignEditPage() {
   const setSC = (k, v) => setForm((f) => ({ ...f, sendConfig: { ...f.sendConfig, [k]: v } }));
   const setCB = (k, v) =>
     setForm((f) => ({ ...f, sendConfig: { ...f.sendConfig, circuitBreaker: { ...f.sendConfig.circuitBreaker, [k]: v } } }));
+  const setSched = (k, v) => setForm((f) => ({ ...f, schedule: { ...f.schedule, [k]: v } }));
 
   const recipientCount = recipientInfo?.count ?? null;
+  const effDuration = Number(form.schedule.durationMinutes) || 0;
+
+  // Süre seçili değilken eski davranış: worker hızıyla tahmini süre.
   const estimateMin = useMemo(() => {
     const n = form.sendConfig.maxRecipients
       ? Math.min(Number(form.sendConfig.maxRecipients), recipientCount ?? Infinity)
@@ -132,6 +220,22 @@ export default function CampaignEditPage() {
     if (!n || !form.sendConfig.ratePerSec) return null;
     return Math.max(1, Math.ceil(n / form.sendConfig.ratePerSec / 60));
   }, [recipientCount, form.sendConfig.maxRecipients, form.sendConfig.ratePerSec]);
+
+  // Drip özeti + fizibilite: gereken hız ratePerSec tavanını aşarsa sunucu
+  // reddeder — aynı kontrolü burada erken uyarı olarak göster.
+  const dripInfo = useMemo(() => {
+    if (!effDuration || !recipientCount) return null;
+    const n = form.sendConfig.maxRecipients
+      ? Math.min(Number(form.sendConfig.maxRecipients), recipientCount)
+      : recipientCount;
+    if (!n) return null;
+    const rate = Number(form.sendConfig.ratePerSec) || 5;
+    const perHour = Math.max(1, Math.round(n / (effDuration / 60)));
+    if (n / (effDuration * 60) > rate) {
+      return { ok: false, n, perHour, minMinutes: Math.max(1, Math.ceil(n / (rate * 60))) };
+    }
+    return { ok: true, n, perHour };
+  }, [effDuration, recipientCount, form.sendConfig.maxRecipients, form.sendConfig.ratePerSec]);
 
   const buildPayload = () => ({
     name: form.name.trim(),
@@ -143,11 +247,19 @@ export default function CampaignEditPage() {
       ratePerSec: Number(form.sendConfig.ratePerSec) || 5,
       batchSize: Number(form.sendConfig.batchSize) || 500,
       maxRecipients: form.sendConfig.maxRecipients ? Number(form.sendConfig.maxRecipients) : null,
+      // Taşınmazsa sunucu sendConfig'i sıfırdan kurar → özel gönderen silinir.
+      fromAddress: form.sendConfig.fromAddress.trim() || null,
+      maxPerRecipientPerDay:
+        form.sendConfig.maxPerRecipientPerDay === '' ? 1 : Math.max(0, Number(form.sendConfig.maxPerRecipientPerDay) || 0),
       circuitBreaker: {
         enabled: !!form.sendConfig.circuitBreaker.enabled,
         bounceRatePct: Number(form.sendConfig.circuitBreaker.bounceRatePct) || 3,
         complaintRatePct: Number(form.sendConfig.circuitBreaker.complaintRatePct) || 0.08,
       },
+    },
+    schedule: {
+      startAt: form.schedule.startAt ? new Date(form.schedule.startAt).toISOString() : null,
+      durationMinutes: effDuration || null,
     },
   });
 
@@ -172,6 +284,62 @@ export default function CampaignEditPage() {
     if (r?.__err) return setNotice(r.__err);
     await refetchCampaign();
     setNotice(r?.paused ? `Güvenlik nedeniyle duraklatıldı: ${r.reason}` : `Kampanya kuyruğa alındı (${r?.queued ?? 0} alıcı).`);
+  };
+
+  // Zamanla: önce taslağı kaydet (zamanlama dahil form değişiklikleri yansısın),
+  // sonra draft → scheduled geçişini yap. startAt boşsa "şimdi" kabul edilir.
+  const doSchedule = async () => {
+    if (!form.name.trim() || !form.channelKey || !form.templateId) {
+      return setNotice('Ad, kanal ve şablon zorunlu.');
+    }
+    const payload = buildPayload();
+    if (!payload.schedule.startAt && !payload.schedule.durationMinutes) {
+      return setNotice('Zamanlamak için başlangıç tarihi veya yayılma süresi girin.');
+    }
+    const saveRes = await updateCampaign({ id, ...payload })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Kaydedilemedi' }));
+    if (saveRes?.__err) return setNotice(saveRes.__err);
+
+    const r = await scheduleCampaign({
+      id,
+      startAt: payload.schedule.startAt,
+      durationMinutes: payload.schedule.durationMinutes,
+    })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Zamanlanamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refetchCampaign();
+    setNotice(
+      payload.schedule.durationMinutes
+        ? `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt || Date.now())} başlangıç, ${formatDuration(payload.schedule.durationMinutes)} yayılma.`
+        : `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt || Date.now())} başlangıç.`
+    );
+  };
+
+  const doUnschedule = async () => {
+    const r = await unscheduleCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'İptal edilemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refetchCampaign();
+    setNotice('Zamanlama iptal edildi — kampanya taslağa döndü.');
+  };
+
+  const doPause = async () => {
+    const r = await pauseCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Duraklatılamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refetchCampaign();
+    setNotice('Kampanya duraklatıldı.');
+  };
+
+  const doResume = async () => {
+    const r = await resumeCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Sürdürülemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refetchCampaign();
+    setNotice(
+      r?.requeued || r?.rescanned
+        ? `Kampanya sürdürüldü (${(r.requeued || 0) + (r.rescanned || 0)} alıcı yeniden kuyruğa alındı).`
+        : 'Kampanya sürdürüldü.'
+    );
   };
 
   const refreshCampaign = async () => {
@@ -209,6 +377,26 @@ export default function CampaignEditPage() {
               <Button variant="outline" onClick={refreshCampaign} disabled={campaignFetching || statsFetching}>
                 {campaignFetching || statsFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                 Yenile
+              </Button>
+            )}
+            {!isNew && (
+              <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={!form.templateId} title="Gönderilecek maili birebir gör">
+                <Eye className="size-4" /> Önizle
+              </Button>
+            )}
+            {isScheduled && (
+              <Button variant="outline" onClick={doUnschedule} disabled={unscheduling}>
+                {unscheduling ? <Loader2 className="size-4 animate-spin" /> : <XCircle className="size-4" />} Zamanlamayı İptal Et
+              </Button>
+            )}
+            {isActive && (
+              <Button variant="outline" onClick={doPause} disabled={pausing}>
+                {pausing ? <Loader2 className="size-4 animate-spin" /> : <Pause className="size-4" />} Duraklat
+              </Button>
+            )}
+            {isPaused && (
+              <Button variant="outline" onClick={doResume} disabled={resuming}>
+                {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} Sürdür
               </Button>
             )}
             {isDraft && (
@@ -298,6 +486,73 @@ export default function CampaignEditPage() {
               </CardContent>
             </Card>
 
+            {/* Zamanlama ve yayılma (drip) */}
+            <Card>
+              <CardHeader><CardTitle><CalendarClock className="mr-1 inline size-4" /> Zamanlama ve Yayılma</CardTitle></CardHeader>
+              <CardContent className="space-y-4 p-4">
+                <div className="flex flex-wrap gap-4">
+                  <div className="w-60">
+                    <label className="mb-1 block text-xs text-muted-foreground">Başlangıç (boş = hemen)</label>
+                    <input
+                      type="datetime-local"
+                      value={form.schedule.startAt}
+                      disabled={!isDraft}
+                      onChange={(e) => setSched('startAt', e.target.value)}
+                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+                    />
+                  </div>
+                  <div className="min-w-[200px]">
+                    <label className="mb-1 block text-xs text-muted-foreground">Yayılma süresi</label>
+                    <select
+                      value={DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes) ? form.schedule.durationMinutes : 'custom'}
+                      disabled={!isDraft}
+                      onChange={(e) =>
+                        setSched(
+                          'durationMinutes',
+                          e.target.value === 'custom'
+                            // Mevcut değer bir preset ise onu koruyamayız (select geri
+                            // preset'e düşer) → preset-dışı bir başlangıçla aç.
+                            ? (DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes)
+                                ? '90'
+                                : form.schedule.durationMinutes || '90')
+                            : e.target.value
+                        )
+                      }
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+                    >
+                      {DURATION_PRESETS.map((p) => <option key={p.value || 'none'} value={p.value}>{p.label}</option>)}
+                      <option value="custom">Özel…</option>
+                    </select>
+                  </div>
+                  {!DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes) && (
+                    <div className="w-36">
+                      <label className="mb-1 block text-xs text-muted-foreground">Özel süre (dakika)</label>
+                      <Input type="number" min={1} value={form.schedule.durationMinutes} disabled={!isDraft}
+                        onChange={(e) => setSched('durationMinutes', e.target.value)} placeholder="örn. 90" />
+                    </div>
+                  )}
+                </div>
+
+                {effDuration > 0 && dripInfo && (
+                  dripInfo.ok ? (
+                    <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      {formatCount(dripInfo.n)} alıcı {formatDuration(effDuration)} içinde eşit ağırlıklı gönderilir — ≈{formatCount(dripInfo.perHour)} mail/saat.
+                    </p>
+                  ) : (
+                    <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                      Süre çok kısa: {formatCount(dripInfo.n)} alıcı {form.sendConfig.ratePerSec} mail/sn hızla bu pencereye sığmaz.
+                      En az {formatDuration(dripInfo.minMinutes)} seçin (sunucu da reddeder).
+                    </p>
+                  )
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Süre seçilirse gönderim o pencereye eşit yayılır (örn. 24 alıcı / 24 saat = saatte 1 mail).
+                  Alıcı sayısı kampanya <b>başlarken</b> dondurulur; sonradan listeye eklenenler bu kampanyaya girmez.
+                  Gece dahil kesintisiz gönderilir.
+                </p>
+              </CardContent>
+            </Card>
+
             {/* Gönderim güvenliği */}
             <Card>
               <CardHeader><CardTitle><ShieldCheck className="mr-1 inline size-4" /> Gönderim Güvenliği</CardTitle></CardHeader>
@@ -317,6 +572,21 @@ export default function CampaignEditPage() {
                     <label className="mb-1 block text-xs text-muted-foreground">Batch boyutu</label>
                     <Input type="number" min={1} value={form.sendConfig.batchSize} disabled={!isDraft}
                       onChange={(e) => setSC('batchSize', e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  <div className="min-w-[260px] flex-1">
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      Gönderen (boş = varsayılan no-reply; yalnız doğrulanmış alan adı)
+                    </label>
+                    <Input value={form.sendConfig.fromAddress} disabled={!isDraft}
+                      onChange={(e) => setSC('fromAddress', e.target.value)}
+                      placeholder='örn. "Tinnten Basın" <press@tinten.ai>' />
+                  </div>
+                  <div className="w-52">
+                    <label className="mb-1 block text-xs text-muted-foreground">Aynı adrese günlük sınır (0=sınırsız)</label>
+                    <Input type="number" min={0} value={form.sendConfig.maxPerRecipientPerDay} disabled={!isDraft}
+                      onChange={(e) => setSC('maxPerRecipientPerDay', e.target.value)} />
                   </div>
                 </div>
                 <div className="rounded-lg border border-border p-3">
@@ -361,8 +631,27 @@ export default function CampaignEditPage() {
             <CardContent className="space-y-3 p-4">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Durum</span>
-                <Badge variant="secondary">{status}</Badge>
+                <Badge variant={(STATUS_META[status] || {}).variant || 'secondary'}>
+                  {(STATUS_META[status] || {}).label || status}
+                </Badge>
               </div>
+              {isScheduled && (
+                <div className="space-y-1 rounded-md border border-border p-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Başlangıç</span>
+                    <span className="font-medium">{formatDateTime(campaign?.schedule?.startAt)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Yayılma</span>
+                    <span className="font-medium">
+                      {campaign?.schedule?.durationMinutes ? formatDuration(campaign.schedule.durationMinutes) : 'Tek seferde'}
+                    </span>
+                  </div>
+                  <p className="pt-1 text-muted-foreground">
+                    Saat geldiğinde otomatik başlar. Değişiklik için zamanlamayı iptal edin.
+                  </p>
+                </div>
+              )}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Alıcı sayısı</span>
                 <span className="font-medium">{form.channelKey ? (recipientCount ?? '…') : '—'}</span>
@@ -381,11 +670,15 @@ export default function CampaignEditPage() {
                   </div>
                 </div>
               )}
-              {estimateMin != null && (
+              {effDuration > 0 && dripInfo ? (
+                <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  {formatDuration(effDuration)} pencereye yayılır — ≈{formatCount(dripInfo.perHour)} mail/saat
+                </div>
+              ) : estimateMin != null ? (
                 <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   ~{estimateMin} dk’da gönderilecek ({form.sendConfig.ratePerSec} mail/sn)
                 </div>
-              )}
+              ) : null}
 
               {campaign?.pausedReason && status === 'paused' && (
                 <Alert variant="destructive"><AlertTitle>Duraklatıldı</AlertTitle><AlertDescription>{campaign.pausedReason}</AlertDescription></Alert>
@@ -421,7 +714,7 @@ export default function CampaignEditPage() {
                 confirmSend ? (
                   <div className="space-y-2">
                     <p className="text-sm">
-                      {form.channelKey ? `${recipientCount ?? '?'} kişiye` : ''} yayınlansın mı?
+                      {form.channelKey ? `${recipientCount ?? '?'} kişiye` : ''} hemen yayınlansın mı?
                     </p>
                     <div className="flex gap-2">
                       <Button onClick={doSend} disabled={sending} className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
@@ -431,15 +724,37 @@ export default function CampaignEditPage() {
                     </div>
                   </div>
                 ) : (
-                  <Button className="w-full bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => setConfirmSend(true)} disabled={!form.channelKey || !form.templateId}>
-                    <Megaphone className="size-4" /> Yayınla
-                  </Button>
+                  <div className="space-y-2">
+                    {(form.schedule.startAt || effDuration > 0) && (
+                      <Button
+                        className="w-full"
+                        onClick={doSchedule}
+                        disabled={scheduling || saving || !form.channelKey || !form.templateId || (dripInfo && !dripInfo.ok)}
+                        title={form.schedule.startAt ? `Başlangıç: ${formatDateTime(form.schedule.startAt)}` : 'Hemen başlar, süreye yayılır'}
+                      >
+                        {scheduling ? <Loader2 className="size-4 animate-spin" /> : <CalendarClock className="size-4" />}
+                        Zamanla{effDuration > 0 ? ` (${formatDuration(effDuration)})` : ''}
+                      </Button>
+                    )}
+                    <Button
+                      variant={form.schedule.startAt || effDuration > 0 ? 'outline' : 'default'}
+                      className={form.schedule.startAt || effDuration > 0 ? 'w-full' : 'w-full bg-emerald-600 text-white hover:bg-emerald-700'}
+                      onClick={() => setConfirmSend(true)}
+                      disabled={!form.channelKey || !form.templateId}
+                    >
+                      <Megaphone className="size-4" /> Hemen Yayınla
+                    </Button>
+                  </div>
                 )
               )}
-              {isNew && <p className="text-xs text-muted-foreground">Önce taslağı oluşturun, ardından yayınlayabilirsiniz.</p>}
+              {isNew && <p className="text-xs text-muted-foreground">Önce taslağı oluşturun; ardından yayınlayabilir veya zamanlayabilirsiniz.</p>}
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {!isNew && (
+        <MailPreviewPanel campaignId={id} open={previewOpen} onClose={() => setPreviewOpen(false)} />
       )}
     </RoleGuard>
   );

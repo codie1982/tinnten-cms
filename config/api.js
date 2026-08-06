@@ -282,6 +282,12 @@ export const ENDPOINTS = {
     campaigns: '/email/campaigns',
     campaign: (id) => `/email/campaigns/${id}`,
     campaignSend: (id) => `/email/campaigns/${id}/send`,
+    // Zamanlanmış yayın + yayılma (drip) + duraklat/sürdür + önizleme
+    campaignSchedule: (id) => `/email/campaigns/${id}/schedule`,
+    campaignUnschedule: (id) => `/email/campaigns/${id}/unschedule`,
+    campaignPause: (id) => `/email/campaigns/${id}/pause`,
+    campaignResume: (id) => `/email/campaigns/${id}/resume`,
+    campaignPreview: (id) => `/email/campaigns/${id}/preview`,
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
     campaignRecipients: (id) => `/email/campaigns/${id}/recipients`,
     campaignTimeseries: (id) => `/email/campaigns/${id}/timeseries`,
