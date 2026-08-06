@@ -18,8 +18,11 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data?.items ?? res?.data ?? [],
       providesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
+    // Zarfı aç: "grup oluştur ve seçili listeleri altına taşı" akışı oluşan
+    // kanalın `key`'ini hemen kullanır (CMS Özel Listeler > Gruba Al).
     createMailChannel: build.mutation({
       query: (body) => ({ url: ENDPOINTS.email.channels, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
     updateMailChannel: build.mutation({

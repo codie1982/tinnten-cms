@@ -132,6 +132,15 @@ export default function CampaignEditPage() {
     sendConfig: DEFAULT_SEND,
     schedule: DEFAULT_SCHEDULE,
   });
+  // Gruplar kitle DEĞİLDİR: kampanya tek bir YAPRAK channelKey'e gider (bkz.
+  // mail-channel.model.js parentKey notu) — grup seçilse 0 alıcı çıkardı. Grup =
+  // açıkça grup olarak açılmış (metadata.isGroup) veya altında kanal taşıyan.
+  // Kampanya zaten böyle bir key'e kayıtlıysa seçim görünür kalsın diye o hariç.
+  const groupKeys = new Set(channels.map((c) => c.parentKey).filter(Boolean));
+  const audienceChannels = channels.filter(
+    (c) => c.key === form?.channelKey || (c.metadata?.isGroup !== true && !groupKeys.has(c.key)),
+  );
+
   const [vars, setVars] = useState([]); // [{key, value}]
   const [notice, setNotice] = useState('');
   const [confirmSend, setConfirmSend] = useState(false);
@@ -441,7 +450,7 @@ export default function CampaignEditPage() {
                     <select value={form.channelKey} onChange={(e) => set('channelKey', e.target.value)} disabled={!isDraft}
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30">
                       <option value="">— seçin —</option>
-                      {channels.map((c) => (
+                      {audienceChannels.map((c) => (
                         <option key={c._id} value={c.key}>
                           {c.title}{c.description ? ` — ${c.description}` : ''} ({c.key})
                         </option>
