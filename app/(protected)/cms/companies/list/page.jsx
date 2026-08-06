@@ -23,8 +23,8 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { useGetCompaniesQuery } from '@/redux/services';
 import {
-  statusMeta, companyTypeMeta, businessModeMeta,
-  statusOptions, businessModeOptions, companyTypeOptions,
+  statusMeta, companyTypeMeta, businessModeMeta, pocMeta, localeMeta,
+  statusOptions, businessModeOptions, companyTypeOptions, pocOptions, localeOptions,
 } from '../_data';
 
 const PAGE_SIZE = 10;
@@ -45,12 +45,14 @@ export default function CmsCompaniesListPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [modeFilter, setModeFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [pocFilter, setPocFilter] = useState('all');
+  const [localeFilter, setLocaleFilter] = useState('all');
   const [page, setPage] = useState(1);
 
   // Filtre/arama değişince ilk sayfaya dön
   useEffect(() => {
     setPage(1);
-  }, [submittedSearch, statusFilter, modeFilter, typeFilter]);
+  }, [submittedSearch, statusFilter, modeFilter, typeFilter, pocFilter, localeFilter]);
 
   const applySearch = () => setSubmittedSearch(search.trim());
 
@@ -60,6 +62,10 @@ export default function CmsCompaniesListPage() {
       status: statusFilter === 'all' ? undefined : statusFilter,
       businessMode: modeFilter === 'all' ? undefined : modeFilter,
       companyType: typeFilter === 'all' ? undefined : typeFilter,
+      // 'true' | 'false' string olarak gider — backend metin karşılaştırır.
+      poc: pocFilter === 'all' ? undefined : pocFilter,
+      // Dil firmada değil asistanda; backend asistans.locale → firma id'leri çevirir.
+      locale: localeFilter === 'all' ? undefined : localeFilter,
       page,
       limit: PAGE_SIZE,
     },
@@ -77,6 +83,8 @@ export default function CmsCompaniesListPage() {
     setStatusFilter('all');
     setModeFilter('all');
     setTypeFilter('all');
+    setPocFilter('all');
+    setLocaleFilter('all');
   };
 
   return (
@@ -135,6 +143,22 @@ export default function CmsCompaniesListPage() {
               </SelectContent>
             </Select>
           </div>
+          <div className="w-40">
+            <Select value={pocFilter} onValueChange={setPocFilter}>
+              <SelectTrigger><SelectValue placeholder="POC" /></SelectTrigger>
+              <SelectContent>
+                {pocOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-32">
+            <Select value={localeFilter} onValueChange={setLocaleFilter}>
+              <SelectTrigger><SelectValue placeholder="Dil" /></SelectTrigger>
+              <SelectContent>
+                {localeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         </CardContent>
       </Card>
 
@@ -162,8 +186,8 @@ export default function CmsCompaniesListPage() {
           ) : isLoading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: PAGE_SIZE }).map((_, i) => (
-                <div key={i} className="grid grid-cols-5 gap-4">
-                  {Array.from({ length: 5 }).map((__, j) => <Skeleton key={j} className="h-5" />)}
+                <div key={i} className="grid grid-cols-6 gap-4">
+                  {Array.from({ length: 6 }).map((__, j) => <Skeleton key={j} className="h-5" />)}
                 </div>
               ))}
             </div>
@@ -182,6 +206,7 @@ export default function CmsCompaniesListPage() {
                     <TableRow>
                       <TableHead>Firma</TableHead>
                       <TableHead>Mod</TableHead>
+                      <TableHead>Dil</TableHead>
                       <TableHead>Tip</TableHead>
                       <TableHead>Durum</TableHead>
                       <TableHead>Oluşturulma</TableHead>
@@ -192,24 +217,40 @@ export default function CmsCompaniesListPage() {
                       const s = statusMeta[c.status];
                       const mode = businessModeMeta[c.businessMode];
                       const type = companyTypeMeta[c.companyType];
+                      const locales = Array.isArray(c.locales) ? c.locales : [];
                       return (
                         <TableRow key={c.id}>
                           <TableCell>
                             <div className="flex items-center gap-3">
                               <Avatar name={c.companyName} src={c.logo || undefined} size="md" />
                               <div className="min-w-0">
-                                <Link
-                                  href={`/cms/companies/${c.id}`}
-                                  className="text-sm font-medium text-foreground hover:text-primary"
-                                >
-                                  {c.companyName}
-                                </Link>
+                                <div className="flex items-center gap-2">
+                                  <Link
+                                    href={`/cms/companies/${c.id}`}
+                                    className="text-sm font-medium text-foreground hover:text-primary"
+                                  >
+                                    {c.companyName}
+                                  </Link>
+                                  {c.poc && <Badge variant={pocMeta.true.variant}>{pocMeta.true.label}</Badge>}
+                                </div>
                                 <p className="truncate text-xs text-muted-foreground">{c.email || c.slug}</p>
                               </div>
                             </div>
                           </TableCell>
                           <TableCell>
                             {mode ? <Badge variant={mode.variant}>{mode.label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
+                          </TableCell>
+                          <TableCell>
+                            {/* Diller asistanlardan gelir — asistanı olmayan firmada boş. */}
+                            {locales.length ? (
+                              <div className="flex flex-wrap gap-1">
+                                {locales.map((l) => (
+                                  <Badge key={l} variant="outline">{localeMeta[l]?.label ?? l.toUpperCase()}</Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             {type ? <Badge variant={type.variant}>{type.label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
