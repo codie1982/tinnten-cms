@@ -14,6 +14,8 @@ import {
   X,
   Loader2,
   CheckCircle2,
+  Check,
+  Copy,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -229,6 +231,23 @@ const AI_CONTENT_TYPES = [
   { value: 'markdown', label: 'Markdown' },
 ];
 
+/* Toplu / JSON modunda gösterilen örnek format */
+const BATCH_EXAMPLE_JSON = `[
+  {
+    "topic": "Yapay zeka destekli e-ticaret arama motorları",
+    "direction": "KOBİ'lere odaklan, maliyet karşılaştırması ve örnek senaryo ver",
+    "category": "Teknoloji",
+    "country": "TR",
+    "targetWordCount": 600,
+    "contentType": "richSections"
+  },
+  {
+    "topic": "Black Friday shipping delays 2026",
+    "category": "Business",
+    "country": "US"
+  }
+]`;
+
 function FormatSelect({ value, onChange }) {
   return (
     <div className="space-y-1.5">
@@ -248,6 +267,8 @@ function AIGenerateModal({ onClose }) {
   const [mode, setMode] = useState('topic'); // topic | general
   const [errorMsg, setErrorMsg] = useState('');
   const [jobId, setJobId] = useState(null);
+  const [showExample, setShowExample] = useState(true);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
     topic: '',
     direction: '',
@@ -281,6 +302,22 @@ function AIGenerateModal({ onClose }) {
   function clearCountries() {
     setForm((f) => ({ ...f, countries: [] }));
   }
+
+  async function copyExample() {
+    try {
+      await navigator.clipboard.writeText(BATCH_EXAMPLE_JSON);
+      setCopied(true);
+    } catch {
+      setErrorMsg('Kopyalanamadı. Örneği elle seçip kopyalayabilirsiniz.');
+    }
+  }
+
+  // "Kopyalandı" geri bildirimini kısa süre sonra sıfırla
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
 
   async function handleGenerate() {
     if (!canSubmit) return;
@@ -497,6 +534,43 @@ function AIGenerateModal({ onClose }) {
                     spellCheck={false}
                     className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y"
                   />
+
+                  {/* Örnek format */}
+                  <div className="rounded-lg border border-border">
+                    <div className="flex items-center justify-between gap-2 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowExample((s) => !s)}
+                        className="flex items-center gap-1.5 text-2sm font-medium text-foreground"
+                      >
+                        <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', !showExample && '-rotate-90')} />
+                        Örnek format
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={copyExample}
+                          className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                        >
+                          {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+                          {copied ? 'Kopyalandı' : 'Kopyala'}
+                        </button>
+                        <span className="text-muted-foreground/40">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setForm((f) => ({ ...f, jobsJson: BATCH_EXAMPLE_JSON }))}
+                          className="text-xs font-medium text-primary hover:underline"
+                        >
+                          Örneği kullan
+                        </button>
+                      </div>
+                    </div>
+                    {showExample && (
+                      <pre className="max-h-56 overflow-auto border-t border-border bg-muted/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                        {BATCH_EXAMPLE_JSON}
+                      </pre>
+                    )}
+                  </div>
                 </>
               )}
               {errorMsg && (
