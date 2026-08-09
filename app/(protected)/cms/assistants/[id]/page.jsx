@@ -27,6 +27,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
+import { AssistantHealthPanel } from '@/components/cms/assistant-health';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetAssistantQuery,
@@ -179,6 +180,17 @@ export default function CmsAssistantDetailPage({ params }) {
 function GeneralSection({ a }) {
   return (
     <>
+      {/* Sağlık raporu en üstte: bir asistan detayına bakmanın en sık nedeni
+          "bu neden iyi çalışmıyor?" sorusu. Puan backend'de üretilir. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sağlık Kontrolü</CardTitle>
+        </CardHeader>
+        <CardContent className="p-6">
+          <AssistantHealthPanel health={a.health} />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Genel Bilgiler</CardTitle>
