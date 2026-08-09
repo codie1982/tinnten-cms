@@ -50,6 +50,17 @@ export const companiesApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { adminActive, adminActiveAt, adminActiveReason, status }
       invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }, { type: 'Company', id: 'LIST' }],
     }),
+    // POC (demo/vitrin) işareti. Firmayı gerçek müşteriden ayıran tek kalıcı
+    // alan; backend bayrağı firmanın asistanlarına da yayar.
+    setCompanyPoc: build.mutation({
+      query: ({ id, poc }) => ({
+        url: ENDPOINTS.companies.poc(id),
+        method: 'PATCH',
+        body: { poc },
+      }),
+      transformResponse: (res) => res?.data ?? res, // { poc, assistantsUpdated }
+      invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }, { type: 'Company', id: 'LIST' }],
+    }),
     transferCompanyOwner: build.mutation({
       query: ({ id, userId, setActiveCompany }) => ({
         url: ENDPOINTS.companies.owner(id),
@@ -100,6 +111,7 @@ export const {
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
+  useSetCompanyPocMutation,
   useTransferCompanyOwnerMutation,
   useAssignCompanyPackageMutation,
   useApproveCompanyMutation,
