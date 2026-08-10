@@ -325,6 +325,7 @@ export const ENDPOINTS = {
   files: {
     cmsStats: '/files/cms/stats',
     cmsList: '/files/cms/list',
+    cmsContent: (id) => `/files/cms/${id}/content`,
   },
   monitoring: {
     cmsHost: '/monitoring/cms/host',

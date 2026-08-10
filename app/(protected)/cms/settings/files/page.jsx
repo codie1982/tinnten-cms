@@ -3,12 +3,11 @@
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import {
-  Image as ImageIcon, Film, Music, FileText, File, Files as FilesIcon,
-  Search, RefreshCw, Inbox, ExternalLink, Download,
+  Files as FilesIcon, Search, RefreshCw, Inbox, ExternalLink, Eye,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
-import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -20,39 +19,25 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useGetFileStatsQuery, useGetFilesQuery } from '@/redux/services';
+import { FileDetailSheet } from './_components/file-detail-sheet';
+import { MEDIA_META, SOURCE_META, formatBytes, formatTr } from './_lib/file-meta';
 
 const PAGE_SIZE = 30;
 
-const MEDIA = {
-  image: { label: 'Resim', icon: ImageIcon, tone: 'text-violet-600' },
-  video: { label: 'Video', icon: Film, tone: 'text-rose-600' },
-  audio: { label: 'Ses', icon: Music, tone: 'text-amber-600' },
-  document: { label: 'Doküman', icon: FileText, tone: 'text-sky-600' },
-  file: { label: 'Dosya', icon: File, tone: 'text-muted-foreground' },
-};
-
-function formatBytes(b) {
-  if (!b) return '—';
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0; let n = b;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i += 1; }
-  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
-}
-function formatTr(input) {
-  if (!input) return '—';
-  const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function FileCard({ f }) {
-  const meta = MEDIA[f.mediaType] || MEDIA.file;
+function FileCard({ f, onOpen }) {
+  const meta = MEDIA_META[f.mediaType] || MEDIA_META.file;
   const Icon = meta.icon;
   const isImage = f.mediaType === 'image' && f.url;
+  const source = SOURCE_META[f.sourceGroup] || SOURCE_META.media;
 
   return (
     <Card className="group overflow-hidden">
-      <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-muted/40">
+      <button
+        type="button"
+        onClick={() => onOpen(f.id)}
+        className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-muted/40"
+        title="Detay ve içeriği görüntüle"
+      >
         {isImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={f.url} alt={f.name} loading="lazy" className="size-full object-cover transition-transform group-hover:scale-105" />
@@ -60,19 +45,37 @@ function FileCard({ f }) {
           <Icon className={cn('size-10', meta.tone)} />
         )}
         <Badge variant="muted" className="absolute left-1.5 top-1.5 text-[10px]">{meta.label}</Badge>
-        {f.url && (
-          <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-            <a href={f.url} target="_blank" rel="noreferrer" className="rounded-md bg-background/80 p-1 hover:bg-background" title="Aç"><ExternalLink className="size-3.5" /></a>
-          </div>
-        )}
-      </div>
+        <Badge variant={source.badge} className="absolute bottom-1.5 left-1.5 text-[10px]">
+          {source.label}
+        </Badge>
+        <span className="absolute inset-0 flex items-center justify-center bg-background/60 opacity-0 transition-opacity group-hover:opacity-100">
+          <span className="flex items-center gap-1.5 rounded-md bg-background px-2.5 py-1.5 text-xs font-medium shadow-sm">
+            <Eye className="size-3.5" /> İçeriği gör
+          </span>
+        </span>
+      </button>
       <CardContent className="space-y-0.5 p-2.5">
         <p className="truncate text-sm font-medium text-foreground" title={f.name}>{f.name || f.originalName || '—'}</p>
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{formatBytes(f.sizeBytes)}</span>
           <span>{formatTr(f.createdAt)}</span>
         </div>
-        {f.owner && <p className="truncate text-[11px] text-muted-foreground">{f.owner}</p>}
+        <div className="flex items-center justify-between gap-2">
+          {f.owner ? (
+            <p className="truncate text-[11px] text-muted-foreground">{f.owner}</p>
+          ) : <span />}
+          {f.url && (
+            <a
+              href={f.url}
+              target="_blank"
+              rel="noreferrer"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              title="Yeni sekmede aç"
+            >
+              <ExternalLink className="size-3.5" />
+            </a>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -83,16 +86,20 @@ export default function FilesLibraryPage() {
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
 
   const [mediaType, setMediaType] = useState('all');
+  const [source, setSource] = useState('all');
   const [status, setStatus] = useState('active');
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
+  const [detailId, setDetailId] = useState(null);
 
   const stats = useGetFileStatsQuery({ status }, { skip: !authorized });
   const groups = stats.data?.groups ?? [];
+  const sources = stats.data?.sources ?? [];
 
   const params = { status, limit: PAGE_SIZE, skip: page * PAGE_SIZE };
   if (mediaType !== 'all') params.mediaType = mediaType;
+  if (source !== 'all') params.source = source;
   if (search) params.q = search;
   const { data, isFetching, isError, refetch } = useGetFilesQuery(params, { skip: !authorized });
   const items = data?.items ?? [];
@@ -101,19 +108,47 @@ export default function FilesLibraryPage() {
 
   const submit = () => { setPage(0); setSearch(q.trim()); };
   const pickType = (t) => { setMediaType(t); setPage(0); };
+  const pickSource = (s) => { setSource(s); setPage(0); };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
       <PageHeader
         section="Sistem Ayarları"
         title="Eklenen Dosyalar"
-        description="Upload servisiyle eklenen tüm dosyalar (files koleksiyonu) — medya tipine göre gruplu"
+        description="Upload servisiyle eklenen tüm dosyalar (files koleksiyonu) — kaynağına ve medya tipine göre gruplu"
         actions={
           <Button variant="outline" onClick={() => { refetch(); stats.refetch(); }} disabled={isFetching}>
             <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} /> Yenile
           </Button>
         }
       />
+
+      {/* Kaynak ayrımı: kütüphaneye eklenen / konuşmada eklenen / AI üretimi */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => pickSource('all')}
+          className={cn(
+            'rounded-lg border px-3 py-1.5 text-2sm transition-colors',
+            source === 'all' ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:bg-accent',
+          )}
+        >
+          Tüm kaynaklar
+          <span className="ms-2 tabular-nums text-muted-foreground">{stats.data?.total ?? 0}</span>
+        </button>
+        {sources.map((s) => (
+          <button
+            key={s.source}
+            onClick={() => pickSource(s.source)}
+            className={cn(
+              'rounded-lg border px-3 py-1.5 text-2sm transition-colors',
+              source === s.source ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:bg-accent',
+            )}
+          >
+            {SOURCE_META[s.source]?.label || s.label}
+            <span className="ms-2 tabular-nums text-muted-foreground">{s.count}</span>
+          </button>
+        ))}
+      </div>
 
       {/* Tip kartları / filtre */}
       <div className="mb-5 grid grid-cols-3 gap-3 lg:grid-cols-6">
@@ -126,7 +161,7 @@ export default function FilesLibraryPage() {
           <p className="text-[11px] text-muted-foreground">{formatBytes(stats.data?.totalSize)}</p>
         </button>
         {groups.map((g) => {
-          const meta = MEDIA[g.mediaType] || MEDIA.file;
+          const meta = MEDIA_META[g.mediaType] || MEDIA_META.file;
           const Icon = meta.icon;
           const active = mediaType === g.mediaType;
           return (
@@ -180,7 +215,7 @@ export default function FilesLibraryPage() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {items.map((f) => <FileCard key={f.id} f={f} />)}
+            {items.map((f) => <FileCard key={f.id} f={f} onOpen={setDetailId} />)}
           </div>
           {total > PAGE_SIZE && (
             <div className="mt-5 flex items-center justify-center gap-3">
@@ -191,6 +226,12 @@ export default function FilesLibraryPage() {
           )}
         </>
       )}
+
+      <FileDetailSheet
+        fileId={detailId}
+        open={Boolean(detailId)}
+        onOpenChange={(o) => !o && setDetailId(null)}
+      />
     </RoleGuard>
   );
 }
