@@ -473,8 +473,14 @@ export function FileDetailSheet({ fileId, open, onOpenChange }) {
                 {PROCESSING_LABEL[f.processingStatus] || f.processingStatus}
               </Badge>
               {data.scan?.infected && <Badge variant="destructive">VİRÜSLÜ</Badge>}
+              {data.scan?.quarantined && !data.scan?.infected && (
+                <Badge variant="warning">Karantinada</Badge>
+              )}
               {data.scan?.clean && <Badge variant="success">Tarama temiz</Badge>}
-              {data.aiTrail?.generated && <Badge variant="warning">AI üretimi</Badge>}
+              {/* Kaynak rozeti zaten "AI üretimi" diyorsa tekrarlama. */}
+              {data.aiTrail?.generated && f.sourceGroup !== 'ai' && (
+                <Badge variant="warning">AI üretimi</Badge>
+              )}
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
