@@ -27,7 +27,7 @@ const PAGE_SIZE = 30;
 function FileCard({ f, onOpen }) {
   const meta = MEDIA_META[f.mediaType] || MEDIA_META.file;
   const Icon = meta.icon;
-  const isImage = f.mediaType === 'image' && f.url;
+  const isImage = f.mediaType === 'image' && f.previewUrl;
   const source = SOURCE_META[f.sourceGroup] || SOURCE_META.media;
 
   return (
@@ -38,9 +38,11 @@ function FileCard({ f, onOpen }) {
         className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-muted/40"
         title="Detay ve içeriği görüntüle"
       >
-        {isImage ? (
+        {isImage && f.previewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={f.url} alt={f.name} loading="lazy" className="size-full object-cover transition-transform group-hover:scale-105" />
+          // f.url ŞEMADA YOK (yalnız variants[] altında) → her zaman boştu ve
+          // küçük resim hiç görünmüyordu. Liste ucu artık imzalı previewUrl veriyor.
+          <img src={f.previewUrl} alt={f.name} loading="lazy" className="size-full object-cover transition-transform group-hover:scale-105" />
         ) : (
           <Icon className={cn('size-10', meta.tone)} />
         )}
@@ -64,9 +66,9 @@ function FileCard({ f, onOpen }) {
           {f.owner ? (
             <p className="truncate text-[11px] text-muted-foreground">{f.owner}</p>
           ) : <span />}
-          {f.url && (
+          {f.previewUrl && (
             <a
-              href={f.url}
+              href={f.previewUrl}
               target="_blank"
               rel="noreferrer"
               className="shrink-0 text-muted-foreground hover:text-foreground"

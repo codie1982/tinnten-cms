@@ -119,7 +119,7 @@ function PreviewTab({ data, f }) {
         </Alert>
       )}
 
-      <FilePreview file={f} previewUrl={data.previewUrl} text={text} />
+      <FilePreview view={data?.view} file={f} previewUrl={data.previewUrl} text={text} />
     </div>
   );
 }

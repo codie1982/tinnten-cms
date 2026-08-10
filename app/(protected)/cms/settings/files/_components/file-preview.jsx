@@ -24,7 +24,23 @@ const EXT_MAP = {
   text: ['txt', 'md', 'markdown', 'json', 'csv', 'log', 'xml', 'yaml', 'yml', 'html', 'js', 'ts', 'css'],
 };
 
-/** Uzantı + mediaType'tan önizleme tipini çözer. */
+// Sunucunun `view.kind` degerleri -> bu dosyanin ic tip adlari.
+// Siniflandirmanin TEK kaynagi backend (`services/file-view/fileKind.js`);
+// asagidaki uzanti tablosu yalnizca descriptor gelmediginde (eski yanit,
+// liste gorunumu) kullanilan fallback'tir. Uc istemcide uc ayri tablo
+// tutmak, ayni dosyanin yuzeyler arasi farkli davranmasi demekti.
+const KIND_TO_TYPE = {
+  image: 'image', video: 'video', audio: 'audio', pdf: 'pdf',
+  document: 'docx', spreadsheet: 'xlsx', data: 'text', text: 'text',
+  presentation: 'none', archive: 'none', other: 'none',
+};
+
+export function resolveTypeFromView(view) {
+  const kind = view && view.kind;
+  return kind && KIND_TO_TYPE[kind] ? KIND_TO_TYPE[kind] : null;
+}
+
+/** Uzantı + mediaType'tan önizleme tipini çözer (descriptor YOKSA fallback). */
 export function resolvePreviewType(file) {
   const ext = String(file?.extension || '').toLowerCase().replace(/^\./, '');
   for (const [type, list] of Object.entries(EXT_MAP)) {
@@ -168,8 +184,9 @@ function XlsxPreview({ url }) {
  * @param previewUrl imzalı adres (yoksa yalnız metne düşülür)
  * @param text      backend'in ayrıştırdığı metin (fallback)
  */
-export function FilePreview({ file, previewUrl, text }) {
-  const type = resolvePreviewType(file);
+export function FilePreview({ file, previewUrl, text, view }) {
+  // Sunucu sinifladiysa ONU kullan; yoksa yerel tabloya dus.
+  const type = resolveTypeFromView(view) ?? resolvePreviewType(file);
 
   if (previewUrl) {
     if (type === 'image') {
