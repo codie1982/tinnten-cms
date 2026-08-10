@@ -49,3 +49,70 @@ export function formatTrDateTime(input) {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 }
+
+/**
+ * Saniye kırılımlı tam zaman damgası + göreli süre.
+ * Denetim ekranında "hangi saat ve saniyede" sorusunun cevabı bu — dakika
+ * hassasiyeti aynı dosyanın iki yüklemesini ayırt etmeye yetmiyor.
+ */
+export function formatTrExact(input) {
+  if (!input) return '';
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('tr-TR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+export function formatRelativeTr(input) {
+  if (!input) return '';
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return '';
+  const diff = Date.now() - d.getTime();
+  const abs = Math.abs(diff);
+  const units = [
+    ['yıl', 365 * 24 * 3600e3], ['ay', 30 * 24 * 3600e3], ['gün', 24 * 3600e3],
+    ['saat', 3600e3], ['dakika', 60e3], ['saniye', 1e3],
+  ];
+  for (const [label, ms] of units) {
+    if (abs >= ms) {
+      const n = Math.floor(abs / ms);
+      return diff >= 0 ? `${n} ${label} önce` : `${n} ${label} sonra`;
+    }
+  }
+  return 'az önce';
+}
+
+/** ClamAV tarama durumu → panelde gösterilecek etiket + rozet tonu. */
+export const SCAN_META = {
+  clean: { label: 'Temiz', badge: 'success' },
+  infected: { label: 'VİRÜS TESPİT EDİLDİ', badge: 'destructive' },
+  failed: { label: 'Tarama başarısız', badge: 'warning' },
+  skipped: { label: 'Taranmadı (atlandı)', badge: 'warning' },
+  pending: { label: 'Tarama bekliyor', badge: 'muted' },
+};
+
+/** files.processingStatus → okunabilir etiket. */
+export const PROCESSING_LABEL = {
+  uploaded: 'Yüklendi',
+  quarantined: 'Karantinada',
+  clean: 'Temiz',
+  rejected: 'Reddedildi',
+  parsed: 'Ayrıştırıldı',
+  failed: 'Başarısız',
+  generating: 'Üretiliyor',
+  generated: 'Üretildi',
+};
+
+/** Kullanım taramasında bulunan bağlantı türleri. */
+export const USAGE_LABEL = {
+  library_document: 'Bilgi tabanı dokümanı',
+  gallery: 'Galeri',
+  support_ticket: 'Destek talebi',
+  company_media: 'Firma görseli',
+  user_profile_media: 'Kullanıcı profil görseli',
+  product_variant: 'Ürün varyantı görseli',
+  document_record: 'Doküman kaydı',
+  derived_file: 'Bu dosyadan üretilen dosya',
+};
