@@ -30,6 +30,21 @@ const statusMeta = {
 const numberFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => numberFormatter.format(Number(value) || 0);
 const dateTimeFormatter = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' });
+const RECURRENCE_UNIT_LABELS = {
+  hour: 'saatte bir',
+  day: 'günde bir',
+  week: 'haftada bir',
+  month: 'ayda bir',
+};
+
+/** "her 24 saatte bir" / "her 1 günde bir 10:00". Saat biriminde HH:MM yoktur. */
+const formatRecurrence = (r = {}) => {
+  const unit = r.unit || 'day';
+  const base = `her ${Number(r.every) || 1} ${RECURRENCE_UNIT_LABELS[unit] || unit}`;
+  if (unit === 'hour') return base;
+  return `${base} ${String(r.atHour ?? 0).padStart(2, '0')}:${String(r.atMinute ?? 0).padStart(2, '0')}`;
+};
+
 const formatStartAt = (value) => {
   if (!value) return '';
   const d = new Date(value);
@@ -159,11 +174,7 @@ export default function CampaignsPage() {
                         {c.recurrence?.enabled && (
                           <div className="mt-0.5 text-[11px] text-muted-foreground">
                             Tekrarlı · {c.recurrence.occurrence || 1}. koşu ·{' '}
-                            {c.recurrence.everyDays === 1
-                              ? 'her gün'
-                              : `${c.recurrence.everyDays} günde bir`}{' '}
-                            {String(c.recurrence.atHour ?? 0).padStart(2, '0')}:
-                            {String(c.recurrence.atMinute ?? 0).padStart(2, '0')}
+                            {formatRecurrence(c.recurrence)}
                           </div>
                         )}
                       </TableCell>

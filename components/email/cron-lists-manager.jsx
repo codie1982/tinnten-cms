@@ -49,18 +49,28 @@ const REL_UNITS = [
 // Satır bazında `reason` (snake_case) ve özet sayaç anahtarları (camelCase) ayrı
 // gelir — ikisi de aynı etiketlere bağlanır.
 const SKIP_REASONS = {
-  no_email: 'E-posta çözülemedi',
+  no_email: 'E-posta yok (Mongo + Keycloak)',
+  keycloak_error: 'Keycloak’a ulaşılamadı',
   duplicate: 'Aynı e-posta tekrar',
   unsubscribed: 'Listeden çıkmış',
   already_member: 'Zaten üye',
+  guest: 'Misafir kullanıcı',
+  no_source: 'Kaynak kaydı yok',
 };
 
 const SKIP_COUNTER_LABELS = {
   noEmail: SKIP_REASONS.no_email,
+  keycloakError: SKIP_REASONS.keycloak_error,
   duplicate: SKIP_REASONS.duplicate,
   unsubscribed: SKIP_REASONS.unsubscribed,
   alreadyMember: SKIP_REASONS.already_member,
+  guest: SKIP_REASONS.guest,
+  noSource: SKIP_REASONS.no_source,
 };
+
+// Alıcının e-postasının nereden çözüldüğü. "mongo" dışı pay, Keycloak→Mongo
+// kimlik senkronunun eksik olduğunu gösterir (bkz. auditKeycloakIdentitySync).
+const SOURCE_LABELS = { mongo: 'Mongo', keycloak: 'Keycloak', company: 'Firma e-postası' };
 
 const MONGO_OP_SYMBOLS = {
   $eq: '=', $ne: '≠', $gt: '>', $gte: '≥', $lt: '<', $lte: '≤',
@@ -565,6 +575,16 @@ export function CronListsManager({ authorized }) {
                         {row.lastBuiltAt
                           ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(row.lastBuiltCount)} yeni`
                           : '—'}
+                        {/* Elenenler artık koşuda kaydediliyor — Keycloak arızası
+                            yüzünden küçülen liste burada fark edilir. */}
+                        {row.lastBuiltStats?.noEmail > 0 && (
+                          <div>{formatCount(row.lastBuiltStats.noEmail)} kişi e-postasız elendi</div>
+                        )}
+                        {row.lastBuiltStats?.keycloakErrors > 0 && (
+                          <div className="font-medium text-amber-600">
+                            {formatCount(row.lastBuiltStats.keycloakErrors)} Keycloak hatası
+                          </div>
+                        )}
                         {row.lastError && <div className="text-destructive">{row.lastError}</div>}
                       </td>
                       <td className="p-3">
@@ -625,6 +645,7 @@ function DryRunResult({ title, data, onClose }) {
   const filterLines = describeFilter(data?.compiledFilter);
   const recipients = data?.recipients || [];
   const skippedSample = data?.skippedSample || [];
+  const identity = data?.identity || null;
   const plus = data?.capped ? '+' : '';
 
   return (
@@ -698,6 +719,35 @@ function DryRunResult({ title, data, onClose }) {
           <div className="text-muted-foreground">Süre: {formatCount(data?.durationMs)} ms</div>
         </div>
 
+        {identity && (identity.fromMongo || identity.fromKeycloak || identity.fromCompany || identity.keycloakLookups) ? (
+          <div
+            className={`space-y-1 rounded-md px-3 py-2 text-xs ${
+              identity.keycloakErrors > 0 || identity.fromMongo < identity.fromKeycloak
+                ? 'border border-amber-500/40 bg-amber-500/10'
+                : 'bg-muted/50'
+            }`}
+          >
+            <div>
+              <span className="text-muted-foreground">E-posta nereden çözüldü: </span>
+              <b>Mongo {formatCount(identity.fromMongo)}</b>
+              {' · '}Keycloak {formatCount(identity.fromKeycloak)}
+              {' · '}firma e-postası {formatCount(identity.fromCompany)}
+            </div>
+            {identity.keycloakErrors > 0 && (
+              <div className="font-medium text-amber-700 dark:text-amber-400">
+                {formatCount(identity.keycloakErrors)} Keycloak sorgusu HATA verdi —
+                elenenlerin bir kısmı veri eksiği değil, geçici arıza. Tekrar deneyin.
+              </div>
+            )}
+            {identity.fromKeycloak + identity.fromCompany > 0 && (
+              <div className="text-muted-foreground">
+                Mongo dışından çözülen her kişi için build sırasında ek sorgu yapılır.
+                Kalıcı çözüm: <code>backfillUserIdentitySnapshots.js --only-missing</code>
+              </div>
+            )}
+          </div>
+        ) : null}
+
         <div>
           <div className="mb-1 text-xs font-medium">
             Listeye girecekler {recipients.length < (data?.willAdd || 0) && (
@@ -719,7 +769,14 @@ function DryRunResult({ title, data, onClose }) {
                       <td className="p-2 font-mono text-xs">{r.email}</td>
                       <td className="p-2">{r.name || '—'}</td>
                       <td className="p-2 text-muted-foreground">{r.label}</td>
-                      <td className="p-2 text-right text-xs text-muted-foreground">{r.locale || ''}</td>
+                      <td className="p-2 text-right text-xs text-muted-foreground">
+                        {r.source && r.source !== 'mongo' && (
+                          <Badge variant="outline" className="mr-1 text-[10px]">
+                            {SOURCE_LABELS[r.source] || r.source}
+                          </Badge>
+                        )}
+                        {r.locale || ''}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

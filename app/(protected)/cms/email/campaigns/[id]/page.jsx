@@ -49,20 +49,49 @@ const DEFAULT_SEND = {
 
 const DEFAULT_SCHEDULE = { startAt: '', durationMinutes: '' };
 
-// Tekrarlı yayın formu. Cron ifadesi yok: "her N günde bir, tz'de HH:MM".
+// Kanal (alıcı listesi) seçicisinin grupları — mail_channels.type ile eşleşir.
+const CHANNEL_TYPE_GROUPS = [
+  { type: 'general', label: 'Genel Liste', types: ['general'] },
+  { type: 'news_content', label: 'Haber Listeleri', types: ['news_content'] },
+  { type: 'cron', label: 'Cron Listeleri', types: ['cron'] },
+  { type: 'custom', label: 'Özel Listeler', types: ['custom', 'private'] },
+];
+
+// Tekrar aralığı birimleri. "hour" duvar saatine hizalanmaz (24 saatte bir =
+// sabit aralık); diğerleri takvimde ilerleyip yerel saati korur.
+const RECURRENCE_UNITS = [
+  { value: 'hour', label: 'saatte bir', clock: false },
+  { value: 'day', label: 'günde bir', clock: true },
+  { value: 'week', label: 'haftada bir', clock: true },
+  { value: 'month', label: 'ayda bir', clock: true },
+];
+
+const END_MODES = [
+  { value: 'never', label: 'Süresiz (durdurana kadar)' },
+  { value: 'date', label: 'Belirli bir tarihte bitir' },
+  { value: 'count', label: 'Belirli sayıda koşudan sonra bitir' },
+];
+
 const DEFAULT_RECURRENCE = {
   enabled: false,
-  everyDays: '1',
+  every: '1',
+  unit: 'day',
   atHour: '10',
   atMinute: '0',
   timezone: 'Europe/Istanbul',
-  channelMode: 'fixed',
-  recipeId: '',
+  endMode: 'never',
   endsAt: '',
   maxOccurrences: '',
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
+
+/** "her 24 saatte bir" / "her 1 günde bir 10:00" gibi okunur özet. */
+const describeRecurrence = (r) => {
+  const unit = RECURRENCE_UNITS.find((u) => u.value === r.unit) || RECURRENCE_UNITS[1];
+  const base = `her ${Number(r.every) || 1} ${unit.label}`;
+  return unit.clock ? `${base}, saat ${pad2(r.atHour)}:${pad2(r.atMinute)}` : base;
+};
 
 // Yayılma süresi hazır seçenekleri (dakika). '' = tek seferde (drip yok).
 const DURATION_PRESETS = [
@@ -163,6 +192,23 @@ export default function CampaignEditPage() {
     (c) => c.key === form?.channelKey || (c.metadata?.isGroup !== true && !groupKeys.has(c.key)),
   );
 
+  // Liste türüne göre grupla — tek düz listede "cron listesi mi özel liste mi"
+  // ayırt edilemiyordu. Boş gruplar gösterilmez.
+  const groupedAudience = CHANNEL_TYPE_GROUPS.map((g) => ({
+    ...g,
+    items: audienceChannels.filter((c) => g.types.includes(c.type)),
+  })).filter((g) => g.items.length > 0);
+
+  // Seçili kanal bir cron reçetesine ait mi? Tekrarlı yayımda liste AYRICA
+  // seçilmez — sunucu bu bağı kanaldan türetir, arayüz sadece bilgi verir.
+  const selectedChannel = channels.find((c) => c.key === form?.channelKey) || null;
+  const selectedChannelRecipe =
+    cronLists.find(
+      (r) =>
+        r.channelKey === form?.channelKey ||
+        String(r._id) === String(selectedChannel?.metadata?.generatedFromCron || ''),
+    ) || null;
+
   const [vars, setVars] = useState([]); // [{key, value}]
   const [rec, setRec] = useState(DEFAULT_RECURRENCE);
   const [notice, setNotice] = useState('');
@@ -235,12 +281,12 @@ export default function CampaignEditPage() {
       const r = campaign.recurrence || {};
       setRec({
         enabled: Boolean(r.enabled),
-        everyDays: String(r.everyDays ?? 1),
+        every: String(r.every ?? 1),
+        unit: r.unit || 'day',
         atHour: String(r.atHour ?? 10),
         atMinute: String(r.atMinute ?? 0),
         timezone: r.timezone || 'Europe/Istanbul',
-        channelMode: r.channelMode || 'fixed',
-        recipeId: r.recipeId ? String(r.recipeId) : '',
+        endMode: r.endMode || 'never',
         endsAt: toLocalInput(r.endsAt),
         maxOccurrences: r.maxOccurrences ? String(r.maxOccurrences) : '',
       });
@@ -248,6 +294,8 @@ export default function CampaignEditPage() {
   }, [campaign]);
 
   const setR = (k, v) => setRec((s) => ({ ...s, [k]: v }));
+  // "saatte bir" aralık tabanlıdır → sabit bir HH:MM sorulmaz.
+  const unitUsesClock = RECURRENCE_UNITS.find((u) => u.value === rec.unit)?.clock !== false;
 
   /**
    * Tekrar ayarı ayrı bir uçtan yazılır (PATCH .../recurrence): ana kaydet yalnız
@@ -257,20 +305,23 @@ export default function CampaignEditPage() {
   const saveRecurrence = async (enabled) => {
     setNotice('');
     if (isNew) return setNotice('Önce kampanyayı kaydedin, sonra tekrarı kurun.');
-    if (enabled && rec.channelMode === 'recipe_latest' && !rec.recipeId) {
-      return setNotice('Cron listesi modu için bir liste seçin.');
+    if (enabled && rec.endMode === 'date' && !rec.endsAt) {
+      return setNotice('Bitiş tarihi seçin.');
+    }
+    if (enabled && rec.endMode === 'count' && !(Number(rec.maxOccurrences) >= 1)) {
+      return setNotice('Toplam koşu sayısı en az 1 olmalı.');
     }
     const body = enabled
       ? {
           enabled: true,
-          everyDays: Number(rec.everyDays) || 1,
+          every: Number(rec.every) || 1,
+          unit: rec.unit,
           atHour: Number(rec.atHour) || 0,
           atMinute: Number(rec.atMinute) || 0,
           timezone: rec.timezone.trim() || 'Europe/Istanbul',
-          channelMode: rec.channelMode,
-          recipeId: rec.channelMode === 'recipe_latest' ? rec.recipeId : null,
-          endsAt: rec.endsAt ? new Date(rec.endsAt).toISOString() : null,
-          maxOccurrences: rec.maxOccurrences ? Number(rec.maxOccurrences) : null,
+          endMode: rec.endMode,
+          endsAt: rec.endMode === 'date' && rec.endsAt ? new Date(rec.endsAt).toISOString() : null,
+          maxOccurrences: rec.endMode === 'count' ? Number(rec.maxOccurrences) : null,
         }
       : { enabled: false };
 
@@ -279,7 +330,7 @@ export default function CampaignEditPage() {
     if (r?.__err) return setNotice(r.__err);
     setRec((s) => ({ ...s, enabled }));
     setNotice(enabled
-      ? `Tekrar kuruldu: her ${Number(rec.everyDays) || 1} günde bir ${pad2(rec.atHour)}:${pad2(rec.atMinute)} (${rec.timezone}).`
+      ? `Tekrar kuruldu: ${describeRecurrence(rec)} (${rec.timezone}).`
       : 'Tekrar kapatıldı — bu koşudan sonra yeni kampanya üretilmeyecek.');
     refetchCampaign();
   };
@@ -522,12 +573,22 @@ export default function CampaignEditPage() {
                     <select value={form.channelKey} onChange={(e) => set('channelKey', e.target.value)} disabled={!isDraft}
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30">
                       <option value="">— seçin —</option>
-                      {audienceChannels.map((c) => (
-                        <option key={c._id} value={c.key}>
-                          {c.title}{c.description ? ` — ${c.description}` : ''} ({c.key})
-                        </option>
+                      {groupedAudience.map((g) => (
+                        <optgroup key={g.type} label={g.label}>
+                          {g.items.map((c) => (
+                            <option key={c._id} value={c.key}>
+                              {c.title}{c.description ? ` — ${c.description}` : ''} ({c.key})
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
+                    {selectedChannelRecipe && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        Bu liste <b>{selectedChannelRecipe.name}</b> cron listesinden üretiliyor —
+                        tekrarlı yayımda her koşu o listenin güncel hâline gider.
+                      </p>
+                    )}
                   </div>
                   <div className="min-w-[200px] flex-1">
                     <label className="mb-1 block text-xs text-muted-foreground">Şablon</label>
@@ -653,82 +714,100 @@ export default function CampaignEditPage() {
 
                   {rec.enabled && (
                     <>
-                      <div className="flex flex-wrap gap-4">
-                        <div className="w-36">
-                          <label className="mb-1 block text-xs text-muted-foreground">Her kaç günde bir</label>
-                          <Input type="number" min={1} value={rec.everyDays}
-                            onChange={(e) => setR('everyDays', e.target.value)} />
+                      <div className="flex flex-wrap items-end gap-3">
+                        <span className="pb-2 text-sm text-muted-foreground">Her</span>
+                        <div className="w-24">
+                          <label className="mb-1 block text-xs text-muted-foreground">Miktar</label>
+                          <Input type="number" min={1} value={rec.every}
+                            onChange={(e) => setR('every', e.target.value)} />
                         </div>
-                        <div className="w-28">
-                          <label className="mb-1 block text-xs text-muted-foreground">Saat</label>
-                          <Input type="number" min={0} max={23} value={rec.atHour}
-                            onChange={(e) => setR('atHour', e.target.value)} />
+                        <div className="w-44">
+                          <label className="mb-1 block text-xs text-muted-foreground">Birim</label>
+                          <select
+                            value={rec.unit}
+                            onChange={(e) => setR('unit', e.target.value)}
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                          >
+                            {RECURRENCE_UNITS.map((u) => (
+                              <option key={u.value} value={u.value}>{u.label}</option>
+                            ))}
+                          </select>
                         </div>
-                        <div className="w-28">
-                          <label className="mb-1 block text-xs text-muted-foreground">Dakika</label>
-                          <Input type="number" min={0} max={59} value={rec.atMinute}
-                            onChange={(e) => setR('atMinute', e.target.value)} />
-                        </div>
+                        {unitUsesClock && (
+                          <>
+                            <div className="w-24">
+                              <label className="mb-1 block text-xs text-muted-foreground">Saat</label>
+                              <Input type="number" min={0} max={23} value={rec.atHour}
+                                onChange={(e) => setR('atHour', e.target.value)} />
+                            </div>
+                            <div className="w-24">
+                              <label className="mb-1 block text-xs text-muted-foreground">Dakika</label>
+                              <Input type="number" min={0} max={59} value={rec.atMinute}
+                                onChange={(e) => setR('atMinute', e.target.value)} />
+                            </div>
+                          </>
+                        )}
                         <div className="w-48">
                           <label className="mb-1 block text-xs text-muted-foreground">Zaman dilimi</label>
                           <Input value={rec.timezone} onChange={(e) => setR('timezone', e.target.value)} />
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-4">
+                      <p className="rounded-md bg-muted/50 px-3 py-2 text-xs">
+                        <b>{describeRecurrence(rec)}</b>
+                        {!unitUsesClock && (
+                          <span className="text-muted-foreground">
+                            {' '}— saat birimi duvar saatine sabitlenmez, koşudan koşuya sabit aralık bırakır.
+                          </span>
+                        )}
+                      </p>
+
+                      <div className="flex flex-wrap items-end gap-3">
                         <div className="min-w-[260px] flex-1">
-                          <label className="mb-1 block text-xs text-muted-foreground">Her koşuda alıcı listesi</label>
+                          <label className="mb-1 block text-xs text-muted-foreground">Bitiş koşulu</label>
                           <select
-                            value={rec.channelMode}
-                            onChange={(e) => setR('channelMode', e.target.value)}
+                            value={rec.endMode}
+                            onChange={(e) => setR('endMode', e.target.value)}
                             className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
                           >
-                            <option value="fixed">Sabit kanal (yukarıda seçilen)</option>
-                            <option value="recipe_latest">Cron listesinin en son ürettiği liste</option>
+                            {END_MODES.map((m) => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
                           </select>
                         </div>
-                        {rec.channelMode === 'recipe_latest' && (
-                          <div className="min-w-[260px] flex-1">
-                            <label className="mb-1 block text-xs text-muted-foreground">Cron listesi</label>
-                            <select
-                              value={rec.recipeId}
-                              onChange={(e) => setR('recipeId', e.target.value)}
-                              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                            >
-                              <option value="">— seçin —</option>
-                              {cronLists.map((c) => (
-                                <option key={c._id} value={c._id}>{c.name}</option>
-                              ))}
-                            </select>
+                        {rec.endMode === 'date' && (
+                          <div className="w-60">
+                            <label className="mb-1 block text-xs text-muted-foreground">Son tarih</label>
+                            <input
+                              type="datetime-local"
+                              value={rec.endsAt}
+                              onChange={(e) => setR('endsAt', e.target.value)}
+                              className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                            />
+                          </div>
+                        )}
+                        {rec.endMode === 'count' && (
+                          <div className="w-44">
+                            <label className="mb-1 block text-xs text-muted-foreground">Toplam koşu sayısı</label>
+                            <Input type="number" min={1} value={rec.maxOccurrences}
+                              onChange={(e) => setR('maxOccurrences', e.target.value)} placeholder="örn. 30" />
                           </div>
                         )}
                       </div>
 
-                      <div className="flex flex-wrap gap-4">
-                        <div className="w-60">
-                          <label className="mb-1 block text-xs text-muted-foreground">Bitiş (boş = süresiz)</label>
-                          <input
-                            type="datetime-local"
-                            value={rec.endsAt}
-                            onChange={(e) => setR('endsAt', e.target.value)}
-                            className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                          />
-                        </div>
-                        <div className="w-44">
-                          <label className="mb-1 block text-xs text-muted-foreground">Toplam koşu (boş = sınırsız)</label>
-                          <Input type="number" min={1} value={rec.maxOccurrences}
-                            onChange={(e) => setR('maxOccurrences', e.target.value)} placeholder="örn. 30" />
-                        </div>
-                      </div>
-
-                      {rec.channelMode === 'recipe_latest' && (
-                        <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                          Her koşu, seçilen cron listesinin <b>o gün ürettiği yeni listeye</b> gider.
-                          Liste o gün üretilmemişse (önceki koşuyla aynı kanal) gönderim <b>yapılmaz</b> —
-                          aynı kitleye ikinci kez mail gitmez. Cron listesinin saatini bu kampanyadan
-                          <b> önce</b> ayarlayın.
-                        </p>
-                      )}
+                      <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                        Alıcı listesi <b>yukarıdaki kanal seçiminden</b> gelir; burada ayrıca seçilmez.
+                        {selectedChannelRecipe ? (
+                          <>
+                            {' '}Seçilen kanal <b>{selectedChannelRecipe.name}</b> cron listesine ait olduğu için
+                            her koşu o listenin <b>güncel hâline</b> gider. Liste o koşu için yeniden
+                            üretilmemişse gönderim <b>yapılmaz</b> — aynı kitleye ikinci kez mail gitmez.
+                            Cron listesinin saatini bu kampanyadan <b>önceye</b> ayarlayın.
+                          </>
+                        ) : (
+                          ' Seçilen kanal sabit olduğu için her koşu aynı kanala gider.'
+                        )}
+                      </p>
                     </>
                   )}
 

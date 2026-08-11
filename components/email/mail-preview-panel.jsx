@@ -7,31 +7,47 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { addDemoRecipients, getDemoRecipients } from '@/lib/mail-demo-recipients';
-import { usePreviewMailCampaignMutation } from '@/redux/services';
+import {
+  usePreviewMailCampaignMutation,
+  usePreviewMailTemplateMutation,
+} from '@/redux/services';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Kampanya mail önizlemesi — "önizlenen = gönderilen".
+ * Mail önizlemesi — "önizlenen = gönderilen".
  *
- * Backend şablon + konu override + genel değişkenleri gönderim anındaki
- * header/footer (unsubscribe) chrome'u ile sarıp tam HTML döndürür; burada
- * izole bir iframe'de (sandbox + srcDoc) gösterilir — CMS CSS'i maile, mail
- * CSS'i sayfaya SIZMAZ (şablon editöründeki dangerouslySetInnerHTML'in aksine).
- * "Alıcı gözüyle": bir e-posta girilirse {{USER_NAME}} gibi token'lar o kişinin
- * GERÇEK verisiyle çözülür (backend resolveEmailVars — test-send ile aynı yol).
+ * İki kaynağı da render eder:
+ *   - `campaignId` → kampanya önizlemesi (şablon + konu override + genel
+ *     değişkenler, gönderim anındaki header/footer chrome'u ile sarılmış).
+ *     "Alıcı gözüyle" bir e-posta girilirse {{USER_NAME}} gibi token'lar o
+ *     kişinin GERÇEK verisiyle çözülür (backend resolveEmailVars).
+ *   - `templateId` → şablon önizlemesi (şablonun previewData'sı ile). Alıcı
+ *     gözüyle render yoktur; şablon ucu sampleVars alır, kişi çözmez.
+ *
+ * Her iki durumda da HTML izole bir iframe'de (sandbox + srcDoc) gösterilir —
+ * CMS CSS'i maile, mail CSS'i sayfaya SIZMAZ. Şablon sayfasındaki eski
+ * `dangerouslySetInnerHTML`'li gömülü kart tam da bu yüzden yanıltıcıydı.
  */
-export function MailPreviewPanel({ campaignId, open, onClose }) {
-  const [preview, { isLoading }] = usePreviewMailCampaignMutation();
+export function MailPreviewPanel({ campaignId, templateId, open, onClose }) {
+  const [previewCampaign, { isLoading: campaignLoading }] = usePreviewMailCampaignMutation();
+  const [previewTemplate, { isLoading: templateLoading }] = usePreviewMailTemplateMutation();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [as, setAs] = useState('');
   const [mode, setMode] = useState('desktop'); // desktop | mobile
   const [savedRecipients, setSavedRecipients] = useState([]);
 
+  const isTemplate = Boolean(templateId) && !campaignId;
+  const targetId = campaignId || templateId;
+  const isLoading = isTemplate ? templateLoading : campaignLoading;
+
   const load = async (asEmail) => {
     setError('');
-    const r = await preview({ id: campaignId, as: asEmail || undefined })
+    const req = isTemplate
+      ? previewTemplate({ id: templateId, sampleVars: {} })
+      : previewCampaign({ id: campaignId, as: asEmail || undefined });
+    const r = await req
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Önizleme alınamadı.' }));
     if (r?.__err) return setError(r.__err);
@@ -40,7 +56,7 @@ export function MailPreviewPanel({ campaignId, open, onClose }) {
   };
 
   useEffect(() => {
-    if (open && campaignId) {
+    if (open && targetId) {
       setData(null);
       setError('');
       setAs('');
@@ -48,7 +64,7 @@ export function MailPreviewPanel({ campaignId, open, onClose }) {
       load(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, campaignId]);
+  }, [open, targetId]);
 
   if (!open) return null;
 
@@ -66,7 +82,10 @@ export function MailPreviewPanel({ campaignId, open, onClose }) {
     >
       <Card className="flex max-h-[92vh] w-full max-w-4xl flex-col" onClick={(e) => e.stopPropagation()}>
         <CardHeader>
-          <CardTitle><Eye className="mr-1 inline size-4" /> Önizleme · gönderilecek mail</CardTitle>
+          <CardTitle>
+            <Eye className="mr-1 inline size-4" />
+            {isTemplate ? 'Önizleme · şablon' : 'Önizleme · gönderilecek mail'}
+          </CardTitle>
           <CardToolbar className="gap-2">
             <div className="flex rounded-md border border-border p-0.5">
               <Button
@@ -92,28 +111,30 @@ export function MailPreviewPanel({ campaignId, open, onClose }) {
           </CardToolbar>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-          {/* Alıcı gözüyle önizleme */}
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[240px] flex-1">
-              <label className="mb-1 block text-xs text-muted-foreground">
-                Alıcı gözüyle (token'lar bu kişinin gerçek verisiyle çözülür; boş = örnek değerler)
-              </label>
-              <Input
-                list="mail-preview-demo-recipients"
-                placeholder="ornek@adres.com"
-                value={as}
-                onChange={(e) => setAs(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && loadAs()}
-              />
-              <datalist id="mail-preview-demo-recipients">
-                {savedRecipients.map((r) => <option key={r} value={r} />)}
-              </datalist>
+          {/* Alıcı gözüyle önizleme — yalnız kampanyada; şablon ucu kişi çözmez. */}
+          {!isTemplate && (
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[240px] flex-1">
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Alıcı gözüyle (token'lar bu kişinin gerçek verisiyle çözülür; boş = örnek değerler)
+                </label>
+                <Input
+                  list="mail-preview-demo-recipients"
+                  placeholder="ornek@adres.com"
+                  value={as}
+                  onChange={(e) => setAs(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && loadAs()}
+                />
+                <datalist id="mail-preview-demo-recipients">
+                  {savedRecipients.map((r) => <option key={r} value={r} />)}
+                </datalist>
+              </div>
+              <Button variant="outline" onClick={loadAs} disabled={isLoading}>
+                {isLoading ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
+                Bu gözle önizle
+              </Button>
             </div>
-            <Button variant="outline" onClick={loadAs} disabled={isLoading}>
-              {isLoading ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
-              Bu gözle önizle
-            </Button>
-          </div>
+          )}
 
           {error && (
             <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -128,20 +149,26 @@ export function MailPreviewPanel({ campaignId, open, onClose }) {
           ) : data ? (
             <>
               {/* Mail başlık şeridi — gerçek gönderim değerleri */}
+              {/* Şablon önizlemesinde gönderen/alıcı yoktur — o alanlar kampanya
+                  gönderim anında belirlenir. Olmayan satırı boş göstermek yerine gizle. */}
               <div className="space-y-1 rounded-md bg-muted/40 px-3 py-2 text-sm">
-                <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">Kimden</span>
-                  <span className="min-w-0 truncate font-medium">{data.from}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">Kime</span>
-                  <span className="min-w-0 truncate">
-                    {data.to}
-                    {data.sampleRecipient && (
-                      <span className="ml-2 text-xs text-muted-foreground">(örnek alıcı)</span>
-                    )}
-                  </span>
-                </div>
+                {data.from && (
+                  <div className="flex gap-2">
+                    <span className="w-16 shrink-0 text-muted-foreground">Kimden</span>
+                    <span className="min-w-0 truncate font-medium">{data.from}</span>
+                  </div>
+                )}
+                {data.to && (
+                  <div className="flex gap-2">
+                    <span className="w-16 shrink-0 text-muted-foreground">Kime</span>
+                    <span className="min-w-0 truncate">
+                      {data.to}
+                      {data.sampleRecipient && (
+                        <span className="ml-2 text-xs text-muted-foreground">(örnek alıcı)</span>
+                      )}
+                    </span>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <span className="w-16 shrink-0 text-muted-foreground">Konu</span>
                   <span className="min-w-0 font-medium">{data.subject}</span>
