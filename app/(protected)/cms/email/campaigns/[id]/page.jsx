@@ -72,6 +72,23 @@ const END_MODES = [
   { value: 'count', label: 'Belirli sayıda koşudan sonra bitir' },
 ];
 
+// ISO hafta günleri (1=Pzt … 7=Paz) — backend byWeekday ile birebir aynı numaralar.
+const WEEKDAYS = [
+  { value: 1, short: 'Pzt', long: 'Pazartesi' },
+  { value: 2, short: 'Sal', long: 'Salı' },
+  { value: 3, short: 'Çar', long: 'Çarşamba' },
+  { value: 4, short: 'Per', long: 'Perşembe' },
+  { value: 5, short: 'Cum', long: 'Cuma' },
+  { value: 6, short: 'Cmt', long: 'Cumartesi' },
+  { value: 7, short: 'Paz', long: 'Pazar' },
+];
+
+const LAST_DAY = -1;
+const MONTH_DAYS = [
+  ...Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: `Ayın ${i + 1}. günü` })),
+  { value: LAST_DAY, label: 'Ayın son günü' },
+];
+
 const DEFAULT_RECURRENCE = {
   enabled: false,
   every: '1',
@@ -79,6 +96,8 @@ const DEFAULT_RECURRENCE = {
   atHour: '10',
   atMinute: '0',
   timezone: 'Europe/Istanbul',
+  byWeekday: [], // unit: week
+  byMonthDay: '1', // unit: month
   endMode: 'never',
   endsAt: '',
   maxOccurrences: '',
@@ -86,11 +105,23 @@ const DEFAULT_RECURRENCE = {
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-/** "her 24 saatte bir" / "her 1 günde bir 10:00" gibi okunur özet. */
+/** "her hafta Pazartesi 09:00" / "her ayın son günü 10:00" gibi okunur özet. */
 const describeRecurrence = (r) => {
-  const unit = RECURRENCE_UNITS.find((u) => u.value === r.unit) || RECURRENCE_UNITS[1];
-  const base = `her ${Number(r.every) || 1} ${unit.label}`;
-  return unit.clock ? `${base}, saat ${pad2(r.atHour)}:${pad2(r.atMinute)}` : base;
+  const n = Number(r.every) || 1;
+  const clock = `saat ${pad2(r.atHour)}:${pad2(r.atMinute)}`;
+
+  if (r.unit === 'hour') return `her ${n} saatte bir`;
+  if (r.unit === 'day') return `${n === 1 ? 'her gün' : `${n} günde bir`}, ${clock}`;
+
+  if (r.unit === 'week') {
+    const names = WEEKDAYS.filter((d) => r.byWeekday?.includes(d.value)).map((d) => d.long);
+    const when = names.length ? names.join(', ') : 'gün seçilmedi';
+    return `${n === 1 ? 'her hafta' : `${n} haftada bir`} ${when}, ${clock}`;
+  }
+
+  const d = Number(r.byMonthDay);
+  const dayLabel = d === LAST_DAY ? 'ayın son günü' : `ayın ${d}. günü`;
+  return `${n === 1 ? 'her ay' : `${n} ayda bir`} ${dayLabel}, ${clock}`;
 };
 
 // Yayılma süresi hazır seçenekleri (dakika). '' = tek seferde (drip yok).
@@ -286,6 +317,8 @@ export default function CampaignEditPage() {
         atHour: String(r.atHour ?? 10),
         atMinute: String(r.atMinute ?? 0),
         timezone: r.timezone || 'Europe/Istanbul',
+        byWeekday: Array.isArray(r.byWeekday) ? r.byWeekday : [],
+        byMonthDay: String(r.byMonthDay ?? 1),
         endMode: r.endMode || 'never',
         endsAt: toLocalInput(r.endsAt),
         maxOccurrences: r.maxOccurrences ? String(r.maxOccurrences) : '',
@@ -305,6 +338,9 @@ export default function CampaignEditPage() {
   const saveRecurrence = async (enabled) => {
     setNotice('');
     if (isNew) return setNotice('Önce kampanyayı kaydedin, sonra tekrarı kurun.');
+    if (enabled && rec.unit === 'week' && !rec.byWeekday?.length) {
+      return setNotice('Haftalık tekrar için en az bir gün seçin.');
+    }
     if (enabled && rec.endMode === 'date' && !rec.endsAt) {
       return setNotice('Bitiş tarihi seçin.');
     }
@@ -319,6 +355,8 @@ export default function CampaignEditPage() {
           atHour: Number(rec.atHour) || 0,
           atMinute: Number(rec.atMinute) || 0,
           timezone: rec.timezone.trim() || 'Europe/Istanbul',
+          byWeekday: rec.unit === 'week' ? rec.byWeekday : [],
+          byMonthDay: rec.unit === 'month' ? Number(rec.byMonthDay) : null,
           endMode: rec.endMode,
           endsAt: rec.endMode === 'date' && rec.endsAt ? new Date(rec.endsAt).toISOString() : null,
           maxOccurrences: rec.endMode === 'count' ? Number(rec.maxOccurrences) : null,
@@ -752,6 +790,64 @@ export default function CampaignEditPage() {
                           <Input value={rec.timezone} onChange={(e) => setR('timezone', e.target.value)} />
                         </div>
                       </div>
+
+                      {/* Takvim çıpası: hafta/ay tekrarında tarih bundan seçilir.
+                          Olmadığında seri, ilk koşunun rastgele denk geldiği güne
+                          kilitlenir ve operatör hangi gün olduğunu göremez. */}
+                      {rec.unit === 'week' && (
+                        <div>
+                          <label className="mb-1 block text-xs text-muted-foreground">
+                            Haftanın hangi günleri
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {WEEKDAYS.map((d) => {
+                              const on = rec.byWeekday?.includes(d.value);
+                              return (
+                                <Button
+                                  key={d.value}
+                                  type="button"
+                                  size="sm"
+                                  variant={on ? 'primary' : 'outline'}
+                                  title={d.long}
+                                  onClick={() =>
+                                    setR(
+                                      'byWeekday',
+                                      on
+                                        ? rec.byWeekday.filter((v) => v !== d.value)
+                                        : [...(rec.byWeekday || []), d.value].sort((a, b) => a - b),
+                                    )
+                                  }
+                                >
+                                  {d.short}
+                                </Button>
+                              );
+                            })}
+                          </div>
+                          {!rec.byWeekday?.length && (
+                            <p className="mt-1 text-[11px] text-destructive">En az bir gün seçin.</p>
+                          )}
+                        </div>
+                      )}
+
+                      {rec.unit === 'month' && (
+                        <div className="w-60">
+                          <label className="mb-1 block text-xs text-muted-foreground">Ayın hangi günü</label>
+                          <select
+                            value={rec.byMonthDay}
+                            onChange={(e) => setR('byMonthDay', e.target.value)}
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                          >
+                            {MONTH_DAYS.map((d) => (
+                              <option key={d.value} value={d.value}>{d.label}</option>
+                            ))}
+                          </select>
+                          {Number(rec.byMonthDay) > 28 && Number(rec.byMonthDay) !== LAST_DAY && (
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              O günü içermeyen aylarda ayın son gününe kaydırılır.
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       <p className="rounded-md bg-muted/50 px-3 py-2 text-xs">
                         <b>{describeRecurrence(rec)}</b>

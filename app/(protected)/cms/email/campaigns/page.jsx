@@ -30,19 +30,24 @@ const statusMeta = {
 const numberFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => numberFormatter.format(Number(value) || 0);
 const dateTimeFormatter = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' });
-const RECURRENCE_UNIT_LABELS = {
-  hour: 'saatte bir',
-  day: 'günde bir',
-  week: 'haftada bir',
-  month: 'ayda bir',
-};
+const WEEKDAY_SHORT = { 1: 'Pzt', 2: 'Sal', 3: 'Çar', 4: 'Per', 5: 'Cum', 6: 'Cmt', 7: 'Paz' };
 
-/** "her 24 saatte bir" / "her 1 günde bir 10:00". Saat biriminde HH:MM yoktur. */
+/** "her hafta Pzt 09:00" / "her ayın son günü 10:00" — takvim çıpasını da gösterir. */
 const formatRecurrence = (r = {}) => {
-  const unit = r.unit || 'day';
-  const base = `her ${Number(r.every) || 1} ${RECURRENCE_UNIT_LABELS[unit] || unit}`;
-  if (unit === 'hour') return base;
-  return `${base} ${String(r.atHour ?? 0).padStart(2, '0')}:${String(r.atMinute ?? 0).padStart(2, '0')}`;
+  const n = Number(r.every) || 1;
+  const clock = `${String(r.atHour ?? 0).padStart(2, '0')}:${String(r.atMinute ?? 0).padStart(2, '0')}`;
+
+  if (r.unit === 'hour') return `her ${n} saatte bir`;
+  if (r.unit === 'week') {
+    const days = (r.byWeekday || []).map((d) => WEEKDAY_SHORT[d]).filter(Boolean).join(', ');
+    return `${n === 1 ? 'her hafta' : `${n} haftada bir`}${days ? ` ${days}` : ''} ${clock}`;
+  }
+  if (r.unit === 'month') {
+    const d = Number(r.byMonthDay);
+    const day = d === -1 ? 'son gün' : d ? `${d}.` : '';
+    return `${n === 1 ? 'her ay' : `${n} ayda bir`}${day ? ` ${day}` : ''} ${clock}`;
+  }
+  return `${n === 1 ? 'her gün' : `${n} günde bir`} ${clock}`;
 };
 
 const formatStartAt = (value) => {
