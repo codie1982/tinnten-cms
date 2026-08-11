@@ -210,6 +210,30 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
+    /**
+     * Tekrar ayarı. `{ id, enabled:false }` seriyi durdurur; diğer alanlar tekrarı
+     * kurar. Yalnız draft/scheduled kampanyada değiştirilebilir — koşu başladığı
+     * anda zincirin sonraki halkası zaten üretilmiş olur.
+     */
+    setMailCampaignRecurrence: build.mutation({
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.email.campaignRecurrence(id),
+        method: 'PATCH',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:series` },
+      ],
+    }),
+    /** Tekrarlı kampanyanın tüm koşuları (en yeniden eskiye). */
+    getMailCampaignSeries: build.query({
+      query: (id) => ENDPOINTS.email.campaignSeries(id),
+      transformResponse: (res) => res?.data ?? [],
+      providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:series` }],
+    }),
     pauseMailCampaign: build.mutation({
       query: (id) => ({ url: ENDPOINTS.email.campaignPause(id), method: 'POST' }),
       transformResponse: (res) => res?.data ?? res,
@@ -330,6 +354,8 @@ export const {
   useSendMailCampaignMutation,
   useScheduleMailCampaignMutation,
   useUnscheduleMailCampaignMutation,
+  useSetMailCampaignRecurrenceMutation,
+  useGetMailCampaignSeriesQuery,
   usePauseMailCampaignMutation,
   useResumeMailCampaignMutation,
   usePreviewMailCampaignMutation,

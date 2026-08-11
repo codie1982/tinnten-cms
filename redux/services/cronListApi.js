@@ -53,6 +53,19 @@ export const cronListApi = baseApi.injectEndpoints({
       query: (body) => ({ url: ENDPOINTS.email.cronListPreview, method: 'POST', body }),
       transformResponse: (res) => res?.data ?? res, // { count, capped }
     }),
+    /**
+     * Yazmasız test. `{ id }` → kayıtlı reçete; onun dışındaki gövde → formdaki
+     * kaydedilmemiş taslak. Liste OLUŞTURMAZ, bu yüzden hiçbir tag invalidate
+     * edilmez (aksi halde tablo boşuna yeniden çekilir).
+     */
+    dryRunCronList: build.mutation({
+      query: ({ id, ...body } = {}) => ({
+        url: id ? ENDPOINTS.email.cronListDryRunById(id) : ENDPOINTS.email.cronListDryRun,
+        method: 'POST',
+        body: id ? {} : body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
   }),
   overrideExisting: false,
 });
@@ -66,4 +79,5 @@ export const {
   useDeleteCronListMutation,
   useRunCronListMutation,
   usePreviewCronListMutation,
+  useDryRunCronListMutation,
 } = cronListApi;

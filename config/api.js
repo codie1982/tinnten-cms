@@ -286,6 +286,9 @@ export const ENDPOINTS = {
     // Zamanlanmış yayın + yayılma (drip) + duraklat/sürdür + önizleme
     campaignSchedule: (id) => `/email/campaigns/${id}/schedule`,
     campaignUnschedule: (id) => `/email/campaigns/${id}/unschedule`,
+    // Tekrarlı yayın: koşu başlarken zincirin sonraki halkası otomatik üretilir.
+    campaignRecurrence: (id) => `/email/campaigns/${id}/recurrence`,
+    campaignSeries: (id) => `/email/campaigns/${id}/series`,
     campaignPause: (id) => `/email/campaigns/${id}/pause`,
     campaignResume: (id) => `/email/campaigns/${id}/resume`,
     campaignPreview: (id) => `/email/campaigns/${id}/preview`,
@@ -305,6 +308,9 @@ export const ENDPOINTS = {
     cronListRun: (id) => `/email/cron-lists/${id}/run-now`,
     cronListPreview: '/email/cron-lists/preview',
     cronListSchema: '/email/cron-lists/schema',
+    // Yazmasız test: kimlerin geleceğini + elenme nedenlerini döndürür.
+    cronListDryRun: '/email/cron-lists/dry-run',
+    cronListDryRunById: (id) => `/email/cron-lists/${id}/dry-run`,
   },
   emailTemplates: {
     cmsList: '/email-templates/cms',

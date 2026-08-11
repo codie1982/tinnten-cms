@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Trash2, Play, Save, Loader2, X, Eye, RefreshCw, Users } from 'lucide-react';
+import { Plus, Trash2, Play, Save, Loader2, X, Eye, RefreshCw, Users, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import {
   useDeleteCronListMutation,
   useRunCronListMutation,
   usePreviewCronListMutation,
+  useDryRunCronListMutation,
 } from '@/redux/services';
 
 const SELECT_CLS =
@@ -36,6 +37,61 @@ const OP_LABELS = {
   gt: '> büyük', gte: '≥ büyük/eşit', lt: '< küçük', lte: '≤ küçük/eşit', exists: 'var/yok',
 };
 
+// Tarih alanları için göreli pencere birimi. Backend hem relativeDays hem
+// relativeHours çözer; "son 24 saat" gibi gün'e bölünmeyen pencereler saatle
+// kurulmalı — gün alanına 0 yazmak `createdAt >= şimdi` demektir (boş liste).
+const REL_UNITS = [
+  { value: '', label: 'sabit değer' },
+  { value: 'days', label: 'son N gün' },
+  { value: 'hours', label: 'son N saat' },
+];
+
+// Satır bazında `reason` (snake_case) ve özet sayaç anahtarları (camelCase) ayrı
+// gelir — ikisi de aynı etiketlere bağlanır.
+const SKIP_REASONS = {
+  no_email: 'E-posta çözülemedi',
+  duplicate: 'Aynı e-posta tekrar',
+  unsubscribed: 'Listeden çıkmış',
+  already_member: 'Zaten üye',
+};
+
+const SKIP_COUNTER_LABELS = {
+  noEmail: SKIP_REASONS.no_email,
+  duplicate: SKIP_REASONS.duplicate,
+  unsubscribed: SKIP_REASONS.unsubscribed,
+  alreadyMember: SKIP_REASONS.already_member,
+};
+
+const MONGO_OP_SYMBOLS = {
+  $eq: '=', $ne: '≠', $gt: '>', $gte: '≥', $lt: '<', $lte: '≤',
+  $in: 'içinde', $nin: 'dışında', $exists: 'var mı',
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const formatFilterValue = (v) => {
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'string' && ISO_DATE.test(v)) return new Date(v).toLocaleString('tr-TR');
+  if (typeof v === 'boolean') return v ? 'evet' : 'hayır';
+  return String(v);
+};
+
+/**
+ * Derlenmiş Mongo filtresini okunur satırlara çevirir. Göreli tarihler backend'de
+ * ÇÖZÜLMÜŞ geldiği için "createdAt ≥ 10.08.2026 09:00" gibi gerçek pencere görünür
+ * — sessizce boş liste üreten hatalı göreli değerler burada yakalanır.
+ */
+const describeFilter = (filter) => {
+  if (!filter || typeof filter !== 'object') return [];
+  return Object.entries(filter).flatMap(([field, cond]) => {
+    if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
+      return Object.entries(cond).map(
+        ([op, v]) => `${field} ${MONGO_OP_SYMBOLS[op] || op} ${formatFilterValue(v)}`
+      );
+    }
+    return [`${field} = ${formatFilterValue(cond)}`];
+  });
+};
+
 const emptyForm = () => ({
   id: null,
   name: '',
@@ -47,6 +103,7 @@ const emptyForm = () => ({
   pipelineText: '[\n  { "$match": {} }\n]',
   buildMode: 'append',
   maxRecipients: 5000,
+  channelKey: null, // kayıtlı reçetede üyelik/çıkış kontrolü için gerekli
   schedule: { cron: '0 9 * * *', timezone: 'Europe/Istanbul' },
 });
 
@@ -64,10 +121,14 @@ export function CronListsManager({ authorized }) {
   const [deleteList] = useDeleteCronListMutation();
   const [runList] = useRunCronListMutation();
   const [previewList, { isLoading: previewing }] = usePreviewCronListMutation();
+  const [dryRunList] = useDryRunCronListMutation();
 
   const [form, setForm] = useState(null);
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(null);
+  // { title, data } — form taslağının ya da tablodaki bir reçetenin test sonucu.
+  const [dryRun, setDryRun] = useState(null);
+  const [dryRunFor, setDryRunFor] = useState(null); // spinner hedefi: 'form' | row._id
 
   const sources = schema?.sources || {};
   const ops = schema?.ops || ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin', 'exists'];
@@ -80,33 +141,42 @@ export function CronListsManager({ authorized }) {
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setSchedule = (k, v) => setForm((f) => ({ ...f, schedule: { ...f.schedule, [k]: v } }));
 
-  const openNew = () => { setPreview(null); setNotice(''); setForm(emptyForm()); };
+  const openNew = () => { setPreview(null); setDryRun(null); setNotice(''); setForm(emptyForm()); };
   const openEdit = (row) => {
-    setPreview(null); setNotice('');
+    setPreview(null); setDryRun(null); setNotice('');
     setForm({
       id: row._id,
       name: row.name || '',
       description: row.description || '',
       source: row.source || 'company',
       queryMode: row.queryMode || 'builder',
-      filters: (row.filters || []).map((f) => ({
-        field: f.field, op: f.op,
-        rel: f.value && typeof f.value === 'object' && 'relativeDays' in f.value,
-        value: f.value && typeof f.value === 'object' && 'relativeDays' in f.value
-          ? f.value.relativeDays
-          : Array.isArray(f.value) ? f.value.join(',') : f.value,
-      })),
+      // Göreli değerin BİRİMİNİ koru. Yalnız relativeDays'e bakan eski sürüm,
+      // saatle kurulmuş bir filtreyi ekranda [object Object] gösterip kaydedince
+      // relativeDays:0'a (boş liste) çeviriyordu.
+      filters: (row.filters || []).map((f) => {
+        const obj = f.value && typeof f.value === 'object' && !Array.isArray(f.value) ? f.value : null;
+        const rel = obj && 'relativeHours' in obj ? 'hours' : obj && 'relativeDays' in obj ? 'days' : '';
+        return {
+          field: f.field,
+          op: f.op,
+          rel,
+          value: rel === 'hours' ? obj.relativeHours
+            : rel === 'days' ? obj.relativeDays
+            : Array.isArray(f.value) ? f.value.join(',') : f.value,
+        };
+      }),
       relations: row.relations || [],
       pipelineText: JSON.stringify(row.pipeline || [], null, 2),
       buildMode: row.buildMode || 'append',
       maxRecipients: row.maxRecipients ?? 5000,
+      channelKey: row.channelKey || null,
       schedule: { cron: row.schedule?.cron || '0 9 * * *', timezone: row.schedule?.timezone || 'Europe/Istanbul' },
     });
   };
 
   const changeSource = (src) => setForm((f) => ({ ...f, source: src, filters: [], relations: [] }));
 
-  const addFilter = () => set('filters', [...form.filters, { field: fields[0]?.name || '', op: 'eq', value: '', rel: false }]);
+  const addFilter = () => set('filters', [...form.filters, { field: fields[0]?.name || '', op: 'eq', value: '', rel: '' }]);
   const setFilter = (i, patch) => set('filters', form.filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
   const rmFilter = (i) => set('filters', form.filters.filter((_, j) => j !== i));
 
@@ -132,8 +202,17 @@ export function CronListsManager({ authorized }) {
         let value;
         if (f.op === 'exists') value = f.value === true || f.value === 'true';
         else if (f.op === 'in' || f.op === 'nin') value = String(f.value).split(',').map((s) => s.trim()).filter(Boolean);
-        else if (f.rel) value = { relativeDays: Number(f.value) || 0 };
-        else value = f.value;
+        else if (f.rel) {
+          const n = Number(f.value);
+          // 0/boş → pencere "şimdiden itibaren" olur ve liste her koşuda BOŞ
+          // çıkar, hiçbir hata da üretmez. Kaydettirmeden burada durdur.
+          if (!Number.isFinite(n) || n <= 0) {
+            throw new Error(
+              `"${f.field}" için göreli pencere 0'dan büyük olmalı (örn. son 24 saat → 24).`
+            );
+          }
+          value = f.rel === 'hours' ? { relativeHours: n } : { relativeDays: n };
+        } else value = f.value;
         return { field: f.field, op: f.op, value };
       }),
       relations: form.relations,
@@ -156,6 +235,33 @@ export function CronListsManager({ authorized }) {
     const r = await previewList(query).unwrap().catch((e) => ({ __err: e?.data?.message || 'Önizleme başarısız' }));
     if (r?.__err) { setPreview(null); return setNotice(r.__err); }
     setPreview(r);
+  };
+
+  /** Formdaki (kaydedilmemiş) taslağı yazmadan dener. */
+  const doDryRunForm = async () => {
+    setNotice(''); setDryRun(null); setDryRunFor('form');
+    let query;
+    try { query = buildQuery(); } catch (e) { setDryRunFor(null); return setNotice(e.message); }
+    const r = await dryRunList({
+      ...query,
+      name: form.name.trim() || 'Test listesi',
+      buildMode: form.buildMode,
+      channelKey: form.channelKey || undefined,
+      schedule: { timezone: form.schedule.timezone },
+    }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
+    setDryRunFor(null);
+    if (r?.__err) return setNotice(r.__err);
+    setDryRun({ title: form.name.trim() || 'Taslak', data: r });
+  };
+
+  /** Tablodaki kayıtlı reçeteyi olduğu gibi dener (form açmadan). */
+  const doDryRunRow = async (row) => {
+    setNotice(''); setDryRun(null); setDryRunFor(row._id);
+    const r = await dryRunList({ id: row._id }).unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
+    setDryRunFor(null);
+    if (r?.__err) return setNotice(r.__err);
+    setDryRun({ title: row.name, data: r });
   };
 
   const save = async () => {
@@ -279,7 +385,16 @@ export function CronListsManager({ authorized }) {
                   <div className="space-y-2">
                     {form.filters.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2">
-                        <select className={`${SELECT_CLS} w-44`} value={f.field} onChange={(e) => setFilter(i, { field: e.target.value })}>
+                        <select
+                          className={`${SELECT_CLS} w-44`}
+                          value={f.field}
+                          // Tarih olmayan alanda göreli pencere anlamsız → birimi sıfırla,
+                          // aksi halde gizli `rel` kalıp değeri {relativeDays} nesnesine çevirir.
+                          onChange={(e) => setFilter(i, {
+                            field: e.target.value,
+                            ...(fieldType(e.target.value) === 'date' ? {} : { rel: '' }),
+                          })}
+                        >
                           {fields.map((fl) => <option key={fl.name} value={fl.name}>{fl.name} ({fl.type})</option>)}
                         </select>
                         <select className={`${SELECT_CLS} w-40`} value={f.op} onChange={(e) => setFilter(i, { op: e.target.value })}>
@@ -293,16 +408,20 @@ export function CronListsManager({ authorized }) {
                         ) : (
                           <Input
                             className="w-44"
-                            placeholder={f.rel ? 'N (gün önce)' : 'değer'}
+                            placeholder={f.rel === 'hours' ? 'N (saat önce)' : f.rel === 'days' ? 'N (gün önce)' : 'değer'}
                             value={f.value}
                             onChange={(e) => setFilter(i, { value: e.target.value })}
                           />
                         )}
                         {fieldType(f.field) === 'date' && f.op !== 'exists' && (
-                          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <input type="checkbox" checked={!!f.rel} onChange={(e) => setFilter(i, { rel: e.target.checked })} />
-                            son N gün
-                          </label>
+                          <select
+                            className={`${SELECT_CLS} w-36`}
+                            value={f.rel || ''}
+                            onChange={(e) => setFilter(i, { rel: e.target.value })}
+                            title="Göreli pencere birimi"
+                          >
+                            {REL_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                          </select>
                         )}
                         <Button variant="ghost" size="sm" onClick={() => rmFilter(i)}><Trash2 className="size-3.5" /></Button>
                       </div>
@@ -358,6 +477,9 @@ export function CronListsManager({ authorized }) {
               <Button variant="outline" onClick={doPreview} disabled={previewing}>
                 {previewing ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />} Önizleme
               </Button>
+              <Button variant="outline" onClick={doDryRunForm} disabled={dryRunFor === 'form'} title="Liste oluşturmadan kimlerin geleceğini gösterir">
+                {dryRunFor === 'form' ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />} Test Et
+              </Button>
               {preview && (
                 <span className="text-sm text-muted-foreground">
                   Eşleşen (tahmini): <b>{preview.count}{preview.capped ? '+' : ''}</b>
@@ -367,6 +489,8 @@ export function CronListsManager({ authorized }) {
           </CardContent>
         </Card>
       )}
+
+      {dryRun && <DryRunResult title={dryRun.title} data={dryRun.data} onClose={() => setDryRun(null)} />}
 
       <Card>
         <CardHeader>
@@ -455,7 +579,18 @@ export function CronListsManager({ authorized }) {
                               </Button>
                             </Link>
                           )}
-                          <Button variant="ghost" size="sm" title="Şimdi çalıştır" onClick={() => onRun(row)}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Test et — liste oluşturmadan kimlerin geleceğini gösterir"
+                            onClick={() => doDryRunRow(row)}
+                            disabled={dryRunFor === row._id}
+                          >
+                            {dryRunFor === row._id
+                              ? <Loader2 className="size-3.5 animate-spin" />
+                              : <FlaskConical className="size-3.5" />}
+                          </Button>
+                          <Button variant="ghost" size="sm" title="Şimdi çalıştır (GERÇEK liste oluşturur)" onClick={() => onRun(row)}>
                             <Play className="size-3.5" />
                           </Button>
                           <Button variant="ghost" size="sm" title="Düzenle" onClick={() => openEdit(row)}>
@@ -476,6 +611,154 @@ export function CronListsManager({ authorized }) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Yazmasız test sonucu: hangi listeye, hangi pencereyle, kimlerin gireceği ve
+ * elenenlerin nedeni. Build'de `skipped` yalnız sunucu loguna düştüğü için
+ * (Keycloak hatası → sessiz kayıp) elenenler tablosu bunun tek görünür yeri.
+ */
+function DryRunResult({ title, data, onClose }) {
+  const skipped = data?.skipped || {};
+  const totalSkipped = Object.values(skipped).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  const filterLines = describeFilter(data?.compiledFilter);
+  const recipients = data?.recipients || [];
+  const skippedSample = data?.skippedSample || [];
+  const plus = data?.capped ? '+' : '';
+
+  return (
+    <Card className="border-primary/40">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2">
+          <FlaskConical className="size-4" /> Test sonucu — {title}
+          <span className="text-xs font-normal text-muted-foreground">
+            hiçbir liste oluşturulmadı
+          </span>
+        </CardTitle>
+        <Button variant="ghost" size="sm" onClick={onClose}><X className="size-4" /></Button>
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">
+        {data?.capped && (
+          <Alert variant="warning">
+            <AlertDescription>
+              Tarama {data.cap} kayıtta durduruldu — aşağıdaki sayılar <b>alt sınırdır</b>.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Sorguya uyan</div>
+            <div className="text-xl font-semibold">{formatCount(data?.scanned)}{plus}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Listeye girecek</div>
+            <div className="text-xl font-semibold text-emerald-600">{formatCount(data?.willAdd)}{plus}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Elenen</div>
+            <div className="text-xl font-semibold text-muted-foreground">{formatCount(totalSkipped)}</div>
+          </div>
+        </div>
+
+        <div className="space-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs">
+          <div>
+            <span className="text-muted-foreground">Hedef liste: </span>
+            {data?.targetChannelTitle || data?.targetChannelKey ? (
+              <b>{data.targetChannelTitle || data.targetChannelKey}</b>
+            ) : (
+              <span className="text-muted-foreground">— (taslak henüz kaydedilmedi)</span>
+            )}
+            {data?.targetChannelKey && (
+              <span className="ml-1 font-mono text-muted-foreground">({data.targetChannelKey})</span>
+            )}
+            {data?.buildMode === 'new' && (
+              <span className="ml-1 text-muted-foreground">· her koşuda yeni tarihli liste</span>
+            )}
+          </div>
+          {filterLines.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">Sorgu penceresi: </span>
+              <b className="font-mono">{filterLines.join(' · ')}</b>
+            </div>
+          )}
+          {data?.relations?.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">İlişki koşulu: </span>
+              <b>{data.relations.join(', ')}</b>
+            </div>
+          )}
+          {!data?.targetChannelKey && data?.buildMode !== 'new' && (
+            <div className="text-amber-600">
+              Kanal bilinmediği için “zaten üye / listeden çıkmış” kontrolü yapılamadı;
+              gerçek koşuda bu kişiler elenebilir.
+            </div>
+          )}
+          <div className="text-muted-foreground">Süre: {formatCount(data?.durationMs)} ms</div>
+        </div>
+
+        <div>
+          <div className="mb-1 text-xs font-medium">
+            Listeye girecekler {recipients.length < (data?.willAdd || 0) && (
+              <span className="text-muted-foreground">
+                (ilk {recipients.length} / {formatCount(data.willAdd)})
+              </span>
+            )}
+          </div>
+          {recipients.length === 0 ? (
+            <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              Hiç kimse eşleşmedi. Sorgu penceresini ve ilişki koşulunu kontrol edin.
+            </p>
+          ) : (
+            <div className="max-h-72 overflow-auto rounded-md border">
+              <table className="w-full text-sm">
+                <tbody>
+                  {recipients.map((r, i) => (
+                    <tr key={`${r.email}-${i}`} className="border-b last:border-0">
+                      <td className="p-2 font-mono text-xs">{r.email}</td>
+                      <td className="p-2">{r.name || '—'}</td>
+                      <td className="p-2 text-muted-foreground">{r.label}</td>
+                      <td className="p-2 text-right text-xs text-muted-foreground">{r.locale || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {totalSkipped > 0 && (
+          <div>
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs font-medium">
+              <span>Elenenler</span>
+              {Object.entries(skipped)
+                .filter(([, n]) => Number(n) > 0)
+                .map(([k, n]) => (
+                  <Badge key={k} variant="outline">
+                    {SKIP_COUNTER_LABELS[k] || k}: {formatCount(n)}
+                  </Badge>
+                ))}
+            </div>
+            <div className="max-h-56 overflow-auto rounded-md border">
+              <table className="w-full text-sm">
+                <tbody>
+                  {skippedSample.map((r, i) => (
+                    <tr key={`${r.label}-${i}`} className="border-b last:border-0">
+                      <td className="p-2">{r.label}</td>
+                      <td className="p-2 font-mono text-xs text-muted-foreground">{r.email || '—'}</td>
+                      <td className="p-2 text-right text-xs text-muted-foreground">
+                        {SKIP_REASONS[r.reason] || r.reason}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

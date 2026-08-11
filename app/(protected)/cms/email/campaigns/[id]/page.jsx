@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3, CalendarClock, Eye, Pause, Play, XCircle } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3, CalendarClock, Eye, Pause, Play, XCircle, Repeat } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,6 +29,9 @@ import {
   useGetMailTemplatesQuery,
   useGetRecipientCountQuery,
   useGetMailCampaignStatsQuery,
+  useSetMailCampaignRecurrenceMutation,
+  useGetMailCampaignSeriesQuery,
+  useGetCronListsQuery,
 } from '@/redux/services';
 import { MailPreviewPanel } from '@/components/email/mail-preview-panel';
 
@@ -45,6 +48,21 @@ const DEFAULT_SEND = {
 };
 
 const DEFAULT_SCHEDULE = { startAt: '', durationMinutes: '' };
+
+// Tekrarlı yayın formu. Cron ifadesi yok: "her N günde bir, tz'de HH:MM".
+const DEFAULT_RECURRENCE = {
+  enabled: false,
+  everyDays: '1',
+  atHour: '10',
+  atMinute: '0',
+  timezone: 'Europe/Istanbul',
+  channelMode: 'fixed',
+  recipeId: '',
+  endsAt: '',
+  maxOccurrences: '',
+};
+
+const pad2 = (n) => String(n).padStart(2, '0');
 
 // Yayılma süresi hazır seçenekleri (dakika). '' = tek seferde (drip yok).
 const DURATION_PRESETS = [
@@ -123,6 +141,10 @@ export default function CampaignEditPage() {
   const [unscheduleCampaign, { isLoading: unscheduling }] = useUnscheduleMailCampaignMutation();
   const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
   const [resumeCampaign, { isLoading: resuming }] = useResumeMailCampaignMutation();
+  const [setRecurrence, { isLoading: savingRecurrence }] = useSetMailCampaignRecurrenceMutation();
+
+  // Tekrarın "cron listesinin son ürettiği liste" modu için reçete seçici.
+  const { data: cronLists = [] } = useGetCronListsQuery({}, { skip: !authorized });
 
   const [form, setForm] = useState({
     name: '',
@@ -142,6 +164,7 @@ export default function CampaignEditPage() {
   );
 
   const [vars, setVars] = useState([]); // [{key, value}]
+  const [rec, setRec] = useState(DEFAULT_RECURRENCE);
   const [notice, setNotice] = useState('');
   const [confirmSend, setConfirmSend] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -209,8 +232,57 @@ export default function CampaignEditPage() {
         },
       });
       setVars(Object.entries(campaign.globalVars || {}).map(([key, value]) => ({ key, value: String(value) })));
+      const r = campaign.recurrence || {};
+      setRec({
+        enabled: Boolean(r.enabled),
+        everyDays: String(r.everyDays ?? 1),
+        atHour: String(r.atHour ?? 10),
+        atMinute: String(r.atMinute ?? 0),
+        timezone: r.timezone || 'Europe/Istanbul',
+        channelMode: r.channelMode || 'fixed',
+        recipeId: r.recipeId ? String(r.recipeId) : '',
+        endsAt: toLocalInput(r.endsAt),
+        maxOccurrences: r.maxOccurrences ? String(r.maxOccurrences) : '',
+      });
     }
   }, [campaign]);
+
+  const setR = (k, v) => setRec((s) => ({ ...s, [k]: v }));
+
+  /**
+   * Tekrar ayarı ayrı bir uçtan yazılır (PATCH .../recurrence): ana kaydet yalnız
+   * taslakta çalışırken tekrar, zamanlanmış kampanyada da değiştirilebilmeli —
+   * seriyi durdurmanın tek yolu bekleyen son koşuda tekrarı kapatmaktır.
+   */
+  const saveRecurrence = async (enabled) => {
+    setNotice('');
+    if (isNew) return setNotice('Önce kampanyayı kaydedin, sonra tekrarı kurun.');
+    if (enabled && rec.channelMode === 'recipe_latest' && !rec.recipeId) {
+      return setNotice('Cron listesi modu için bir liste seçin.');
+    }
+    const body = enabled
+      ? {
+          enabled: true,
+          everyDays: Number(rec.everyDays) || 1,
+          atHour: Number(rec.atHour) || 0,
+          atMinute: Number(rec.atMinute) || 0,
+          timezone: rec.timezone.trim() || 'Europe/Istanbul',
+          channelMode: rec.channelMode,
+          recipeId: rec.channelMode === 'recipe_latest' ? rec.recipeId : null,
+          endsAt: rec.endsAt ? new Date(rec.endsAt).toISOString() : null,
+          maxOccurrences: rec.maxOccurrences ? Number(rec.maxOccurrences) : null,
+        }
+      : { enabled: false };
+
+    const r = await setRecurrence({ id, ...body }).unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Tekrar ayarı kaydedilemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    setRec((s) => ({ ...s, enabled }));
+    setNotice(enabled
+      ? `Tekrar kuruldu: her ${Number(rec.everyDays) || 1} günde bir ${pad2(rec.atHour)}:${pad2(rec.atMinute)} (${rec.timezone}).`
+      : 'Tekrar kapatıldı — bu koşudan sonra yeni kampanya üretilmeyecek.');
+    refetchCampaign();
+  };
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setSC = (k, v) => setForm((f) => ({ ...f, sendConfig: { ...f.sendConfig, [k]: v } }));
@@ -562,6 +634,134 @@ export default function CampaignEditPage() {
               </CardContent>
             </Card>
 
+            {/* Tekrarlı yayın */}
+            {!isNew && (
+              <Card>
+                <CardHeader>
+                  <CardTitle><Repeat className="mr-1 inline size-4" /> Tekrarlı Yayın</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 p-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={rec.enabled}
+                      disabled={!isDraft && !isScheduled}
+                      onChange={(e) => setR('enabled', e.target.checked)}
+                    />
+                    Bu kampanyayı düzenli olarak tekrarla
+                  </label>
+
+                  {rec.enabled && (
+                    <>
+                      <div className="flex flex-wrap gap-4">
+                        <div className="w-36">
+                          <label className="mb-1 block text-xs text-muted-foreground">Her kaç günde bir</label>
+                          <Input type="number" min={1} value={rec.everyDays}
+                            onChange={(e) => setR('everyDays', e.target.value)} />
+                        </div>
+                        <div className="w-28">
+                          <label className="mb-1 block text-xs text-muted-foreground">Saat</label>
+                          <Input type="number" min={0} max={23} value={rec.atHour}
+                            onChange={(e) => setR('atHour', e.target.value)} />
+                        </div>
+                        <div className="w-28">
+                          <label className="mb-1 block text-xs text-muted-foreground">Dakika</label>
+                          <Input type="number" min={0} max={59} value={rec.atMinute}
+                            onChange={(e) => setR('atMinute', e.target.value)} />
+                        </div>
+                        <div className="w-48">
+                          <label className="mb-1 block text-xs text-muted-foreground">Zaman dilimi</label>
+                          <Input value={rec.timezone} onChange={(e) => setR('timezone', e.target.value)} />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4">
+                        <div className="min-w-[260px] flex-1">
+                          <label className="mb-1 block text-xs text-muted-foreground">Her koşuda alıcı listesi</label>
+                          <select
+                            value={rec.channelMode}
+                            onChange={(e) => setR('channelMode', e.target.value)}
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                          >
+                            <option value="fixed">Sabit kanal (yukarıda seçilen)</option>
+                            <option value="recipe_latest">Cron listesinin en son ürettiği liste</option>
+                          </select>
+                        </div>
+                        {rec.channelMode === 'recipe_latest' && (
+                          <div className="min-w-[260px] flex-1">
+                            <label className="mb-1 block text-xs text-muted-foreground">Cron listesi</label>
+                            <select
+                              value={rec.recipeId}
+                              onChange={(e) => setR('recipeId', e.target.value)}
+                              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                            >
+                              <option value="">— seçin —</option>
+                              {cronLists.map((c) => (
+                                <option key={c._id} value={c._id}>{c.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-4">
+                        <div className="w-60">
+                          <label className="mb-1 block text-xs text-muted-foreground">Bitiş (boş = süresiz)</label>
+                          <input
+                            type="datetime-local"
+                            value={rec.endsAt}
+                            onChange={(e) => setR('endsAt', e.target.value)}
+                            className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+                          />
+                        </div>
+                        <div className="w-44">
+                          <label className="mb-1 block text-xs text-muted-foreground">Toplam koşu (boş = sınırsız)</label>
+                          <Input type="number" min={1} value={rec.maxOccurrences}
+                            onChange={(e) => setR('maxOccurrences', e.target.value)} placeholder="örn. 30" />
+                        </div>
+                      </div>
+
+                      {rec.channelMode === 'recipe_latest' && (
+                        <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                          Her koşu, seçilen cron listesinin <b>o gün ürettiği yeni listeye</b> gider.
+                          Liste o gün üretilmemişse (önceki koşuyla aynı kanal) gönderim <b>yapılmaz</b> —
+                          aynı kitleye ikinci kez mail gitmez. Cron listesinin saatini bu kampanyadan
+                          <b> önce</b> ayarlayın.
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      onClick={() => saveRecurrence(rec.enabled)}
+                      disabled={savingRecurrence || (!isDraft && !isScheduled)}
+                    >
+                      {savingRecurrence ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                      {rec.enabled ? 'Tekrarı Kaydet' : 'Tekrarı Kapat'}
+                    </Button>
+                    {campaign?.recurrence?.enabled && (
+                      <span className="text-xs text-muted-foreground">
+                        {campaign.recurrence.occurrence || 1}. koşu
+                        {campaign.recurrence.spawnedNextAt
+                          ? ' · sonraki koşu üretildi'
+                          : ' · sonraki koşu bu yayın başlarken üretilecek'}
+                      </span>
+                    )}
+                  </div>
+
+                  {!isDraft && !isScheduled && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Bu kampanya başlamış/bitmiş: tekrar ayarı artık değiştirilemez. Seriyi durdurmak
+                      için <b>bekleyen (zamanlanmış) son koşuyu</b> açıp tekrarı kapatın.
+                    </p>
+                  )}
+
+                  {campaign?.recurrence?.seriesId && <CampaignSeries id={id} />}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Gönderim güvenliği */}
             <Card>
               <CardHeader><CardTitle><ShieldCheck className="mr-1 inline size-4" /> Gönderim Güvenliği</CardTitle></CardHeader>
@@ -766,5 +966,54 @@ export default function CampaignEditPage() {
         <MailPreviewPanel campaignId={id} open={previewOpen} onClose={() => setPreviewOpen(false)} />
       )}
     </RoleGuard>
+  );
+}
+
+/**
+ * Serinin koşu geçmişi — "her gün gerçekten gitti mi" sorusunun tek bakışta
+ * cevabı. Başarısız koşularda `pausedReason` görünür (ör. "yeni liste üretilmedi").
+ */
+function CampaignSeries({ id }) {
+  const { data: runs = [], isFetching } = useGetMailCampaignSeriesQuery(id);
+  if (isFetching && runs.length === 0) return <Skeleton className="h-24 w-full" />;
+  if (runs.length <= 1) return null;
+
+  return (
+    <div>
+      <div className="mb-1 text-xs font-medium">Seri koşuları ({runs.length})</div>
+      <div className="max-h-64 overflow-auto rounded-md border">
+        <table className="w-full text-sm">
+          <tbody>
+            {runs.map((r) => {
+              const meta = STATUS_META[r.status] || { label: r.status, variant: 'secondary' };
+              return (
+                <tr key={r._id} className={`border-b last:border-0 ${r._id === id ? 'bg-muted/40' : ''}`}>
+                  <td className="p-2 text-xs text-muted-foreground">#{r.recurrence?.occurrence || 1}</td>
+                  <td className="p-2 text-xs">
+                    {r.status === 'scheduled'
+                      ? formatDateTime(r.schedule?.startAt)
+                      : formatDateTime(r.sentAt || r.createdAt)}
+                  </td>
+                  <td className="p-2 font-mono text-[11px] text-muted-foreground">{r.channelKey}</td>
+                  <td className="p-2 text-xs text-muted-foreground">
+                    {formatCount(r.audience?.sentCount)} / {formatCount(r.audience?.total)}
+                  </td>
+                  <td className="p-2 text-right">
+                    <Link href={`/cms/email/campaigns/${r._id}${['draft', 'scheduled'].includes(r.status) ? '' : '/dashboard'}`}>
+                      <Badge variant={meta.variant}>{meta.label}</Badge>
+                    </Link>
+                    {r.pausedReason && (
+                      <div className="max-w-[240px] truncate text-[11px] text-destructive" title={r.pausedReason}>
+                        {r.pausedReason}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

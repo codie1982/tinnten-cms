@@ -156,6 +156,16 @@ export default function CampaignsPage() {
                         >
                           {c.name}
                         </Link>
+                        {c.recurrence?.enabled && (
+                          <div className="mt-0.5 text-[11px] text-muted-foreground">
+                            Tekrarlı · {c.recurrence.occurrence || 1}. koşu ·{' '}
+                            {c.recurrence.everyDays === 1
+                              ? 'her gün'
+                              : `${c.recurrence.everyDays} günde bir`}{' '}
+                            {String(c.recurrence.atHour ?? 0).padStart(2, '0')}:
+                            {String(c.recurrence.atMinute ?? 0).padStart(2, '0')}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
                       <TableCell>
