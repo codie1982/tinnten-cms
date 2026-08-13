@@ -75,6 +75,13 @@ export default function DomainWizard({ onClose, onDone }) {
   const [selected, setSelected] = useState(() => new Set());
   const [knowledge, setKnowledge] = useState({}); // pattern -> 'content'|'product'
   const [treePatterns, setTreePatterns] = useState({}); // URL ağacından eklenen ince pattern'ler
+  // ÖRNEK SAYFA yolu — bölüm seçmeden, somut sayfa vererek şema çıkarma.
+  // Dashboard'dan FARKI: kapsam pattern'i burada CLIENT'ta türetilmez, örnekler
+  // pattern'siz gönderilir ve backend türetir (derive_pattern_from_urls). Böylece
+  // aynı türetme mantığının ÜÇÜNCÜ bir kopyası açılmıyor; çözülen pattern
+  // generate yanıtındaki `selectedPatterns`ten okunur.
+  const [samples, setSamples] = useState({ urls: [''], source: 'product' });
+  const [samplePattern, setSamplePattern] = useState(null); // backend'in türettiği kapsam
   const [drafts, setDrafts] = useState({}); // pattern -> { pattern, family, cssSchema, status, test, raw, jsonError }
   const [testing, setTesting] = useState(null);
 
@@ -202,19 +209,45 @@ export default function DomainWizard({ onClose, onDone }) {
     } catch (e) { setBusy(false); setErr({ text: upstreamErr(e) }); }
   }, [triggerAnalysis]);
 
+  // Örnek sayfa girdisi üretime gönderilebilir mi? (en az 1 adres + hepsi bu siteye ait)
+  const sampleUrls = useMemo(() => samples.urls.map((u) => u.trim()).filter(Boolean), [samples.urls]);
+  const samplesReady = sampleUrls.length > 0 && sampleUrls.every((u) => hostFromUrl(u) === domain);
+
   /* ── Adım 1 → 2: şema üret (arka plan) ── */
   const handleGenerate = async () => {
-    if (!domain || selected.size === 0) return;
+    if (!domain || (selected.size === 0 && !samplesReady)) return;
     setErr(null);
-    const sel = allPatterns.map((p) => p.pattern).filter((p) => selected.has(p));
-    const pending = {}; for (const p of sel) pending[p] = { pattern: p, cssSchema: null, raw: '', status: 'pending' };
-    setDrafts(pending); setBusy(true); setBusyLabel('Şema üretimi başlatılıyor…'); goTo(2);
+    const patterns = allPatterns.filter((p) => selected.has(p.pattern))
+      .map((p) => ({ pattern: p.pattern, family: familyFor(p) }));
+    // Örnek sayfa girdisi pattern'SİZ gider — kapsamı backend türetir.
+    if (samplesReady) {
+      patterns.push({
+        family: samples.source === 'product' ? 'product' : 'article',
+        sampleUrls,
+      });
+    }
+    setBusy(true); setBusyLabel('Şema üretimi başlatılıyor…'); goTo(2);
+    setDrafts(Object.fromEntries(patterns
+      .filter((p) => p.pattern)
+      .map((p) => [p.pattern, { pattern: p.pattern, cssSchema: null, raw: '', status: 'pending' }])));
     try {
-      const patterns = allPatterns.filter((p) => selected.has(p.pattern))
-        .map((p) => ({ pattern: p.pattern, family: familyFor(p) }));
-      await genSchemas({ domain, patterns }).unwrap();
-      setBusyLabel(`Şemalar arka planda üretiliyor… (0/${sel.length} hazır)`);
-      pollSchemaGen(domain, sel, 0);
+      const res = await genSchemas({ domain, patterns }).unwrap();
+      // Poll listesi backend'in ÇÖZDÜĞÜ pattern'lerden gelir: örnek yolunda
+      // kapsam orada türetildiği için istemci onu önceden bilemez.
+      const sel = (res?.selectedPatterns || []).map((p) => p.pattern).filter(Boolean);
+      const list = sel.length ? sel : patterns.map((p) => p.pattern).filter(Boolean);
+      setDrafts(Object.fromEntries(list.map((p) =>
+        [p, { pattern: p, cssSchema: null, raw: '', status: 'pending' }])));
+      // Bilgi kaynağı commit'te pattern'e göre okunuyor; türetilen pattern'i de işaretle.
+      if (samplesReady) {
+        const derived = (res?.selectedPatterns || []).find((p) => (p.sampleUrls || []).length)?.pattern;
+        if (derived) {
+          setSamplePattern(derived);
+          setKnowledge((k) => ({ ...k, [derived]: samples.source }));
+        }
+      }
+      setBusyLabel(`Şemalar arka planda üretiliyor… (0/${list.length} hazır)`);
+      pollSchemaGen(domain, list, 0);
     } catch (e) { setBusy(false); setErr({ text: upstreamErr(e) }); }
   };
 
@@ -223,8 +256,14 @@ export default function DomainWizard({ onClose, onDone }) {
     setTesting(pattern); setErr(null);
     try {
       const pObj = allPatterns.find((p) => p.pattern === pattern);
-      const samples = pObj?.samples || [];
-      const res = await testSchema({ domain, pattern, css_schema: d.cssSchema, urls: samples.slice(0, 3), family: pObj ? familyFor(pObj) : undefined }).unwrap();
+      // Örnek yoluyla üretilmiş şema analiz kümelerinde yoktur → test, şemanın
+      // çıkarıldığı sayfalarda koşsun (admin "verdiğim sayfada tuttu mu" görsün).
+      const isSampleDraft = pattern === samplePattern && sampleUrls.length > 0;
+      const testUrls = isSampleDraft ? sampleUrls : (pObj?.samples || []);
+      const family = isSampleDraft
+        ? (samples.source === 'product' ? 'product' : 'article')
+        : (pObj ? familyFor(pObj) : undefined);
+      const res = await testSchema({ domain, pattern, css_schema: d.cssSchema, urls: testUrls.slice(0, 3), family }).unwrap();
       setDrafts((prev) => ({ ...prev, [pattern]: { ...prev[pattern], test: res } }));
     } catch (e) { setErr({ text: upstreamErr(e) }); }
     finally { setTesting(null); }
@@ -250,6 +289,9 @@ export default function DomainWizard({ onClose, onDone }) {
       const schemas = Object.values(drafts).filter((d) => d.cssSchema).map((d) => ({
         pattern: d.pattern, css_schema: d.cssSchema,
         knowledge_source: knowledge[d.pattern] || (d.family === 'product' ? 'product' : 'content'),
+        // Örnek yoluyla üretilmiş şemanın kaynak adresleri kayıtta kalsın
+        // (yeniden üretim ve "Test et" aynı sayfalara koşar).
+        ...(d.pattern === samplePattern && sampleUrls.length ? { sample_urls: sampleUrls } : {}),
       }));
       const indexSettings = {};
       for (const k of ['chunkSize', 'chunkOverlap', 'minChars']) if (chunk[k] != null && chunk[k] !== '') indexSettings[k] = Number(chunk[k]);
@@ -336,6 +378,9 @@ export default function DomainWizard({ onClose, onDone }) {
                   </ul>
                 )}
 
+                {/* Üçüncü yol: bölüm seçmeden somut sayfa örneğinden şema çıkar. */}
+                <SamplePages value={samples} onChange={setSamples} domain={domain} disabled={!canConfigure} />
+
                 {/* Gelişmiş: recursive URL ağacında gez, alt dal seç. */}
                 {analysis?.urlTree?.children?.length > 0 && (
                   <details className="group rounded-lg border border-input">
@@ -410,7 +455,7 @@ export default function DomainWizard({ onClose, onDone }) {
           <div className="flex items-center gap-2">
             {step > 0 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => goTo(step - 1)}><ArrowLeft className="size-4" /> Geri</Button>}
             {step === 0 && <Button size="sm" disabled={busy || !urlHost} onClick={handleAnalyze}><Sparkles className="size-4" /> Analiz Et <ArrowRight className="size-4" /></Button>}
-            {step === 1 && <Button size="sm" disabled={busy || selected.size === 0 || !canConfigure} onClick={handleGenerate}>Şema Üret <ArrowRight className="size-4" /></Button>}
+            {step === 1 && <Button size="sm" disabled={busy || (selected.size === 0 && !samplesReady) || !canConfigure} onClick={handleGenerate}>Şema Üret <ArrowRight className="size-4" /></Button>}
             {step === 2 && <Button size="sm" disabled={busy} onClick={() => goTo(3)}>Devam <ArrowRight className="size-4" /></Button>}
             {step === 3 && <Button size="sm" disabled={busy || !canConfigure} onClick={handleCommit}><Rocket className="size-4" /> Taramayı Başlat</Button>}
           </div>
@@ -480,6 +525,70 @@ function PatternRow({ p, checked, disabled, onToggle, source, onSource }) {
         </div>
       </div>
     </li>
+  );
+}
+
+/* ── Örnek sayfadan şema ───────────────────────────────────────────────────
+   Pattern seçimi "hangi URL ailesi" der; düz URL'li sitede tek aile '/*' çıkar
+   ve şema kümeden OTOMATİK seçilen bir örnekten üretilir. Burada admin somut
+   sayfa verir. İkinci/üçüncü sayfa kalite değil ELEME içindir: backend #1'den
+   üretip diğerlerinde doğrular, tutmazsa #2'den üretir — bu yüzden sayfalar
+   AYNI TİPTE olmalı, yoksa hiçbir şema doğrulanamaz. */
+function SamplePages({ value, onChange, domain, disabled }) {
+  const setUrl = (i, next) => onChange({ ...value, urls: value.urls.map((u, j) => (j === i ? next : u)) });
+  const removeUrl = (i) => onChange({ ...value, urls: value.urls.length > 1 ? value.urls.filter((_, j) => j !== i) : [''] });
+  const badHost = (u) => !!u.trim() && hostFromUrl(u) !== domain;
+
+  return (
+    <div className="space-y-2.5 rounded-lg border border-border p-3">
+      <div>
+        <p className="text-2sm font-medium">Örnek sayfadan şema çıkar</p>
+        <p className="text-[11px] text-muted-foreground">
+          Bir ürün sayfasının adresini verin; şema o sayfaya göre çıkarılır. Bölüm seçmek zorunda değilsiniz.
+        </p>
+      </div>
+
+      {value.urls.map((u, i) => (
+        <div key={i}>
+          <div className="flex items-center gap-1.5">
+            <Input type="url" value={u} disabled={disabled} onChange={(e) => setUrl(i, e.target.value)}
+              placeholder={i === 0 ? `https://${domain || 'example.com'}/urun/ornek-urun` : 'Aynı tipte ikinci sayfa (opsiyonel)'}
+              className="font-mono text-[11px]" />
+            {(value.urls.length > 1 || u.trim()) && (
+              <Button variant="ghost" size="icon" disabled={disabled} onClick={() => removeUrl(i)} aria-label="Kaldır">
+                <XCircle className="size-3.5" />
+              </Button>
+            )}
+          </div>
+          {badHost(u) && <p className="mt-1 text-[11px] text-destructive">Bu adres {domain} sitesine ait değil.</p>}
+        </div>
+      ))}
+
+      {value.urls.length < 3 && (
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={() => onChange({ ...value, urls: [...value.urls, ''] })}>
+          + Bir sayfa daha ekle
+        </Button>
+      )}
+
+      <Alert variant="info">
+        <AlertDescription className="text-[11px]">
+          <b>Aynı tipte sayfalar verin</b> (hepsi ürün detayı gibi). İkinci ve üçüncü sayfa şemayı
+          doğrulamak için kullanılır; farklı tipte sayfa verirseniz hiçbir şema doğrulanamaz.
+          Kapsam örnek adreslerden türetilir ve şema adımında görünür.
+        </AlertDescription>
+      </Alert>
+
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-muted-foreground">Kaynak:</span>
+        <div className="inline-flex overflow-hidden rounded-md border border-border">
+          {['product', 'content'].map((s) => (
+            <button key={s} type="button" disabled={disabled} onClick={() => onChange({ ...value, source: s })}
+              className={cn('px-2 py-1 text-[11px] font-medium', value.source === s ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-accent')}>
+              {s === 'product' ? 'Ürün' : 'İçerik'}</button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

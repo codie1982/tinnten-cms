@@ -744,10 +744,14 @@ function DeleteDomainModal({ domain, onConfirm, onClose }) {
   const [saving, setSaving] = useState(false);
   const match = typed.trim() === domain.domain;
 
-  const submit = async () => {
+  // Abone cascade'i İKİ ADIMLI bilinçli olarak: ilk deneme 409 ile abone
+  // listesini gösterir, cascade ancak operatör kimlerin etkileneceğini GÖRDÜKTEN
+  // sonra ayrı bir tıklamayla gider. Tek adımda cascade etseydik rutin bir admin
+  // silmesi başka kiracıların bilgi tabanını sessizce düşürebilirdi.
+  const submit = async (cascadeSubscribers = false) => {
     if (!match) return;
     setErr(null); setSaving(true);
-    try { await onConfirm(domain.domain); onClose(); }
+    try { await onConfirm({ domain: domain.domain, cascadeSubscribers }); onClose(); }
     catch (e) { setErr(upstreamErr(e)); }
     finally { setSaving(false); }
   };
@@ -776,9 +780,10 @@ function DeleteDomainModal({ domain, onConfirm, onClose }) {
               </AlertTitle>
               <AlertDescription>
                 <p>
-                  Silme engellendi. Abonelikler kaldırılmadan domain silinirse firmaların
+                  Silme durduruldu. Abonelikler kaldırılmadan domain silinirse firmaların
                   embedding'leri yetim kalır — kaynak yokken aramada çıkmaya devam ederler.
-                  Önce <b>Abonelikler</b> sekmesinden aşağıdakileri kaldırın.
+                  Aşağıdaki abonelikleri <b>Abonelikler</b> sekmesinden tek tek kaldırabilir
+                  ya da bu silmeyle birlikte düşürebilirsiniz.
                 </p>
                 <div className="mt-2 space-y-1">
                   {(err.subscribers || []).slice(0, 8).map((s) => (
@@ -790,6 +795,20 @@ function DeleteDomainModal({ domain, onConfirm, onClose }) {
                   {(err.subscribers || []).length > 8
                     ? <p className="text-xs">+{err.subscribers.length - 8} firma daha</p> : null}
                 </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="mt-3"
+                  disabled={!match || saving}
+                  onClick={() => submit(true)}
+                >
+                  {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Users className="size-3.5" />}
+                  {err.subscriberCount} aboneliği de kaldır ve sil
+                </Button>
+                <p className="mt-1.5 text-xs">
+                  Her abonelik kendi teardown'ıyla düşer (firma indeksi kaldırılır), sonra
+                  domain kalıcı silinir. Firmalar bu kaynağı bilgi tabanlarında GÖRMEZ olur.
+                </p>
               </AlertDescription>
             </Alert>
           ) : err ? (
@@ -801,7 +820,7 @@ function DeleteDomainModal({ domain, onConfirm, onClose }) {
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>İptal</Button>
-            <Button variant="destructive" size="sm" disabled={!match || saving} onClick={submit}>
+            <Button variant="destructive" size="sm" disabled={!match || saving} onClick={() => submit(false)}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />} Kalıcı sil
             </Button>
           </div>
@@ -1226,7 +1245,7 @@ function DomainsSection({ authorized }) {
       {modal?.type === 'add' && <DomainFormModal mode="add" onSubmit={(body) => addDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'edit' && <DomainFormModal mode="edit" domain={modal.domain} onSubmit={(body) => updateDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'verify' && <VerifyDomainModal domain={modal.domain} onSubmit={(body) => verifyDomain(body).unwrap()} onClose={() => setModal(null)} />}
-      {modal?.type === 'delete' && <DeleteDomainModal domain={modal.domain} onConfirm={(d) => deleteDomain(d).unwrap()} onClose={() => setModal(null)} />}
+      {modal?.type === 'delete' && <DeleteDomainModal domain={modal.domain} onConfirm={(args) => deleteDomain(args).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'config' && <ScrapingConfigModal domain={modal.domain} onReset={(d) => setModal({ type: 'reset', domain: d })} onClose={() => setModal(null)} />}
       {modal?.type === 'reset' && <ResetModal domain={modal.domain} onConfirm={(payload) => resetScraping(payload).unwrap()} onClose={() => setModal(null)} />}
     </div>
