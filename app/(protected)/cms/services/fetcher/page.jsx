@@ -1252,11 +1252,24 @@ function DomainsSection({ authorized }) {
   );
 }
 
+/**
+ * `/domains/:domain/stats` yanıtı düz bir durum→sayı haritası DEĞİL: fetcher'ın
+ * count_domain_urls'ü aynı sözlüğe `total` (sayı), `crawl_metrics` (obje) ve
+ * `next_scheduled` (obje|null) da koyuyor. Bunları rozet içinde basmak
+ * "Objects are not valid as a React child" ile render'ı düşürüyordu — bu yüzden
+ * durum dağılımına yalnız skaler sayaçlar alınır.
+ */
+const STATS_META_KEYS = new Set(['total', 'crawl_metrics', 'next_scheduled']);
+const urlStatusCounts = (stats) => Object.entries(stats).filter(
+  ([k, v]) => !STATS_META_KEYS.has(k) && (typeof v === 'number' || typeof v === 'string'),
+);
+
 function DomainDetail({ domain, onClose }) {
   const { data: doc, isFetching } = useGetFetcherDomainQuery(domain);
   const { data: statsData } = useGetFetcherDomainStatsQuery(domain);
   const { data: urlsData, isFetching: urlsLoading } = useGetFetcherDomainUrlsQuery({ domain, page: 1, limit: 10 });
   const stats = statsData?.stats || {};
+  const statusCounts = urlStatusCounts(stats);
   const urls = urlsData?.urls || [];
 
   const [createUrl, { isLoading: creatingUrl }] = useCreateFetcherDomainUrlMutation();
@@ -1375,10 +1388,14 @@ function DomainDetail({ domain, onClose }) {
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">URL Durum Dağılımı</p>
                   <div className="flex flex-wrap gap-2">
-                    {Object.keys(stats).length === 0 ? <span className="text-sm text-muted-foreground">Veri yok.</span>
-                      : Object.entries(stats).map(([k, v]) => (
+                    {statusCounts.length === 0 ? <span className="text-sm text-muted-foreground">Veri yok.</span> : (
+                      <>
+                        {statusCounts.map(([k, v]) => (
                           <Badge key={k} variant={urlStatusVariant(k)}>{k}: {v}</Badge>
                         ))}
+                        {stats.total != null ? <Badge variant="muted">toplam: {nfmt(stats.total)}</Badge> : null}
+                      </>
+                    )}
                   </div>
                 </div>
 
