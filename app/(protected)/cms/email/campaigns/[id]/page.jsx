@@ -541,6 +541,9 @@ export default function CampaignEditPage() {
 
   const doUnschedule = async () => {
     const r = await unscheduleCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'İptal edilemedi' }));
+    // Onay silahını her durumda indir: kalırsa kampanya yeniden zamanlandığında
+    // buton doğrudan "Emin?" hâlinde açılır ve tek tık iptal eder.
+    setConfirmUnschedule(false);
     if (r?.__err) return setNotice(r.__err);
     await refetchCampaign();
     setNotice('Zamanlama iptal edildi — kampanya taslağa döndü.');
