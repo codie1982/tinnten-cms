@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3, CalendarClock, Eye, Pause, Play, XCircle, Repeat, FlaskConical, Send } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Plus, Trash2, Megaphone, RefreshCw, BarChart3, Eye, Pause, Play, XCircle, Repeat } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +35,7 @@ import {
   useGetCronListsQuery,
 } from '@/redux/services';
 import { MailPreviewPanel } from '@/components/email/mail-preview-panel';
+import { CampaignPublishSheet } from '@/components/email/campaign-publish-sheet';
 
 const DEFAULT_SEND = {
   ratePerSec: 5,
@@ -58,21 +59,6 @@ const CHANNEL_TYPE_GROUPS = [
   { type: 'custom', label: 'Özel Listeler', types: ['custom', 'private'] },
 ];
 
-// Tekrar aralığı birimleri. "hour" duvar saatine hizalanmaz (24 saatte bir =
-// sabit aralık); diğerleri takvimde ilerleyip yerel saati korur.
-const RECURRENCE_UNITS = [
-  { value: 'hour', label: 'saatte bir', clock: false },
-  { value: 'day', label: 'günde bir', clock: true },
-  { value: 'week', label: 'haftada bir', clock: true },
-  { value: 'month', label: 'ayda bir', clock: true },
-];
-
-const END_MODES = [
-  { value: 'never', label: 'Süresiz (durdurana kadar)' },
-  { value: 'date', label: 'Belirli bir tarihte bitir' },
-  { value: 'count', label: 'Belirli sayıda koşudan sonra bitir' },
-];
-
 // ISO hafta günleri (1=Pzt … 7=Paz) — backend byWeekday ile birebir aynı numaralar.
 const WEEKDAYS = [
   { value: 1, short: 'Pzt', long: 'Pazartesi' },
@@ -85,11 +71,6 @@ const WEEKDAYS = [
 ];
 
 const LAST_DAY = -1;
-const MONTH_DAYS = [
-  ...Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: `Ayın ${i + 1}. günü` })),
-  { value: LAST_DAY, label: 'Ayın son günü' },
-];
-
 const DEFAULT_RECURRENCE = {
   enabled: false,
   every: '1',
@@ -124,16 +105,6 @@ const describeRecurrence = (r) => {
   const dayLabel = d === LAST_DAY ? 'ayın son günü' : `ayın ${d}. günü`;
   return `${n === 1 ? 'her ay' : `${n} ayda bir`} ${dayLabel}, ${clock}`;
 };
-
-// Yayılma süresi hazır seçenekleri (dakika). '' = tek seferde (drip yok).
-const DURATION_PRESETS = [
-  { value: '', label: 'Tek seferde (yayılma yok)' },
-  { value: '60', label: '1 saate yay' },
-  { value: '360', label: '6 saate yay' },
-  { value: '720', label: '12 saate yay' },
-  { value: '1440', label: '24 saate yay' },
-  { value: '4320', label: '3 güne yay' },
-];
 
 const STATUS_META = {
   draft: { label: 'Taslak', variant: 'secondary' },
@@ -245,13 +216,14 @@ export default function CampaignEditPage() {
   const [vars, setVars] = useState([]); // [{key, value}]
   const [rec, setRec] = useState(DEFAULT_RECURRENCE);
   const [notice, setNotice] = useState('');
-  // Yayın onayı bekleyen yüzde: null = tüm liste, 1-99 = rastgele örneklem.
-  // Boolean bir `confirmSend` yetmiyor — onay metni hangi yayın olduğunu söylemeli.
-  const [confirmSend, setConfirmSend] = useState(null);
-  const [testPercent, setTestPercent] = useState('5');
-  const [continuePercent, setContinuePercent] = useState('100');
-  const [confirmContinue, setConfirmContinue] = useState(false);
+  // Yayın kararı iki BAĞIMSIZ eksen: kimlere (%) ve ne zaman. "Test yayını"
+  // ayrı bir mod değil, sadece küçük bir yüzde; %100 herkes demek.
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishPercent, setPublishPercent] = useState('100');
+  const [publishWhen, setPublishWhen] = useState('now'); // now | at
+  const [publishError, setPublishError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmUnschedule, setConfirmUnschedule] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const status = campaign?.status || 'draft';
@@ -322,6 +294,17 @@ export default function CampaignEditPage() {
         },
       });
       setVars(Object.entries(campaign.globalVars || {}).map(([key, value]) => ({ key, value: String(value) })));
+      // Yayın çekmecesinin iki ekseni kayıttan gelir: kaydedilmiş yüzde ve
+      // zamanlama var mı. Tamamlanmış kampanyada yüzde %100'e döner — önceki
+      // koşunun %25'i "kalanı gönder" ekranına sızarsa operatör farkında
+      // olmadan kalanın yalnız çeyreğine gönderirdi.
+      const savedPct = campaign.sendConfig?.samplePercent;
+      setPublishPercent(
+        ['sent', 'partial', 'failed'].includes(campaign.status) || !savedPct
+          ? '100'
+          : String(savedPct),
+      );
+      setPublishWhen(campaign.schedule?.startAt || campaign.schedule?.durationMinutes ? 'at' : 'now');
       const r = campaign.recurrence || {};
       setRec({
         enabled: Boolean(r.enabled),
@@ -340,25 +323,29 @@ export default function CampaignEditPage() {
   }, [campaign]);
 
   const setR = (k, v) => setRec((s) => ({ ...s, [k]: v }));
-  // "saatte bir" aralık tabanlıdır → sabit bir HH:MM sorulmaz.
-  const unitUsesClock = RECURRENCE_UNITS.find((u) => u.value === rec.unit)?.clock !== false;
 
   /**
    * Tekrar ayarı ayrı bir uçtan yazılır (PATCH .../recurrence): ana kaydet yalnız
    * taslakta çalışırken tekrar, zamanlanmış kampanyada da değiştirilebilmeli —
    * seriyi durdurmanın tek yolu bekleyen son koşuda tekrarı kapatmaktır.
    */
-  const saveRecurrence = async (enabled) => {
-    setNotice('');
-    if (isNew) return setNotice('Önce kampanyayı kaydedin, sonra tekrarı kurun.');
+  const persistRecurrence = async () => {
+    const enabled = Boolean(rec.enabled);
+    if (isNew) {
+      setPublishError('Önce kampanyayı kaydedin, sonra tekrarı kurun.');
+      return false;
+    }
     if (enabled && rec.unit === 'week' && !rec.byWeekday?.length) {
-      return setNotice('Haftalık tekrar için en az bir gün seçin.');
+      setPublishError('Haftalık tekrar için en az bir gün seçin.');
+      return false;
     }
     if (enabled && rec.endMode === 'date' && !rec.endsAt) {
-      return setNotice('Bitiş tarihi seçin.');
+      setPublishError('Bitiş tarihi seçin.');
+      return false;
     }
     if (enabled && rec.endMode === 'count' && !(Number(rec.maxOccurrences) >= 1)) {
-      return setNotice('Toplam koşu sayısı en az 1 olmalı.');
+      setPublishError('Toplam koşu sayısı en az 1 olmalı.');
+      return false;
     }
     const body = enabled
       ? {
@@ -378,12 +365,12 @@ export default function CampaignEditPage() {
 
     const r = await setRecurrence({ id, ...body }).unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Tekrar ayarı kaydedilemedi' }));
-    if (r?.__err) return setNotice(r.__err);
-    setRec((s) => ({ ...s, enabled }));
-    setNotice(enabled
-      ? `Tekrar kuruldu: ${describeRecurrence(rec)} (${rec.timezone}).`
-      : 'Tekrar kapatıldı — bu koşudan sonra yeni kampanya üretilmeyecek.');
+    if (r?.__err) {
+      setPublishError(r.__err);
+      return false;
+    }
     refetchCampaign();
+    return true;
   };
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -420,18 +407,7 @@ export default function CampaignEditPage() {
     return { ok: true, n, perHour };
   }, [effDuration, recipientCount, form.sendConfig.maxRecipients, form.sendConfig.ratePerSec]);
 
-  // Kısmi yayın hedefleri. Sunucu da aynı formülü kullanır (ceil); alıcı limiti
-  // varsa test yayınında onunla kırpılır.
-  const testPercentNum = Math.min(Math.max(Math.round(Number(testPercent) || 0), 1), 99);
-  const testTarget =
-    recipientCount == null
-      ? null
-      : Math.min(
-          Math.ceil((recipientCount * testPercentNum) / 100),
-          Number(form.sendConfig.maxRecipients) || Infinity,
-        );
-  const continuePercentNum = Math.min(Math.max(Math.round(Number(continuePercent) || 0), 1), 100);
-  const continueTarget = delivery ? Math.ceil((delivery.remaining * continuePercentNum) / 100) : null;
+  const publishPercentNum = Math.min(Math.max(Math.round(Number(publishPercent) || 0), 1), 100);
 
   const buildPayload = () => ({
     name: form.name.trim(),
@@ -452,6 +428,10 @@ export default function CampaignEditPage() {
         bounceRatePct: Number(form.sendConfig.circuitBreaker.bounceRatePct) || 3,
         complaintRatePct: Number(form.sendConfig.circuitBreaker.complaintRatePct) || 0.08,
       },
+      // Yüzde kampanyaya KAYDEDİLİR: zamanlanmış koşu onu başlarken uygular
+      // (örneklemi dondurur). Yalnız eyleme parametre olarak geçilseydi
+      // zamanlanan yayında sessizce yok sayılırdı. %100 → null (örnekleme yok).
+      samplePercent: publishPercentNum >= 100 ? null : publishPercentNum,
     },
     schedule: {
       startAt: form.schedule.startAt ? new Date(form.schedule.startAt).toISOString() : null,
@@ -474,67 +454,88 @@ export default function CampaignEditPage() {
     }
   };
 
-  /** percent: null = tüm liste, 1-99 = kitlenin rastgele o yüzdesi (test yayını). */
-  const doSend = async (percent = null) => {
-    const r = await sendCampaign({ id, percent })
+  /**
+   * Çekmecenin tek çıkışı. Duruma göre üç uçtan birine gider ama operatör için
+   * hepsi aynı eylem: "yayına al".
+   *   tamamlanmış → /continue   (kalanlardan, listenin %N'i kadar)
+   *   taslak + hemen → /send    (yüzde eyleme de geçilir; sunucu kayıtlıyı da okur)
+   *   taslak + zamanla → PATCH + /schedule (yüzde sendConfig'te taşınır)
+   * Zamanlanmışta yalnız tekrar değişebilir (sunucu kuralı: yalnız taslak zamanlanır).
+   */
+  const submitPublish = async () => {
+    setPublishError('');
+    setNotice('');
+
+    if (isFinished) {
+      const r = await continueCampaign({ id, percent: publishPercentNum })
+        .unwrap()
+        .catch((e) => ({ __err: e?.data?.message || 'Devam edilemedi' }));
+      if (r?.__err) return setPublishError(r.__err);
+      setPublishOpen(false);
+      await refetchCampaign();
+      await refetchStats().catch(() => null);
+      return setNotice(
+        r?.skipped
+          ? 'Devam edilecek yeni alıcı yok — listedeki herkes bu kampanyayı almış.'
+          : `Devam yayını kuyruğa alındı: ${formatCount(r?.queued ?? 0)} yeni alıcı (listenin %${publishPercentNum}'i kadar).`
+      );
+    }
+
+    if (isScheduled) {
+      const ok = await persistRecurrence();
+      if (!ok) return;
+      setPublishOpen(false);
+      return setNotice('Tekrar ayarı kaydedildi.');
+    }
+
+    if (!form.name.trim() || !form.channelKey || !form.templateId) {
+      return setPublishError('Ad, kanal ve şablon zorunlu.');
+    }
+
+    // Yüzde ve gönderim ayarları ÖNCE kaydedilir: zamanlanan koşu yüzdeyi
+    // kampanya kaydından okur, hemen giden yayın da aynı kaydı görür.
+    const payload = buildPayload();
+    const saved = await updateCampaign({ id, ...payload })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Kaydedilemedi' }));
+    if (saved?.__err) return setPublishError(saved.__err);
+
+    if (publishWhen === 'at') {
+      if (!payload.schedule.startAt && !payload.schedule.durationMinutes) {
+        return setPublishError('Başlangıç tarihi veya yayılma süresi girin.');
+      }
+      const r = await scheduleCampaign({
+        id,
+        startAt: payload.schedule.startAt,
+        durationMinutes: payload.schedule.durationMinutes,
+      })
+        .unwrap()
+        .catch((e) => ({ __err: e?.data?.message || 'Zamanlanamadı' }));
+      if (r?.__err) return setPublishError(r.__err);
+      // Tekrar AYRI uçtan yazılır; zamanlama başarılı olduktan sonra denenir ki
+      // tekrar hatası zamanlamayı geri almasın.
+      const recOk = await persistRecurrence();
+      setPublishOpen(false);
+      await refetchCampaign();
+      return setNotice(
+        `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt || Date.now())}` +
+        (payload.schedule.durationMinutes ? `, ${formatDuration(payload.schedule.durationMinutes)} yayılma` : '') +
+        (publishPercentNum < 100 ? ` · listenin %${publishPercentNum}'i` : '') +
+        (recOk ? '' : ' (tekrar ayarı kaydedilemedi)')
+      );
+    }
+
+    const r = await sendCampaign({ id, percent: publishPercentNum < 100 ? publishPercentNum : null })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Gönderilemedi' }));
-    setConfirmSend(null);
-    if (r?.__err) return setNotice(r.__err);
+    if (r?.__err) return setPublishError(r.__err);
+    setPublishOpen(false);
     await refetchCampaign();
     if (r?.paused) return setNotice(`Güvenlik nedeniyle duraklatıldı: ${r.reason}`);
     setNotice(
       r?.samplePercent
-        ? `Test yayını kuyruğa alındı: ${formatCount(r.queued)} kişi (listenin %${r.samplePercent}'i, rastgele seçildi). Kalanı "Kampanyaya Devam Et" ile gönderebilirsiniz.`
+        ? `Yayın kuyruğa alındı: ${formatCount(r.queued)} kişi (listenin %${r.samplePercent}'i, rastgele seçildi). Kalanına daha sonra devam edebilirsiniz.`
         : `Kampanya kuyruğa alındı (${formatCount(r?.queued ?? 0)} alıcı).`
-    );
-  };
-
-  /** Kalan kitleye yeni parti. percent = KALANIN yüzdesi (100 = kalan herkes). */
-  const doContinue = async () => {
-    const percent = Math.min(Math.max(Math.round(Number(continuePercent) || 0), 1), 100);
-    const r = await continueCampaign({ id, percent })
-      .unwrap()
-      .catch((e) => ({ __err: e?.data?.message || 'Devam edilemedi' }));
-    setConfirmContinue(false);
-    if (r?.__err) return setNotice(r.__err);
-    await refetchCampaign();
-    await refetchStats().catch(() => null);
-    setNotice(
-      r?.skipped
-        ? 'Devam edilecek yeni alıcı yok — listedeki herkes bu kampanyayı almış.'
-        : `Devam yayını kuyruğa alındı: ${formatCount(r?.queued ?? 0)} yeni alıcı (kalanın %${percent}'i).`
-    );
-  };
-
-  // Zamanla: önce taslağı kaydet (zamanlama dahil form değişiklikleri yansısın),
-  // sonra draft → scheduled geçişini yap. startAt boşsa "şimdi" kabul edilir.
-  const doSchedule = async () => {
-    if (!form.name.trim() || !form.channelKey || !form.templateId) {
-      return setNotice('Ad, kanal ve şablon zorunlu.');
-    }
-    const payload = buildPayload();
-    if (!payload.schedule.startAt && !payload.schedule.durationMinutes) {
-      return setNotice('Zamanlamak için başlangıç tarihi veya yayılma süresi girin.');
-    }
-    const saveRes = await updateCampaign({ id, ...payload })
-      .unwrap()
-      .catch((e) => ({ __err: e?.data?.message || 'Kaydedilemedi' }));
-    if (saveRes?.__err) return setNotice(saveRes.__err);
-
-    const r = await scheduleCampaign({
-      id,
-      startAt: payload.schedule.startAt,
-      durationMinutes: payload.schedule.durationMinutes,
-    })
-      .unwrap()
-      .catch((e) => ({ __err: e?.data?.message || 'Zamanlanamadı' }));
-    if (r?.__err) return setNotice(r.__err);
-    await refetchCampaign();
-    setNotice(
-      payload.schedule.durationMinutes
-        ? `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt || Date.now())} başlangıç, ${formatDuration(payload.schedule.durationMinutes)} yayılma.`
-        : `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt || Date.now())} başlangıç.`
     );
   };
 
@@ -719,337 +720,35 @@ export default function CampaignEditPage() {
               </CardContent>
             </Card>
 
-            {/* Zamanlama ve yayılma (drip) */}
-            <Card>
-              <CardHeader><CardTitle><CalendarClock className="mr-1 inline size-4" /> Zamanlama ve Yayılma</CardTitle></CardHeader>
-              <CardContent className="space-y-4 p-4">
-                <div className="flex flex-wrap gap-4">
-                  <div className="w-60">
-                    <label className="mb-1 block text-xs text-muted-foreground">Başlangıç (boş = hemen)</label>
-                    <input
-                      type="datetime-local"
-                      value={form.schedule.startAt}
-                      disabled={!isDraft}
-                      onChange={(e) => setSched('startAt', e.target.value)}
-                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-                    />
-                  </div>
-                  <div className="min-w-[200px]">
-                    <label className="mb-1 block text-xs text-muted-foreground">Yayılma süresi</label>
-                    <select
-                      value={DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes) ? form.schedule.durationMinutes : 'custom'}
-                      disabled={!isDraft}
-                      onChange={(e) =>
-                        setSched(
-                          'durationMinutes',
-                          e.target.value === 'custom'
-                            // Mevcut değer bir preset ise onu koruyamayız (select geri
-                            // preset'e düşer) → preset-dışı bir başlangıçla aç.
-                            ? (DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes)
-                                ? '90'
-                                : form.schedule.durationMinutes || '90')
-                            : e.target.value
-                        )
-                      }
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-                    >
-                      {DURATION_PRESETS.map((p) => <option key={p.value || 'none'} value={p.value}>{p.label}</option>)}
-                      <option value="custom">Özel…</option>
-                    </select>
-                  </div>
-                  {!DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes) && (
-                    <div className="w-36">
-                      <label className="mb-1 block text-xs text-muted-foreground">Özel süre (dakika)</label>
-                      <Input type="number" min={1} value={form.schedule.durationMinutes} disabled={!isDraft}
-                        onChange={(e) => setSched('durationMinutes', e.target.value)} placeholder="örn. 90" />
-                    </div>
-                  )}
-                </div>
-
-                {effDuration > 0 && dripInfo && (
-                  dripInfo.ok ? (
-                    <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                      {formatCount(dripInfo.n)} alıcı {formatDuration(effDuration)} içinde eşit ağırlıklı gönderilir — ≈{formatCount(dripInfo.perHour)} mail/saat.
-                    </p>
-                  ) : (
-                    <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                      Süre çok kısa: {formatCount(dripInfo.n)} alıcı {form.sendConfig.ratePerSec} mail/sn hızla bu pencereye sığmaz.
-                      En az {formatDuration(dripInfo.minMinutes)} seçin (sunucu da reddeder).
-                    </p>
-                  )
-                )}
-                <p className="text-[11px] text-muted-foreground">
-                  Süre seçilirse gönderim o pencereye eşit yayılır (örn. 24 alıcı / 24 saat = saatte 1 mail).
-                  Alıcı sayısı kampanya <b>başlarken</b> dondurulur; sonradan listeye eklenenler bu kampanyaya girmez.
-                  Gece dahil kesintisiz gönderilir.
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Tekrarlı yayın */}
-            {!isNew && (
+            {/* Zamanlama, tekrar ve gönderim güvenliği artık YAYIN ÇEKMECESİNDE:
+                hepsi tek bir "ne zaman / kime / ne hızda" kararının parçası ve
+                ayrı kartlara dağılmışken karar tek ekranda görünmüyordu.
+                Sayfada yalnız kampanyanın TANIMI ve koşu SONUÇLARI kalır. */}
+            {campaign?.recurrence?.seriesId && (
               <Card>
                 <CardHeader>
-                  <CardTitle><Repeat className="mr-1 inline size-4" /> Tekrarlı Yayın</CardTitle>
+                  <CardTitle><Repeat className="mr-1 inline size-4" /> Seri koşuları</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4 p-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={rec.enabled}
-                      disabled={!isDraft && !isScheduled}
-                      onChange={(e) => setR('enabled', e.target.checked)}
-                    />
-                    Bu kampanyayı düzenli olarak tekrarla
-                  </label>
-
-                  {rec.enabled && (
-                    <>
-                      <div className="flex flex-wrap items-end gap-3">
-                        <span className="pb-2 text-sm text-muted-foreground">Her</span>
-                        <div className="w-24">
-                          <label className="mb-1 block text-xs text-muted-foreground">Miktar</label>
-                          <Input type="number" min={1} value={rec.every}
-                            onChange={(e) => setR('every', e.target.value)} />
-                        </div>
-                        <div className="w-44">
-                          <label className="mb-1 block text-xs text-muted-foreground">Birim</label>
-                          <select
-                            value={rec.unit}
-                            onChange={(e) => setR('unit', e.target.value)}
-                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                          >
-                            {RECURRENCE_UNITS.map((u) => (
-                              <option key={u.value} value={u.value}>{u.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        {unitUsesClock && (
-                          <>
-                            <div className="w-24">
-                              <label className="mb-1 block text-xs text-muted-foreground">Saat</label>
-                              <Input type="number" min={0} max={23} value={rec.atHour}
-                                onChange={(e) => setR('atHour', e.target.value)} />
-                            </div>
-                            <div className="w-24">
-                              <label className="mb-1 block text-xs text-muted-foreground">Dakika</label>
-                              <Input type="number" min={0} max={59} value={rec.atMinute}
-                                onChange={(e) => setR('atMinute', e.target.value)} />
-                            </div>
-                          </>
-                        )}
-                        <div className="w-48">
-                          <label className="mb-1 block text-xs text-muted-foreground">Zaman dilimi</label>
-                          <Input value={rec.timezone} onChange={(e) => setR('timezone', e.target.value)} />
-                        </div>
-                      </div>
-
-                      {/* Takvim çıpası: hafta/ay tekrarında tarih bundan seçilir.
-                          Olmadığında seri, ilk koşunun rastgele denk geldiği güne
-                          kilitlenir ve operatör hangi gün olduğunu göremez. */}
-                      {rec.unit === 'week' && (
-                        <div>
-                          <label className="mb-1 block text-xs text-muted-foreground">
-                            Haftanın hangi günleri
-                          </label>
-                          <div className="flex flex-wrap gap-1.5">
-                            {WEEKDAYS.map((d) => {
-                              const on = rec.byWeekday?.includes(d.value);
-                              return (
-                                <Button
-                                  key={d.value}
-                                  type="button"
-                                  size="sm"
-                                  variant={on ? 'primary' : 'outline'}
-                                  title={d.long}
-                                  onClick={() =>
-                                    setR(
-                                      'byWeekday',
-                                      on
-                                        ? rec.byWeekday.filter((v) => v !== d.value)
-                                        : [...(rec.byWeekday || []), d.value].sort((a, b) => a - b),
-                                    )
-                                  }
-                                >
-                                  {d.short}
-                                </Button>
-                              );
-                            })}
-                          </div>
-                          {!rec.byWeekday?.length && (
-                            <p className="mt-1 text-[11px] text-destructive">En az bir gün seçin.</p>
-                          )}
-                        </div>
-                      )}
-
-                      {rec.unit === 'month' && (
-                        <div className="w-60">
-                          <label className="mb-1 block text-xs text-muted-foreground">Ayın hangi günü</label>
-                          <select
-                            value={rec.byMonthDay}
-                            onChange={(e) => setR('byMonthDay', e.target.value)}
-                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                          >
-                            {MONTH_DAYS.map((d) => (
-                              <option key={d.value} value={d.value}>{d.label}</option>
-                            ))}
-                          </select>
-                          {Number(rec.byMonthDay) > 28 && Number(rec.byMonthDay) !== LAST_DAY && (
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              O günü içermeyen aylarda ayın son gününe kaydırılır.
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      <p className="rounded-md bg-muted/50 px-3 py-2 text-xs">
-                        <b>{describeRecurrence(rec)}</b>
-                        {!unitUsesClock && (
-                          <span className="text-muted-foreground">
-                            {' '}— saat birimi duvar saatine sabitlenmez, koşudan koşuya sabit aralık bırakır.
-                          </span>
-                        )}
-                      </p>
-
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div className="min-w-[260px] flex-1">
-                          <label className="mb-1 block text-xs text-muted-foreground">Bitiş koşulu</label>
-                          <select
-                            value={rec.endMode}
-                            onChange={(e) => setR('endMode', e.target.value)}
-                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                          >
-                            {END_MODES.map((m) => (
-                              <option key={m.value} value={m.value}>{m.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        {rec.endMode === 'date' && (
-                          <div className="w-60">
-                            <label className="mb-1 block text-xs text-muted-foreground">Son tarih</label>
-                            <input
-                              type="datetime-local"
-                              value={rec.endsAt}
-                              onChange={(e) => setR('endsAt', e.target.value)}
-                              className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                            />
-                          </div>
-                        )}
-                        {rec.endMode === 'count' && (
-                          <div className="w-44">
-                            <label className="mb-1 block text-xs text-muted-foreground">Toplam koşu sayısı</label>
-                            <Input type="number" min={1} value={rec.maxOccurrences}
-                              onChange={(e) => setR('maxOccurrences', e.target.value)} placeholder="örn. 30" />
-                          </div>
-                        )}
-                      </div>
-
-                      <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                        Alıcı listesi <b>yukarıdaki kanal seçiminden</b> gelir; burada ayrıca seçilmez.
-                        {selectedChannelRecipe ? (
-                          <>
-                            {' '}Seçilen kanal <b>{selectedChannelRecipe.name}</b> cron listesine ait olduğu için
-                            her koşu o listenin <b>güncel hâline</b> gider. Liste o koşu için yeniden
-                            üretilmemişse gönderim <b>yapılmaz</b> — aynı kitleye ikinci kez mail gitmez.
-                            Cron listesinin saatini bu kampanyadan <b>önceye</b> ayarlayın.
-                          </>
-                        ) : (
-                          ' Seçilen kanal sabit olduğu için her koşu aynı kanala gider.'
-                        )}
-                      </p>
-                    </>
-                  )}
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      onClick={() => saveRecurrence(rec.enabled)}
-                      disabled={savingRecurrence || (!isDraft && !isScheduled)}
-                    >
-                      {savingRecurrence ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                      {rec.enabled ? 'Tekrarı Kaydet' : 'Tekrarı Kapat'}
-                    </Button>
-                    {campaign?.recurrence?.enabled && (
-                      <span className="text-xs text-muted-foreground">
-                        {campaign.recurrence.occurrence || 1}. koşu
-                        {campaign.recurrence.spawnedNextAt
-                          ? ' · sonraki koşu üretildi'
-                          : ' · sonraki koşu bu yayın başlarken üretilecek'}
-                      </span>
-                    )}
-                  </div>
-
-                  {!isDraft && !isScheduled && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Bu kampanya başlamış/bitmiş: tekrar ayarı artık değiştirilemez. Seriyi durdurmak
-                      için <b>bekleyen (zamanlanmış) son koşuyu</b> açıp tekrarı kapatın.
+                <CardContent className="space-y-3 p-4">
+                  {campaign?.recurrence?.enabled && (
+                    <p className="rounded-md bg-muted/50 px-3 py-2 text-xs">
+                      <b>{describeRecurrence({
+                        every: campaign.recurrence.every,
+                        unit: campaign.recurrence.unit,
+                        atHour: campaign.recurrence.atHour,
+                        atMinute: campaign.recurrence.atMinute,
+                        byWeekday: campaign.recurrence.byWeekday,
+                        byMonthDay: campaign.recurrence.byMonthDay,
+                      })}</b>{' '}({campaign.recurrence.timezone}) · {campaign.recurrence.occurrence || 1}. koşu
+                      {campaign.recurrence.spawnedNextAt
+                        ? ' · sonraki koşu üretildi'
+                        : ' · sonraki koşu bu yayın başlarken üretilecek'}
                     </p>
                   )}
-
-                  {campaign?.recurrence?.seriesId && <CampaignSeries id={id} />}
+                  <CampaignSeries id={id} />
                 </CardContent>
               </Card>
             )}
-
-            {/* Gönderim güvenliği */}
-            <Card>
-              <CardHeader><CardTitle><ShieldCheck className="mr-1 inline size-4" /> Gönderim Güvenliği</CardTitle></CardHeader>
-              <CardContent className="space-y-4 p-4">
-                <div className="flex flex-wrap gap-4">
-                  <div className="w-40">
-                    <label className="mb-1 block text-xs text-muted-foreground">Hız (mail/sn)</label>
-                    <Input type="number" min={1} value={form.sendConfig.ratePerSec} disabled={!isDraft}
-                      onChange={(e) => setSC('ratePerSec', e.target.value)} />
-                  </div>
-                  <div className="w-44">
-                    <label className="mb-1 block text-xs text-muted-foreground">Alıcı limiti (boş=sınırsız)</label>
-                    <Input type="number" min={0} value={form.sendConfig.maxRecipients} disabled={!isDraft}
-                      onChange={(e) => setSC('maxRecipients', e.target.value)} placeholder="örn. 1000" />
-                  </div>
-                  <div className="w-40">
-                    <label className="mb-1 block text-xs text-muted-foreground">Batch boyutu</label>
-                    <Input type="number" min={1} value={form.sendConfig.batchSize} disabled={!isDraft}
-                      onChange={(e) => setSC('batchSize', e.target.value)} />
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-4">
-                  <div className="min-w-[260px] flex-1">
-                    <label className="mb-1 block text-xs text-muted-foreground">
-                      Gönderen (boş = varsayılan no-reply; yalnız doğrulanmış alan adı)
-                    </label>
-                    <Input value={form.sendConfig.fromAddress} disabled={!isDraft}
-                      onChange={(e) => setSC('fromAddress', e.target.value)}
-                      placeholder='örn. "Tinnten Basın" <press@tinten.ai>' />
-                  </div>
-                  <div className="w-52">
-                    <label className="mb-1 block text-xs text-muted-foreground">Aynı adrese günlük sınır (0=sınırsız)</label>
-                    <Input type="number" min={0} value={form.sendConfig.maxPerRecipientPerDay} disabled={!isDraft}
-                      onChange={(e) => setSC('maxPerRecipientPerDay', e.target.value)} />
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={form.sendConfig.circuitBreaker.enabled} disabled={!isDraft}
-                      onChange={(e) => setCB('enabled', e.target.checked)} />
-                    Otomatik fren (oran eşiği aşılırsa kampanyayı durdur)
-                  </label>
-                  <div className="mt-3 flex flex-wrap gap-4">
-                    <div className="w-40">
-                      <label className="mb-1 block text-xs text-muted-foreground">Bounce eşiği %</label>
-                      <Input type="number" step="0.1" value={form.sendConfig.circuitBreaker.bounceRatePct} disabled={!isDraft || !form.sendConfig.circuitBreaker.enabled}
-                        onChange={(e) => setCB('bounceRatePct', e.target.value)} />
-                    </div>
-                    <div className="w-40">
-                      <label className="mb-1 block text-xs text-muted-foreground">Şikayet eşiği %</label>
-                      <Input type="number" step="0.01" value={form.sendConfig.circuitBreaker.complaintRatePct} disabled={!isDraft || !form.sendConfig.circuitBreaker.enabled}
-                        onChange={(e) => setCB('complaintRatePct', e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Kötü adresler (bounce/şikayet) otomatik elenir ve tek-tık abonelikten çıkış her maile eklenir — bunlar her zaman açıktır.
-                </p>
-              </CardContent>
-            </Card>
           </div>
 
           {/* Sağ: özet + gönder/stats */}
@@ -1147,8 +846,8 @@ export default function CampaignEditPage() {
                 </div>
               )}
 
-              {/* Kısmi yayın sonrası kalan kitle — "kim almadı" ve devam kontrolü.
-                  Kanal yayından sonra büyüdüyse yeni üyeler de burada görünür. */}
+              {/* Kapsama — kısmi yayından sonra "kim almadı". Kanal yayından
+                  sonra büyüdüyse yeni üyeler de burada görünür. */}
               {isFinished && delivery && (
                 <div
                   className={`space-y-2 rounded-md border p-3 text-xs ${
@@ -1163,6 +862,7 @@ export default function CampaignEditPage() {
                     </span>
                     <span>%{delivery.coveredPercent} kapsandı</span>
                   </div>
+                  <Progress value={delivery.coveredPercent} />
                   <p>
                     Listedeki {formatCount(delivery.channelTotal)} kişiden{' '}
                     <b>{formatCount(delivery.covered)}</b> kişiye gönderildi.
@@ -1170,144 +870,40 @@ export default function CampaignEditPage() {
                       <> <b>{formatCount(delivery.remaining)}</b> kişi bu kampanyayı henüz almadı.</>
                     )}
                   </p>
+                </div>
+              )}
 
-                  {delivery.remaining > 0 && (
-                    confirmContinue ? (
-                      <div className="space-y-2">
-                        <p className="text-foreground">
-                          Kalan {formatCount(delivery.remaining)} kişiden{' '}
-                          <b>
-                            {continuePercentNum >= 100
-                              ? 'tamamına'
-                              : `rastgele ${formatCount(continueTarget)} kişiye`}
-                          </b>{' '}
-                          gönderilsin mi?
-                        </p>
-                        <div className="flex gap-2">
-                          <Button
-                            onClick={doContinue}
-                            disabled={continuing}
-                            className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
-                          >
-                            {continuing ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                            Evet, gönder
-                          </Button>
-                          <Button variant="outline" onClick={() => setConfirmContinue(false)}>Vazgeç</Button>
-                        </div>
-                      </div>
+              {/* TEK eylem. Yüzde ve zaman kararı çekmecenin içinde; zamanlanmışta
+                  yanına iptal gelir (saati değiştirmenin tek yolu odur). */}
+              {!isNew && (isDraft || isScheduled || isFinished) && (
+                <div className="flex gap-2">
+                  <Button
+                    className="flex-1"
+                    onClick={() => { setPublishError(''); setPublishOpen(true); }}
+                    disabled={!form.channelKey || !form.templateId}
+                    title={!form.channelKey ? 'Önce alıcı listesi seçin' : undefined}
+                  >
+                    <Megaphone className="size-4" />
+                    {isScheduled ? 'Zamanlamayı düzenle' : isFinished ? 'Kalanı yayına al' : 'Yayına al'}
+                  </Button>
+                  {isScheduled && (
+                    confirmUnschedule ? (
+                      <Button variant="destructive" onClick={doUnschedule} disabled={unscheduling}>
+                        {unscheduling ? <Loader2 className="size-4 animate-spin" /> : <XCircle className="size-4" />}
+                        Emin?
+                      </Button>
                     ) : (
-                      <div className="space-y-1.5">
-                        <div className="flex items-end gap-2">
-                          <div className="w-20">
-                            <label className="mb-1 block text-[11px] text-muted-foreground">Kalanın %</label>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={100}
-                              value={continuePercent}
-                              onChange={(e) => setContinuePercent(e.target.value)}
-                              className="h-8"
-                            />
-                          </div>
-                          <Button
-                            variant="outline"
-                            className="h-8 flex-1"
-                            onClick={() => setConfirmContinue(true)}
-                          >
-                            <Send className="size-4" /> Kampanyaya Devam Et
-                          </Button>
-                        </div>
-                        <p className="text-muted-foreground">
-                          {continuePercentNum >= 100
-                            ? 'Kalan herkese gönderilir.'
-                            : `Kalanın %${continuePercentNum}'i ≈ ${formatCount(continueTarget)} kişi rastgele seçilir.`}{' '}
-                          Daha önce mail gitmiş kişiler bu partiye <b>girmez</b>.
-                        </p>
-                      </div>
+                      <Button variant="outline" onClick={() => setConfirmUnschedule(true)}>
+                        <XCircle className="size-4" /> İptal et
+                      </Button>
                     )
                   )}
                 </div>
               )}
-
               {isDraft && !isNew && (
-                confirmSend != null ? (
-                  <div className="space-y-2">
-                    <p className="text-sm">
-                      {confirmSend >= 100
-                        ? `${formatCount(recipientCount ?? 0)} kişinin tamamına hemen yayınlansın mı?`
-                        : `Listeden rastgele ${formatCount(testTarget ?? 0)} kişiye (%${confirmSend}) test yayını yapılsın mı?`}
-                    </p>
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => doSend(confirmSend >= 100 ? null : confirmSend)}
-                        disabled={sending}
-                        className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
-                      >
-                        {sending ? <Loader2 className="size-4 animate-spin" /> : <Megaphone className="size-4" />} Evet, yayınla
-                      </Button>
-                      <Button variant="outline" onClick={() => setConfirmSend(null)}>Vazgeç</Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {(form.schedule.startAt || effDuration > 0) && (
-                      <Button
-                        className="w-full"
-                        onClick={doSchedule}
-                        disabled={scheduling || saving || !form.channelKey || !form.templateId || (dripInfo && !dripInfo.ok)}
-                        title={form.schedule.startAt ? `Başlangıç: ${formatDateTime(form.schedule.startAt)}` : 'Hemen başlar, süreye yayılır'}
-                      >
-                        {scheduling ? <Loader2 className="size-4 animate-spin" /> : <CalendarClock className="size-4" />}
-                        Zamanla{effDuration > 0 ? ` (${formatDuration(effDuration)})` : ''}
-                      </Button>
-                    )}
-                    <Button
-                      variant={form.schedule.startAt || effDuration > 0 ? 'outline' : 'default'}
-                      className={form.schedule.startAt || effDuration > 0 ? 'w-full' : 'w-full bg-emerald-600 text-white hover:bg-emerald-700'}
-                      onClick={() => setConfirmSend(100)}
-                      disabled={!form.channelKey || !form.templateId}
-                    >
-                      <Megaphone className="size-4" /> Hemen Yayınla
-                    </Button>
-
-                    {/* Test yayını: kitlenin rastgele %N'i. Zamanlama DEĞİL —
-                        yüzde yalnız "hemen yayınla" yolunda uygulanır. */}
-                    <div className="rounded-md border border-dashed border-border p-2.5">
-                      <div className="flex items-end gap-2">
-                        <div className="w-20">
-                          <label className="mb-1 block text-[11px] text-muted-foreground">Yüzde</label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={99}
-                            value={testPercent}
-                            onChange={(e) => setTestPercent(e.target.value)}
-                            className="h-8"
-                          />
-                        </div>
-                        <Button
-                          variant="outline"
-                          className="h-8 flex-1"
-                          onClick={() => setConfirmSend(testPercentNum)}
-                          disabled={!form.channelKey || !form.templateId}
-                        >
-                          <FlaskConical className="size-4" /> Test Yayın (%{testPercentNum})
-                        </Button>
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-muted-foreground">
-                        {recipientCount == null ? (
-                          'Önce alıcı listesi seçin.'
-                        ) : (
-                          <>
-                            Listeden <b>rastgele {formatCount(testTarget)} kişi</b> seçilir; kalan{' '}
-                            {formatCount(Math.max(recipientCount - testTarget, 0))} kişiye mail gitmez.
-                            Yayın bitince kalanına buradan devam edebilirsiniz.
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                )
+                <p className="text-[11px] text-muted-foreground">
+                  Kimlere ve ne zaman gideceğini yayın ekranında seçersiniz.
+                </p>
               )}
               {isNew && <p className="text-xs text-muted-foreground">Önce taslağı oluşturun; ardından yayınlayabilir veya zamanlayabilirsiniz.</p>}
             </CardContent>
@@ -1317,6 +913,31 @@ export default function CampaignEditPage() {
 
       {!isNew && (
         <MailPreviewPanel campaignId={id} open={previewOpen} onClose={() => setPreviewOpen(false)} />
+      )}
+
+      {!isNew && (
+        <CampaignPublishSheet
+          open={publishOpen}
+          onOpenChange={(v) => { setPublishOpen(v); if (!v) setPublishError(''); }}
+          campaign={campaign}
+          status={status}
+          isFinished={isFinished}
+          recipientCount={recipientCount}
+          delivery={delivery}
+          percent={publishPercent}
+          setPercent={setPublishPercent}
+          when={publishWhen}
+          setWhen={setPublishWhen}
+          form={form}
+          setSC={setSC}
+          setCB={setCB}
+          setSched={setSched}
+          rec={rec}
+          setR={setR}
+          busy={saving || sending || scheduling || continuing || savingRecurrence}
+          error={publishError}
+          onSubmit={submitPublish}
+        />
       )}
     </RoleGuard>
   );
