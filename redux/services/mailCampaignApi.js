@@ -176,12 +176,39 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       query: (id) => ({ url: ENDPOINTS.email.campaign(id), method: 'DELETE' }),
       invalidatesTags: [{ type: 'EmailCampaign', id: 'LIST' }],
     }),
+    /**
+     * Hemen yayınla. `percent` verilirse (1-99) kitlenin yalnız RASTGELE o
+     * yüzdesine gider — test yayını; kalanı `continueMailCampaign` gönderir.
+     */
     sendMailCampaign: build.mutation({
-      query: (id) => ({ url: ENDPOINTS.email.campaignSend(id), method: 'POST' }),
+      query: ({ id, percent = null }) => ({
+        url: ENDPOINTS.email.campaignSend(id),
+        method: 'POST',
+        body: percent ? { percent } : {},
+      }),
       transformResponse: (res) => res?.data ?? res,
-      invalidatesTags: (r, e, id) => [
+      invalidatesTags: (r, e, { id }) => [
         { type: 'EmailCampaign', id },
         { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    /**
+     * Tamamlanmış kampanyayı, onu HENÜZ ALMAMIŞ alıcılara sürdür. `percent`
+     * KALANIN yüzdesidir (100 = kalan herkes). Daha önce mail gitmiş adres
+     * sunucuda aday havuzuna girmez — kimse ikinci kez mail almaz.
+     */
+    continueMailCampaign: build.mutation({
+      query: ({ id, percent = 100 }) => ({
+        url: ENDPOINTS.email.campaignContinue(id),
+        method: 'POST',
+        body: { percent },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
     // Zamanlanmış yayın: draft → scheduled (startAt geldiğinde cron başlatır,
@@ -352,6 +379,7 @@ export const {
   useUpdateMailCampaignMutation,
   useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
+  useContinueMailCampaignMutation,
   useScheduleMailCampaignMutation,
   useUnscheduleMailCampaignMutation,
   useSetMailCampaignRecurrenceMutation,

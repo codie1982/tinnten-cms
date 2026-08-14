@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3, CalendarClock, Eye, Pause, Play, XCircle, Repeat } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Plus, Trash2, ShieldCheck, Megaphone, RefreshCw, BarChart3, CalendarClock, Eye, Pause, Play, XCircle, Repeat, FlaskConical, Send } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,7 @@ import {
   useUpdateMailCampaignMutation,
   useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
+  useContinueMailCampaignMutation,
   useScheduleMailCampaignMutation,
   useUnscheduleMailCampaignMutation,
   usePauseMailCampaignMutation,
@@ -197,6 +198,7 @@ export default function CampaignEditPage() {
   const [updateCampaign, { isLoading: saving }] = useUpdateMailCampaignMutation();
   const [deleteCampaign, { isLoading: deleting }] = useDeleteMailCampaignMutation();
   const [sendCampaign, { isLoading: sending }] = useSendMailCampaignMutation();
+  const [continueCampaign, { isLoading: continuing }] = useContinueMailCampaignMutation();
   const [scheduleCampaign, { isLoading: scheduling }] = useScheduleMailCampaignMutation();
   const [unscheduleCampaign, { isLoading: unscheduling }] = useUnscheduleMailCampaignMutation();
   const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
@@ -243,7 +245,12 @@ export default function CampaignEditPage() {
   const [vars, setVars] = useState([]); // [{key, value}]
   const [rec, setRec] = useState(DEFAULT_RECURRENCE);
   const [notice, setNotice] = useState('');
-  const [confirmSend, setConfirmSend] = useState(false);
+  // Yayın onayı bekleyen yüzde: null = tüm liste, 1-99 = rastgele örneklem.
+  // Boolean bir `confirmSend` yetmiyor — onay metni hangi yayın olduğunu söylemeli.
+  const [confirmSend, setConfirmSend] = useState(null);
+  const [testPercent, setTestPercent] = useState('5');
+  const [continuePercent, setContinuePercent] = useState('100');
+  const [confirmContinue, setConfirmContinue] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -252,6 +259,8 @@ export default function CampaignEditPage() {
   const isScheduled = status === 'scheduled';
   const isActive = ['queued', 'sending'].includes(status);
   const isPaused = status === 'paused';
+  // Kapanmış koşu: kısmi (test) yayından sonra kalan kitleye devam edilebilir.
+  const isFinished = ['sent', 'partial', 'failed'].includes(status);
   // Süre seçiliyse drip: stats polling'i gevşet — getStats her çağrıda kampanyanın
   // TÜM maillog'unu tarayan tracking aggregation'ı koşturur; 24 saat × 5 sn ağır.
   const hasDrip = Boolean(campaign?.schedule?.durationMinutes);
@@ -268,6 +277,10 @@ export default function CampaignEditPage() {
     pollingInterval: isActive ? (hasDrip ? 30000 : 5000) : 0,
   });
   const stats = statsData?.stats;
+  // Kapsama: kanaldaki güncel kitle vs. bu kampanyanın hedeflediği alıcılar.
+  // `remaining` sunucuda tahmindir (hedeflenenlerin bir kısmı listeden çıkmış
+  // olabilir) — az gösterebilir, fazla değil; gerçek küme gönderimde bulunur.
+  const delivery = statsData?.delivery || null;
   const currentAudience = statsData?.campaign?.audience || campaign?.audience || {};
   const progress = {
     total: Number(stats?.total ?? currentAudience.total ?? 0) || 0,
@@ -407,6 +420,19 @@ export default function CampaignEditPage() {
     return { ok: true, n, perHour };
   }, [effDuration, recipientCount, form.sendConfig.maxRecipients, form.sendConfig.ratePerSec]);
 
+  // Kısmi yayın hedefleri. Sunucu da aynı formülü kullanır (ceil); alıcı limiti
+  // varsa test yayınında onunla kırpılır.
+  const testPercentNum = Math.min(Math.max(Math.round(Number(testPercent) || 0), 1), 99);
+  const testTarget =
+    recipientCount == null
+      ? null
+      : Math.min(
+          Math.ceil((recipientCount * testPercentNum) / 100),
+          Number(form.sendConfig.maxRecipients) || Infinity,
+        );
+  const continuePercentNum = Math.min(Math.max(Math.round(Number(continuePercent) || 0), 1), 100);
+  const continueTarget = delivery ? Math.ceil((delivery.remaining * continuePercentNum) / 100) : null;
+
   const buildPayload = () => ({
     name: form.name.trim(),
     channelKey: form.channelKey,
@@ -448,12 +474,37 @@ export default function CampaignEditPage() {
     }
   };
 
-  const doSend = async () => {
-    const r = await sendCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Gönderilemedi' }));
-    setConfirmSend(false);
+  /** percent: null = tüm liste, 1-99 = kitlenin rastgele o yüzdesi (test yayını). */
+  const doSend = async (percent = null) => {
+    const r = await sendCampaign({ id, percent })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Gönderilemedi' }));
+    setConfirmSend(null);
     if (r?.__err) return setNotice(r.__err);
     await refetchCampaign();
-    setNotice(r?.paused ? `Güvenlik nedeniyle duraklatıldı: ${r.reason}` : `Kampanya kuyruğa alındı (${r?.queued ?? 0} alıcı).`);
+    if (r?.paused) return setNotice(`Güvenlik nedeniyle duraklatıldı: ${r.reason}`);
+    setNotice(
+      r?.samplePercent
+        ? `Test yayını kuyruğa alındı: ${formatCount(r.queued)} kişi (listenin %${r.samplePercent}'i, rastgele seçildi). Kalanı "Kampanyaya Devam Et" ile gönderebilirsiniz.`
+        : `Kampanya kuyruğa alındı (${formatCount(r?.queued ?? 0)} alıcı).`
+    );
+  };
+
+  /** Kalan kitleye yeni parti. percent = KALANIN yüzdesi (100 = kalan herkes). */
+  const doContinue = async () => {
+    const percent = Math.min(Math.max(Math.round(Number(continuePercent) || 0), 1), 100);
+    const r = await continueCampaign({ id, percent })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Devam edilemedi' }));
+    setConfirmContinue(false);
+    if (r?.__err) return setNotice(r.__err);
+    await refetchCampaign();
+    await refetchStats().catch(() => null);
+    setNotice(
+      r?.skipped
+        ? 'Devam edilecek yeni alıcı yok — listedeki herkes bu kampanyayı almış.'
+        : `Devam yayını kuyruğa alındı: ${formatCount(r?.queued ?? 0)} yeni alıcı (kalanın %${percent}'i).`
+    );
   };
 
   // Zamanla: önce taslağı kaydet (zamanlama dahil form değişiklikleri yansısın),
@@ -570,8 +621,10 @@ export default function CampaignEditPage() {
               </Button>
             )}
             {isDraft && (
-              <Button onClick={save} disabled={creating || saving}>
-                {creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Sonra Yayınla
+              // Bu buton YAYINLAMAZ, taslağı kaydeder ("Sonra Yayınla" etiketi
+              // yayın butonu sanılıyordu). Yayın sağdaki özet kartından yapılır.
+              <Button onClick={save} disabled={creating || saving} title="Taslağı kaydet (yayınlamaz)">
+                {creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Kaydet
               </Button>
             )}
             {isDraft && !isNew && (
@@ -1094,17 +1147,105 @@ export default function CampaignEditPage() {
                 </div>
               )}
 
+              {/* Kısmi yayın sonrası kalan kitle — "kim almadı" ve devam kontrolü.
+                  Kanal yayından sonra büyüdüyse yeni üyeler de burada görünür. */}
+              {isFinished && delivery && (
+                <div
+                  className={`space-y-2 rounded-md border p-3 text-xs ${
+                    delivery.remaining > 0
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                      : 'border-border text-muted-foreground'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">
+                      {delivery.remaining > 0 ? 'Yayın tamamlanmadı' : 'Liste tamamlandı'}
+                    </span>
+                    <span>%{delivery.coveredPercent} kapsandı</span>
+                  </div>
+                  <p>
+                    Listedeki {formatCount(delivery.channelTotal)} kişiden{' '}
+                    <b>{formatCount(delivery.covered)}</b> kişiye gönderildi.
+                    {delivery.remaining > 0 && (
+                      <> <b>{formatCount(delivery.remaining)}</b> kişi bu kampanyayı henüz almadı.</>
+                    )}
+                  </p>
+
+                  {delivery.remaining > 0 && (
+                    confirmContinue ? (
+                      <div className="space-y-2">
+                        <p className="text-foreground">
+                          Kalan {formatCount(delivery.remaining)} kişiden{' '}
+                          <b>
+                            {continuePercentNum >= 100
+                              ? 'tamamına'
+                              : `rastgele ${formatCount(continueTarget)} kişiye`}
+                          </b>{' '}
+                          gönderilsin mi?
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={doContinue}
+                            disabled={continuing}
+                            className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
+                          >
+                            {continuing ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                            Evet, gönder
+                          </Button>
+                          <Button variant="outline" onClick={() => setConfirmContinue(false)}>Vazgeç</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="flex items-end gap-2">
+                          <div className="w-20">
+                            <label className="mb-1 block text-[11px] text-muted-foreground">Kalanın %</label>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={continuePercent}
+                              onChange={(e) => setContinuePercent(e.target.value)}
+                              className="h-8"
+                            />
+                          </div>
+                          <Button
+                            variant="outline"
+                            className="h-8 flex-1"
+                            onClick={() => setConfirmContinue(true)}
+                          >
+                            <Send className="size-4" /> Kampanyaya Devam Et
+                          </Button>
+                        </div>
+                        <p className="text-muted-foreground">
+                          {continuePercentNum >= 100
+                            ? 'Kalan herkese gönderilir.'
+                            : `Kalanın %${continuePercentNum}'i ≈ ${formatCount(continueTarget)} kişi rastgele seçilir.`}{' '}
+                          Daha önce mail gitmiş kişiler bu partiye <b>girmez</b>.
+                        </p>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+
               {isDraft && !isNew && (
-                confirmSend ? (
+                confirmSend != null ? (
                   <div className="space-y-2">
                     <p className="text-sm">
-                      {form.channelKey ? `${recipientCount ?? '?'} kişiye` : ''} hemen yayınlansın mı?
+                      {confirmSend >= 100
+                        ? `${formatCount(recipientCount ?? 0)} kişinin tamamına hemen yayınlansın mı?`
+                        : `Listeden rastgele ${formatCount(testTarget ?? 0)} kişiye (%${confirmSend}) test yayını yapılsın mı?`}
                     </p>
                     <div className="flex gap-2">
-                      <Button onClick={doSend} disabled={sending} className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
+                      <Button
+                        onClick={() => doSend(confirmSend >= 100 ? null : confirmSend)}
+                        disabled={sending}
+                        className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
                         {sending ? <Loader2 className="size-4 animate-spin" /> : <Megaphone className="size-4" />} Evet, yayınla
                       </Button>
-                      <Button variant="outline" onClick={() => setConfirmSend(false)}>Vazgeç</Button>
+                      <Button variant="outline" onClick={() => setConfirmSend(null)}>Vazgeç</Button>
                     </div>
                   </div>
                 ) : (
@@ -1123,11 +1264,48 @@ export default function CampaignEditPage() {
                     <Button
                       variant={form.schedule.startAt || effDuration > 0 ? 'outline' : 'default'}
                       className={form.schedule.startAt || effDuration > 0 ? 'w-full' : 'w-full bg-emerald-600 text-white hover:bg-emerald-700'}
-                      onClick={() => setConfirmSend(true)}
+                      onClick={() => setConfirmSend(100)}
                       disabled={!form.channelKey || !form.templateId}
                     >
                       <Megaphone className="size-4" /> Hemen Yayınla
                     </Button>
+
+                    {/* Test yayını: kitlenin rastgele %N'i. Zamanlama DEĞİL —
+                        yüzde yalnız "hemen yayınla" yolunda uygulanır. */}
+                    <div className="rounded-md border border-dashed border-border p-2.5">
+                      <div className="flex items-end gap-2">
+                        <div className="w-20">
+                          <label className="mb-1 block text-[11px] text-muted-foreground">Yüzde</label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={99}
+                            value={testPercent}
+                            onChange={(e) => setTestPercent(e.target.value)}
+                            className="h-8"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          className="h-8 flex-1"
+                          onClick={() => setConfirmSend(testPercentNum)}
+                          disabled={!form.channelKey || !form.templateId}
+                        >
+                          <FlaskConical className="size-4" /> Test Yayın (%{testPercentNum})
+                        </Button>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        {recipientCount == null ? (
+                          'Önce alıcı listesi seçin.'
+                        ) : (
+                          <>
+                            Listeden <b>rastgele {formatCount(testTarget)} kişi</b> seçilir; kalan{' '}
+                            {formatCount(Math.max(recipientCount - testTarget, 0))} kişiye mail gitmez.
+                            Yayın bitince kalanına buradan devam edebilirsiniz.
+                          </>
+                        )}
+                      </p>
+                    </div>
                   </div>
                 )
               )}

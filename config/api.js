@@ -283,6 +283,8 @@ export const ENDPOINTS = {
     campaigns: '/email/campaigns',
     campaign: (id) => `/email/campaigns/${id}`,
     campaignSend: (id) => `/email/campaigns/${id}/send`,
+    // Kısmi (test) yayının kalanı: kampanyayı henüz almamış alıcılara yeni parti.
+    campaignContinue: (id) => `/email/campaigns/${id}/continue`,
     // Zamanlanmış yayın + yayılma (drip) + duraklat/sürdür + önizleme
     campaignSchedule: (id) => `/email/campaigns/${id}/schedule`,
     campaignUnschedule: (id) => `/email/campaigns/${id}/unschedule`,
