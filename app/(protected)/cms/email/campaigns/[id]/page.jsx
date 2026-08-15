@@ -187,6 +187,10 @@ export default function CampaignEditPage() {
     sendConfig: DEFAULT_SEND,
     schedule: DEFAULT_SCHEDULE,
   });
+  // Kanal seçimi iki adımlı: önce liste TÜRÜ (radio), sonra o türdeki liste
+  // (select). null = elle seçilmedi → aşağıda kayıtlı kanalın türüne ya da
+  // ilk dolu gruba düşer.
+  const [listTypeOverride, setListTypeOverride] = useState(null);
   // Gruplar kitle DEĞİLDİR: kampanya tek bir YAPRAK channelKey'e gider (bkz.
   // mail-channel.model.js parentKey notu) — grup seçilse 0 alıcı çıkardı. Grup =
   // açıkça grup olarak açılmış (metadata.isGroup) veya altında kanal taşıyan.
@@ -212,6 +216,12 @@ export default function CampaignEditPage() {
         r.channelKey === form?.channelKey ||
         String(r._id) === String(selectedChannel?.metadata?.generatedFromCron || ''),
     ) || null;
+
+  // Aktif radio: elle seçim > kayıtlı kanalın türü > ilk dolu grup — radio
+  // hep bir seçenek işaretli görünür, seçili liste yoksa bile.
+  const channelGroupType = CHANNEL_TYPE_GROUPS.find((g) => g.types.includes(selectedChannel?.type))?.type || '';
+  const listType = listTypeOverride || channelGroupType || groupedAudience[0]?.type || '';
+  const listTypeItems = groupedAudience.find((g) => g.type === listType)?.items || [];
 
   const [vars, setVars] = useState([]); // [{key, value}]
   const [rec, setRec] = useState(DEFAULT_RECURRENCE);
@@ -665,17 +675,33 @@ export default function CampaignEditPage() {
                 <div className="flex flex-wrap gap-3">
                   <div className="min-w-[200px] flex-1">
                     <label className="mb-1 block text-xs text-muted-foreground">Kanal (alıcı listesi)</label>
-                    <select value={form.channelKey} onChange={(e) => set('channelKey', e.target.value)} disabled={!isDraft}
+                    <div className="mb-1.5 flex flex-wrap gap-x-3 gap-y-1">
+                      {groupedAudience.map((g) => (
+                        <label key={g.type}
+                          className={`flex items-center gap-1.5 text-xs ${isDraft ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
+                          <input
+                            type="radio"
+                            name="channelListType"
+                            value={g.type}
+                            checked={listType === g.type}
+                            disabled={!isDraft}
+                            onChange={() => {
+                              setListTypeOverride(g.type);
+                              // Yeni türde yoksa eski seçim geçersiz kalır — temizle.
+                              if (!g.items.some((c) => c.key === form.channelKey)) set('channelKey', '');
+                            }}
+                          />
+                          {g.label}
+                        </label>
+                      ))}
+                    </div>
+                    <select value={form.channelKey} onChange={(e) => set('channelKey', e.target.value)} disabled={!isDraft || !listType}
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30">
                       <option value="">— seçin —</option>
-                      {groupedAudience.map((g) => (
-                        <optgroup key={g.type} label={g.label}>
-                          {g.items.map((c) => (
-                            <option key={c._id} value={c.key}>
-                              {c.title}{c.description ? ` — ${c.description}` : ''} ({c.key})
-                            </option>
-                          ))}
-                        </optgroup>
+                      {listTypeItems.map((c) => (
+                        <option key={c._id} value={c.key}>
+                          {c.title}{c.description ? ` — ${c.description}` : ''} ({c.key})
+                        </option>
                       ))}
                     </select>
                     {selectedChannelRecipe && (
