@@ -505,12 +505,20 @@ export default function CampaignEditPage() {
     // Yüzde ve gönderim ayarları ÖNCE kaydedilir: zamanlanan koşu yüzdeyi
     // kampanya kaydından okur, hemen giden yayın da aynı kaydı görür.
     const payload = buildPayload();
+    // "Hemen" seçiliyken Başlangıç alanı GÖRÜNMEZ ama form'daki değer kalıcıdır
+    // (unschedule sonrası "yeniden zamanlarken form dolu gelsin" diye korunur) —
+    // görünmeyen bir tarihin sessizce gönderime sızmaması için burada sıfırlanır.
+    if (publishWhen === 'now') payload.schedule.startAt = null;
     const saved = await updateCampaign({ id, ...payload })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Kaydedilemedi' }));
     if (saved?.__err) return setPublishError(saved.__err);
 
-    if (publishWhen === 'at') {
+    // Yayılma süresi "ne zaman" seçiminden BAĞIMSIZ girilebilir ("hemen başla
+    // ama 24 saate yay" geçerli) — ama sunucuda sendNow süre kabul etmez, bu
+    // yüzden süre varsa "Hemen" seçili olsa bile scheduler'a gidilir.
+    const wantsSchedule = publishWhen === 'at' || Boolean(payload.schedule.durationMinutes);
+    if (wantsSchedule) {
       if (!payload.schedule.startAt && !payload.schedule.durationMinutes) {
         return setPublishError('Başlangıç tarihi veya yayılma süresi girin.');
       }
@@ -523,12 +531,15 @@ export default function CampaignEditPage() {
         .catch((e) => ({ __err: e?.data?.message || 'Zamanlanamadı' }));
       if (r?.__err) return setPublishError(r.__err);
       // Tekrar AYRI uçtan yazılır; zamanlama başarılı olduktan sonra denenir ki
-      // tekrar hatası zamanlamayı geri almasın.
-      const recOk = await persistRecurrence();
+      // tekrar hatası zamanlamayı geri almasın. "Hemen + süre" kombinasyonunda
+      // tekrar UI'da gösterilmez (yalnız "at"ta açık) → boşuna PATCH atılmasın.
+      const recOk = publishWhen === 'at' ? await persistRecurrence() : true;
       setPublishOpen(false);
       await refetchCampaign();
       return setNotice(
-        `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt || Date.now())}` +
+        (payload.schedule.startAt
+          ? `Kampanya zamanlandı: ${formatDateTime(payload.schedule.startAt)}`
+          : 'Kampanya kuyruğa alındı: hemen başlıyor') +
         (payload.schedule.durationMinutes ? `, ${formatDuration(payload.schedule.durationMinutes)} yayılma` : '') +
         (publishPercentNum < 100 ? ` · listenin %${publishPercentNum}'i` : '') +
         (recOk ? '' : ' (tekrar ayarı kaydedilemedi)')

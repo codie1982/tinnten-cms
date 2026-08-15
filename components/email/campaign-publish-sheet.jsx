@@ -147,26 +147,32 @@ export function CampaignPublishSheet({
   const capped = isFinished && target >= left && left > 0;
   const coverAfter = total ? Math.round(((sent + target) / total) * 100) : 0;
 
-  const effDuration = Number(form.schedule.durationMinutes) || 0;
+  const effDuration = isFinished ? 0 : Number(form.schedule.durationMinutes) || 0;
   const rate = Number(form.sendConfig.ratePerSec) || 5;
   const etaMin = target ? Math.max(1, Math.ceil(target / rate / 60)) : 0;
   const sender = form.sendConfig.fromAddress?.trim() || 'no-reply@tinten.ai';
   const unitUsesClock = RECURRENCE_UNITS.find((u) => u.value === rec.unit)?.clock !== false;
 
+  // Yayılma süresi "ne zaman" seçiminden BAĞIMSIZ: "hemen başla ama 24 saate
+  // yay" geçerli bir kombinasyon. Süre girildiğinde sunucuda sendNow'ın değil
+  // scheduler'ın işi olur (sendNow süre kabul etmez) — CTA/özet bunu yansıtır.
+  const wantsSchedule = effWhen === 'at' || effDuration > 0;
+
   // Yayılma penceresi fizibilitesi — sunucu da aynı kontrolü yapar, burada
   // erken uyarı olarak gösterilir (gece yarısı sürpriz olmasın).
-  const tooFast = effWhen === 'at' && effDuration > 0 && target > 0
-    && target / (effDuration * 60) > rate;
+  const tooFast = effDuration > 0 && target > 0 && target / (effDuration * 60) > rate;
   const minMinutes = tooFast ? Math.max(1, Math.ceil(target / (rate * 60))) : 0;
 
   const blocked =
     left === 0
       ? (isFinished ? 'Bu kampanyayı almamış kimse kalmadı.' : 'Kanal seçilmedi — gönderilecek alıcı yok.')
-      : effWhen === 'at' && rec.enabled && rec.unit === 'week' && !rec.byWeekday?.length
-        ? 'Haftalık tekrar için en az bir gün seçin.'
-        : tooFast
-          ? `Süre çok kısa: ${fmt(target)} alıcı ${rate} mail/sn hızla en az ${formatDuration(minMinutes)} sürer.`
-          : null;
+      : effWhen === 'at' && !form.schedule.startAt && !effDuration
+        ? 'Başlangıç tarihi veya yayılma süresi girin — yoksa "Hemen" seçin.'
+        : effWhen === 'at' && rec.enabled && rec.unit === 'week' && !rec.byWeekday?.length
+          ? 'Haftalık tekrar için en az bir gün seçin.'
+          : tooFast
+            ? `Süre çok kısa: ${fmt(target)} alıcı ${rate} mail/sn hızla en az ${formatDuration(minMinutes)} sürer.`
+            : null;
 
   const who = isFinished
     ? (capped
@@ -176,11 +182,13 @@ export function CampaignPublishSheet({
         ? `listedeki ${fmt(target)} kişinin tamamına`
         : `listeden rastgele ${fmt(target)} kişiye (%${pct})`);
 
-  const recapWhen = effWhen === 'now'
+  const recapWhen = !wantsSchedule
     ? `şimdi. ${rate} mail/sn ile ≈${etaMin} dk`
-    : `${formatDateTime(form.schedule.startAt) || 'hemen'}’de, ${effDuration ? `${formatDuration(effDuration)} içine yayılarak` : 'tek seferde'}`;
+    : effWhen === 'now'
+      ? `şimdi, ${formatDuration(effDuration)} içine yayılarak`
+      : `${formatDateTime(form.schedule.startAt) || 'hemen'}’de${effDuration ? `, ${formatDuration(effDuration)} içine yayılarak` : ''}`;
 
-  const cta = isFinished ? 'Kalanı yayına al' : effWhen === 'at' ? 'Zamanla' : 'Yayına al';
+  const cta = isFinished ? 'Kalanı yayına al' : wantsSchedule ? 'Zamanla' : 'Yayına al';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -252,8 +260,8 @@ export function CampaignPublishSheet({
               )}
               <div className="space-y-1.5">
                 {[
-                  { value: 'now', t: 'Hemen', d: 'Onaylar onaylamaz kuyruğa girer' },
-                  { value: 'at', t: 'Belirli bir zamanda', d: 'Tarih, saat ve yayılma' },
+                  { value: 'now', t: 'Hemen', d: 'Başlangıç şimdi' },
+                  { value: 'at', t: 'Belirli bir zamanda', d: 'İleri bir tarih ve saat seçin' },
                 ].map((o) => (
                   <label
                     key={o.value}
@@ -272,50 +280,65 @@ export function CampaignPublishSheet({
               </div>
 
               {when === 'at' && (
-                <div className="space-y-3 pt-1">
-                  <div className="flex flex-wrap gap-2.5">
-                    <div className="min-w-[190px] flex-1">
-                      <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pubStart">Başlangıç</label>
-                      <input
-                        id="pubStart"
-                        type="datetime-local"
-                        value={form.schedule.startAt}
-                        disabled={scheduleLocked}
-                        onChange={(e) => setSched('startAt', e.target.value)}
-                        className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-                      />
-                    </div>
-                    <div className="min-w-[170px] flex-1">
-                      <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pubSpread">Yayılma süresi</label>
-                      <select
-                        id="pubSpread"
-                        value={DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes)
-                          ? form.schedule.durationMinutes : 'custom'}
-                        disabled={scheduleLocked}
-                        onChange={(e) =>
-                          setSched('durationMinutes',
-                            e.target.value === 'custom'
-                              ? (DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes)
-                                  ? '90' : form.schedule.durationMinutes || '90')
-                              : e.target.value)
-                        }
-                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-                      >
-                        {DURATION_PRESETS.map((p) => <option key={p.value || 'none'} value={p.value}>{p.label}</option>)}
-                        <option value="custom">Özel…</option>
-                      </select>
-                    </div>
-                    {!DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes) && (
-                      <div className="w-32">
-                        <label className="mb-1 block text-xs text-muted-foreground">Özel süre (dk)</label>
-                        <Input type="number" min={1} value={form.schedule.durationMinutes}
-                          disabled={scheduleLocked} placeholder="örn. 90"
-                          onChange={(e) => setSched('durationMinutes', e.target.value)} />
-                      </div>
-                    )}
-                  </div>
+                <div className="min-w-[190px] pt-1">
+                  <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pubStart">Başlangıç tarihi</label>
+                  <input
+                    id="pubStart"
+                    type="datetime-local"
+                    value={form.schedule.startAt}
+                    disabled={scheduleLocked}
+                    onChange={(e) => setSched('startAt', e.target.value)}
+                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+                  />
+                </div>
+              )}
 
-                  {/* Tekrar — "belirli bir zamanda"nın alt kırılımı, ayrı kart değil */}
+              {/* Yayılma süresi RADIO'DAN BAĞIMSIZ — "hemen başla ama 24 saate yay"
+                  geçerli bir kombinasyon (eski karttaki davranışın aynısı). Süre
+                  seçilirse gönderim sendNow'ın değil scheduler'ın işi olur; hangi
+                  "ne zaman" seçiliyse seçilsin bunu submitPublish kendisi yönetir. */}
+              <div className="flex flex-wrap gap-2.5 pt-1">
+                <div className="min-w-[170px] flex-1">
+                  <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pubSpread">Yayılma süresi</label>
+                  <select
+                    id="pubSpread"
+                    value={DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes)
+                      ? form.schedule.durationMinutes : 'custom'}
+                    disabled={scheduleLocked}
+                    onChange={(e) =>
+                      setSched('durationMinutes',
+                        e.target.value === 'custom'
+                          ? (DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes)
+                              ? '90' : form.schedule.durationMinutes || '90')
+                          : e.target.value)
+                    }
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+                  >
+                    {DURATION_PRESETS.map((p) => <option key={p.value || 'none'} value={p.value}>{p.label}</option>)}
+                    <option value="custom">Özel…</option>
+                  </select>
+                </div>
+                {!DURATION_PRESETS.some((p) => p.value === form.schedule.durationMinutes) && (
+                  <div className="w-32">
+                    <label className="mb-1 block text-xs text-muted-foreground">Özel süre (dk)</label>
+                    <Input type="number" min={1} value={form.schedule.durationMinutes}
+                      disabled={scheduleLocked} placeholder="örn. 90"
+                      onChange={(e) => setSched('durationMinutes', e.target.value)} />
+                  </div>
+                )}
+              </div>
+              {effDuration > 0 && (
+                <p className="text-[11.5px] text-muted-foreground">
+                  {fmt(target)} kişi {formatDuration(effDuration)} içine eşit ağırlıklı yayılır —{' '}
+                  {formatDateTime(form.schedule.startAt) || 'şimdi'} başlar.
+                </p>
+              )}
+
+              {/* Tekrar yalnız "Belirli bir zamanda" ile birlikte anlamlı: zincirin
+                  sonraki halkası yalnız scheduler koşusu başlarken üretilir. */}
+              {when === 'at' && (
+                <>
+                {/* Tekrar — "belirli bir zamanda"nın alt kırılımı, ayrı kart değil */}
                   <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-input p-2.5">
                     <input type="checkbox" checked={rec.enabled} className="mt-0.5"
                       onChange={(e) => setR('enabled', e.target.checked)} />
@@ -419,7 +442,7 @@ export function CampaignPublishSheet({
                       </div>
                     </div>
                   )}
-                </div>
+                </>
               )}
             </Block>
           )}
@@ -511,7 +534,7 @@ export function CampaignPublishSheet({
             <Button className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
               onClick={onSubmit} disabled={busy || Boolean(blocked)}>
               {busy ? <Loader2 className="size-4 animate-spin" />
-                : effWhen === 'at' ? <CalendarClock className="size-4" />
+                : wantsSchedule ? <CalendarClock className="size-4" />
                 : <Megaphone className="size-4" />}
               {cta}
             </Button>
