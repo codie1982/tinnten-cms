@@ -68,10 +68,13 @@ export const cronListApi = baseApi.injectEndpoints({
      * edilmez (aksi halde tablo boşuna yeniden çekilir).
      */
     dryRunCronList: build.mutation({
-      query: ({ id, ...body } = {}) => ({
+      // `cap` (tarama tavanı) QUERY STRING'e gider — backend onu req.query'den
+      // okur, gövdeden değil. Gövdede kalırsa sessizce yok sayılır.
+      query: ({ id, cap, ...body } = {}) => ({
         url: id ? ENDPOINTS.email.cronListDryRunById(id) : ENDPOINTS.email.cronListDryRun,
         method: 'POST',
         body: id ? {} : body,
+        ...(cap ? { params: { cap } } : {}),
       }),
       transformResponse: (res) => res?.data ?? res,
     }),

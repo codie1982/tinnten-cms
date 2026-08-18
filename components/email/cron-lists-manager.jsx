@@ -32,6 +32,10 @@ const CRON_PRESETS = [
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
 
+// "Test Et" tarama tavanı seçenekleri. Backend DRY_RUN_MAX_CAP=5000 ile sınırlar;
+// buradan daha büyük bir değer göndermek işe yaramaz.
+const SCAN_CAPS = [1000, 2500, 5000];
+
 const OP_LABELS = {
   eq: '= eşit', ne: '≠ değil', in: 'içinde (virgülle)', nin: 'dışında (virgülle)',
   gt: '> büyük', gte: '≥ büyük/eşit', lt: '< küçük', lte: '≤ küçük/eşit', exists: 'var/yok',
@@ -139,6 +143,7 @@ export function CronListsManager({ authorized }) {
   // { title, data } — form taslağının ya da tablodaki bir reçetenin test sonucu.
   const [dryRun, setDryRun] = useState(null);
   const [dryRunFor, setDryRunFor] = useState(null); // spinner hedefi: 'form' | row._id
+  const [scanCap, setScanCap] = useState(SCAN_CAPS[0]); // "Test Et" tarama tavanı
 
   const sources = schema?.sources || {};
   const ops = schema?.ops || ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin', 'exists'];
@@ -292,8 +297,11 @@ export function CronListsManager({ authorized }) {
     try { query = buildQuery(); } catch (e) { setDryRunFor(null); return setNotice(e.message); }
     const r = await dryRunList({
       ...query,
+      cap: scanCap,
       name: form.name.trim() || 'Test listesi',
       buildMode: form.buildMode,
+      // Yalnızca "tavan teste ait, build limiti şu" uyarısını doğru göstermek için.
+      maxRecipients: Number(form.maxRecipients) || 5000,
       channelKey: form.channelKey || undefined,
       schedule: { timezone: form.schedule.timezone },
     }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
@@ -305,7 +313,7 @@ export function CronListsManager({ authorized }) {
   /** Tablodaki kayıtlı reçeteyi olduğu gibi dener (form açmadan). */
   const doDryRunRow = async (row) => {
     setNotice(''); setDryRun(null); setDryRunFor(row._id);
-    const r = await dryRunList({ id: row._id }).unwrap()
+    const r = await dryRunList({ id: row._id, cap: scanCap }).unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
     setDryRunFor(null);
     if (r?.__err) return setNotice(r.__err);
@@ -550,9 +558,24 @@ export function CronListsManager({ authorized }) {
               <Button variant="outline" onClick={doDryRunForm} disabled={dryRunFor === 'form'} title="Liste oluşturmadan kimlerin geleceğini gösterir">
                 {dryRunFor === 'form' ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />} Test Et
               </Button>
+              {/* Test Et kişi başına sıralı DB sorgusu yapar (eleme sırası build ile
+                  birebir aynı kalmak zorunda, paralelleştirilemez) → tarama tavanı
+                  ayarlanabilir. Gerçek toplam için Önizleme kullanılır: o tek
+                  sorguda tam sayıyı döner. */}
+              <select
+                className={`${SELECT_CLS} w-44`}
+                value={scanCap}
+                onChange={(e) => setScanCap(Number(e.target.value))}
+                title="Test Et taramasının durduğu kayıt sayısı"
+              >
+                {SCAN_CAPS.map((n) => (
+                  <option key={n} value={n}>{formatCount(n)} kayıt tara</option>
+                ))}
+              </select>
               {preview && (
                 <span className="text-sm text-muted-foreground">
-                  Eşleşen (tahmini): <b>{preview.count}{preview.capped ? '+' : ''}</b>
+                  Eşleşen{preview.exact === false ? ' (alt sınır)' : ''}:{' '}
+                  <b>{formatCount(preview.count)}{preview.capped ? '+' : ''}</b>
                 </span>
               )}
             </div>
@@ -723,7 +746,14 @@ function DryRunResult({ title, data, onClose }) {
         {data?.capped && (
           <Alert variant="warning">
             <AlertDescription>
-              Tarama {data.cap} kayıtta durduruldu — aşağıdaki sayılar <b>alt sınırdır</b>.
+              Tarama {formatCount(data.cap)} kayıtta durduruldu — aşağıdaki sayılar{' '}
+              <b>alt sınırdır</b>. Test, listeye kimin gireceğini ve elenenlerin nedenini
+              göstermek için kişi başına ayrı sorgu yapar; bu yüzden bir tavanı vardır.
+              Tavanı yukarıdaki <b>“kayıt tara”</b> seçiminden yükseltebilirsin.
+              Kitlenin <b>gerçek toplamı</b> için <b>Önizleme</b>’yi kullan — o tek sorguda
+              tam sayıyı verir. Not: bu tavan <b>yalnızca teste</b> aittir, listenin
+              kendisi çalışırken <b>{formatCount(data.maxRecipients || 5000)}</b> kişiye
+              kadar oluşturulur.
             </AlertDescription>
           </Alert>
         )}
