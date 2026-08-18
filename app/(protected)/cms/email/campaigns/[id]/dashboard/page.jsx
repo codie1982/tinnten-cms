@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
-  ArrowLeft, Loader2, RefreshCw, Eye, MousePointerClick, Send, Users,
+  ArrowLeft, Loader2, RefreshCw, Eye, MousePointerClick, Send, Users, Pause, Play,
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -24,6 +24,8 @@ import {
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
   useGetMailCampaignTimeSeriesQuery,
+  usePauseMailCampaignMutation,
+  useResumeMailCampaignMutation,
 } from '@/redux/services';
 
 const PAGE = 25;
@@ -39,6 +41,17 @@ const ENGAGEMENT_TABS = [
   { key: 'clicked', label: 'Tıklayanlar' },
   { key: 'none', label: 'Tepkisiz' },
 ];
+
+const STATUS_META = {
+  draft: { label: 'Taslak', variant: 'secondary' },
+  scheduled: { label: 'Zamanlandı', variant: 'primary' },
+  queued: { label: 'Kuyrukta', variant: 'primary' },
+  sending: { label: 'Gönderiliyor', variant: 'primary' },
+  sent: { label: 'Gönderildi', variant: 'success' },
+  partial: { label: 'Kısmi', variant: 'warning' },
+  failed: { label: 'Başarısız', variant: 'destructive' },
+  paused: { label: 'Duraklatıldı', variant: 'warning' },
+};
 
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
@@ -62,6 +75,7 @@ export default function CampaignDashboardPage() {
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
   const [engagement, setEngagement] = useState('all');
   const [page, setPage] = useState(1);
+  const [notice, setNotice] = useState('');
 
   const {
     data: campaign,
@@ -69,6 +83,12 @@ export default function CampaignDashboardPage() {
     isFetching: campaignFetching,
     refetch: refetchCampaign,
   } = useGetMailCampaignQuery(id, { skip: !authorized });
+
+  const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
+  const [resumeCampaign, { isLoading: resuming }] = useResumeMailCampaignMutation();
+  const status = campaign?.status || 'draft';
+  const isActive = ['queued', 'sending'].includes(status);
+  const isPaused = status === 'paused';
 
   const {
     data: statsData,
@@ -108,6 +128,24 @@ export default function CampaignDashboardPage() {
     ]);
   };
 
+  const doPause = async () => {
+    const r = await pauseCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Duraklatılamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refreshAll();
+    setNotice('Kampanya duraklatıldı.');
+  };
+
+  const doResume = async () => {
+    const r = await resumeCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Sürdürülemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refreshAll();
+    setNotice(
+      r?.requeued || r?.rescanned
+        ? `Kampanya sürdürüldü (${(r.requeued || 0) + (r.rescanned || 0)} alıcı yeniden kuyruğa alındı).`
+        : 'Kampanya sürdürüldü.'
+    );
+  };
+
   const busy = campaignFetching || statsFetching || seriesFetching || recipientsFetching;
 
   return (
@@ -117,14 +155,37 @@ export default function CampaignDashboardPage() {
         title={campaign?.name || 'Kampanya'}
         description="Görüntülenme, tıklama ve alıcı bazlı geri dönüş takibi"
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {!campaignLoading && (
+              <Badge variant={(STATUS_META[status] || {}).variant || 'secondary'}>
+                {(STATUS_META[status] || {}).label || status}
+              </Badge>
+            )}
             <Link href="/cms/email/campaigns"><Button variant="outline"><ArrowLeft className="size-4" /> Liste</Button></Link>
             <Button variant="outline" onClick={refreshAll} disabled={busy}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Yenile
             </Button>
+            {isActive && (
+              <Button variant="outline" onClick={doPause} disabled={pausing}>
+                {pausing ? <Loader2 className="size-4 animate-spin" /> : <Pause className="size-4" />} Duraklat
+              </Button>
+            )}
+            {isPaused && (
+              <Button variant="outline" onClick={doResume} disabled={resuming}>
+                {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} Sürdür
+              </Button>
+            )}
           </div>
         }
       />
+
+      {notice && <Alert variant="info" className="mb-4"><AlertDescription>{notice}</AlertDescription></Alert>}
+      {campaign?.pausedReason && isPaused && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertTitle>Duraklatıldı</AlertTitle>
+          <AlertDescription>{campaign.pausedReason}</AlertDescription>
+        </Alert>
+      )}
 
       {campaignLoading ? (
         <Skeleton className="h-96" />
