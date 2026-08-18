@@ -49,7 +49,7 @@ const REL_UNITS = [
 // Satır bazında `reason` (snake_case) ve özet sayaç anahtarları (camelCase) ayrı
 // gelir — ikisi de aynı etiketlere bağlanır.
 const SKIP_REASONS = {
-  no_email: 'E-posta yok (Mongo + Keycloak)',
+  no_email: 'E-posta yok',
   keycloak_error: 'Keycloak’a ulaşılamadı',
   duplicate: 'Aynı e-posta tekrar',
   unsubscribed: 'Listeden çıkmış',
