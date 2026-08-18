@@ -187,23 +187,61 @@ export function CronListsManager({ authorized }) {
   const changeSource = (src) => setForm((f) => ({ ...f, source: src, filters: [], relations: [] }));
 
   const addFilter = () => set('filters', [...form.filters, { field: fields[0]?.name || '', op: 'eq', value: '', rel: '' }]);
-  const setFilter = (i, patch) => set('filters', form.filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+
+  /**
+   * Operatör değişince `value` normalize edilir. Önceden devralınıyordu ve
+   * `exists`'e geçen satır `value: ''` ile kalıyordu: `buildQuery` bunu
+   * `false`'a çevirdiği için, ekranda "var" yazarken sorguya `$exists: false`
+   * ("alan YOK") gidiyordu — yani tam tersi. Kullanıcı dropdown'a hiç
+   * dokunmazsa liste sessizce boş/yanlış çıkıyordu.
+   */
+  const setFilter = (i, patch) =>
+    set('filters', form.filters.map((f, j) => {
+      if (j !== i) return f;
+      const next = { ...f, ...patch };
+      if (patch.op !== undefined && patch.op !== f.op) {
+        next.value = patch.op === 'exists' ? 'true' : '';
+        if (patch.op === 'exists') next.rel = '';
+      }
+      return next;
+    }));
   const rmFilter = (i) => set('filters', form.filters.filter((_, j) => j !== i));
 
   const toggleRelation = (name) =>
     set('relations', form.relations.includes(name) ? form.relations.filter((r) => r !== name) : [...form.relations, name]);
 
-  const parsePipeline = () => {
+  /**
+   * Pipeline'ı doğrular ve backend'e DÜZ METİN olarak gönderilecek hâlini üretir.
+   *
+   * Dizi olarak gönderilemez: backend'deki global `express-mongo-sanitize`
+   * `$match`/`$group` gibi anahtarları silip pipeline'ı `[{}]`'e çeviriyordu —
+   * reçete sorunsuz kaydediliyor ama liste hiç oluşmuyordu. Sanitizer string
+   * değerlere dokunmadığı için metin olarak yollanır, backend parse eder.
+   */
+  const buildPipelineText = () => {
     let p;
     try { p = JSON.parse(form.pipelineText || '[]'); }
     catch (e) { throw new Error('Pipeline JSON geçersiz: ' + e.message); }
     if (!Array.isArray(p)) throw new Error('Pipeline bir dizi (array) olmalı.');
-    return p;
+    if (p.length === 0) throw new Error('Aggregate pipeline boş olamaz (örn. [ { "$match": { ... } } ]).');
+    p.forEach((stage, i) => {
+      if (!stage || typeof stage !== 'object' || Array.isArray(stage)) {
+        throw new Error(`Pipeline ${i + 1}. stage bir nesne olmalı.`);
+      }
+      const keys = Object.keys(stage);
+      if (keys.length !== 1) {
+        throw new Error(`Pipeline ${i + 1}. stage tam olarak bir operatör içermeli (örn. { "$match": { ... } }).`);
+      }
+      if (!keys[0].startsWith('$')) {
+        throw new Error(`Pipeline ${i + 1}. stage operatörü "$" ile başlamalı ("${keys[0]}").`);
+      }
+    });
+    return JSON.stringify(p);
   };
 
   const buildQuery = () => {
     if (form.queryMode === 'aggregate') {
-      return { source: form.source, queryMode: 'aggregate', pipeline: parsePipeline() };
+      return { source: form.source, queryMode: 'aggregate', pipelineText: buildPipelineText() };
     }
     return {
       source: form.source,
@@ -403,6 +441,11 @@ export function CronListsManager({ authorized }) {
                           onChange={(e) => setFilter(i, {
                             field: e.target.value,
                             ...(fieldType(e.target.value) === 'date' ? {} : { rel: '' }),
+                            // Bool alana geçerken serbest metin devralınırsa backend
+                            // onu sessizce `false`'a çevirir → varsayılanı netleştir.
+                            ...(fieldType(e.target.value) === 'bool' && f.op !== 'exists'
+                              ? { value: 'true' }
+                              : {}),
                           })}
                         >
                           {fields.map((fl) => <option key={fl.name} value={fl.name}>{fl.name} ({fl.type})</option>)}
@@ -415,10 +458,27 @@ export function CronListsManager({ authorized }) {
                             <option value="true">var</option>
                             <option value="false">yok</option>
                           </select>
+                        ) : fieldType(f.field) === 'bool' && f.op !== 'in' && f.op !== 'nin' ? (
+                          // Bool alanlar serbest metin kutusundaydı; backend yalnız
+                          // `true` dizesini doğru sayar, dolayısıyla "evet"/"1"/"True"
+                          // sessizce `false` olup listeyi yanlış/boş üretiyordu.
+                          <select
+                            className={`${SELECT_CLS} w-36`}
+                            value={String(f.value) === 'true' ? 'true' : 'false'}
+                            onChange={(e) => setFilter(i, { value: e.target.value })}
+                          >
+                            <option value="true">evet (true)</option>
+                            <option value="false">hayır (false)</option>
+                          </select>
                         ) : (
                           <Input
                             className="w-44"
-                            placeholder={f.rel === 'hours' ? 'N (saat önce)' : f.rel === 'days' ? 'N (gün önce)' : 'değer'}
+                            placeholder={
+                              f.rel === 'hours' ? 'N (saat önce)'
+                                : f.rel === 'days' ? 'N (gün önce)'
+                                : fieldType(f.field) === 'date' ? 'YYYY-AA-GG (örn. 2026-08-18)'
+                                : 'değer'
+                            }
                             value={f.value}
                             onChange={(e) => setFilter(i, { value: e.target.value })}
                           />

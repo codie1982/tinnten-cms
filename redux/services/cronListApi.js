@@ -47,7 +47,16 @@ export const cronListApi = baseApi.injectEndpoints({
     runCronList: build.mutation({
       query: (id) => ({ url: ENDPOINTS.email.cronListRun(id), method: 'POST' }),
       transformResponse: (res) => res?.data ?? res,
-      invalidatesTags: (r, e, id) => [{ type: 'CronList', id }],
+      // Tabloyu `getCronLists` besler ve o yalnız `id:'LIST'` tag'i sağlar; burada
+      // sadece `{id}` invalidate edildiği için ▶ sonrası satır HİÇ tazelenmiyordu
+      // → "Son üretim"/`lastError` sütunu eski kalıyor, başarısız build sessiz
+      // görünüyordu. Build fire-and-forget olduğundan sonucun görünmesi için
+      // birkaç saniye sonra tabloyu yenilemek gerekebilir.
+      invalidatesTags: (r, e, id) => [
+        { type: 'CronList', id },
+        { type: 'CronList', id: 'LIST' },
+        { type: 'MailChannel', id: 'LIST' },
+      ],
     }),
     previewCronList: build.mutation({
       query: (body) => ({ url: ENDPOINTS.email.cronListPreview, method: 'POST', body }),
