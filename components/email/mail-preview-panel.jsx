@@ -29,7 +29,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * CMS CSS'i maile, mail CSS'i sayfaya SIZMAZ. Şablon sayfasındaki eski
  * `dangerouslySetInnerHTML`'li gömülü kart tam da bu yüzden yanıltıcıydı.
  */
-export function MailPreviewPanel({ campaignId, templateId, open, onClose }) {
+export function MailPreviewPanel({ campaignId, templateId, open, onClose, initialAs }) {
   const [previewCampaign, { isLoading: campaignLoading }] = usePreviewMailCampaignMutation();
   const [previewTemplate, { isLoading: templateLoading }] = usePreviewMailTemplateMutation();
   const [data, setData] = useState(null);
@@ -59,12 +59,12 @@ export function MailPreviewPanel({ campaignId, templateId, open, onClose }) {
     if (open && targetId) {
       setData(null);
       setError('');
-      setAs('');
+      setAs(initialAs || '');
       setSavedRecipients(getDemoRecipients());
-      load(null);
+      load(initialAs || null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, targetId]);
+  }, [open, targetId, initialAs]);
 
   if (!open) return null;
 

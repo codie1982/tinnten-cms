@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { MailPreviewPanel } from '@/components/email/mail-preview-panel';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetMailCampaignQuery,
@@ -76,6 +77,7 @@ export default function CampaignDashboardPage() {
   const [engagement, setEngagement] = useState('all');
   const [page, setPage] = useState(1);
   const [notice, setNotice] = useState('');
+  const [previewRecipient, setPreviewRecipient] = useState(null);
 
   const {
     data: campaign,
@@ -292,6 +294,7 @@ export default function CampaignDashboardPage() {
                       <TableHead>Açıldı mı</TableHead>
                       <TableHead>Tıklandı mı</TableHead>
                       <TableHead>Son işlem</TableHead>
+                      <TableHead className="text-right">Önizleme</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -321,6 +324,16 @@ export default function CampaignDashboardPage() {
                         <TableCell className="text-xs text-muted-foreground">
                           {fmtDateTime(r.firstClickAt || r.openedAt || r.sentAt)}
                         </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setPreviewRecipient(r.to)}
+                            title="Bu alıcıya giden maili önizle"
+                          >
+                            <Eye className="size-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -339,6 +352,13 @@ export default function CampaignDashboardPage() {
           </Card>
         </div>
       )}
+
+      <MailPreviewPanel
+        campaignId={id}
+        initialAs={previewRecipient}
+        open={Boolean(previewRecipient)}
+        onClose={() => setPreviewRecipient(null)}
+      />
     </RoleGuard>
   );
 }
