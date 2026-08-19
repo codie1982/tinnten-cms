@@ -11,13 +11,14 @@ export const errorMonitoringApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
     getErrorStats: build.query({
       query: () => ENDPOINTS.errorMonitoring.cmsStats,
-      transformResponse: (res) => res?.data ?? res, // { issues, events }
+      transformResponse: (res) => res?.data ?? res, // { issues, events, regressions }
       providesTags: [{ type: 'ErrorIssue', id: 'STATS' }],
     }),
     getErrorIssues: build.query({
-      query: ({ page = 1, limit = 25, status, level, environment, q, sort } = {}) => ({
+      // `regressed: 1` → yalnız kapatıldıktan sonra geri gelen issue'lar.
+      query: ({ page = 1, limit = 25, status, level, environment, q, sort, regressed } = {}) => ({
         url: ENDPOINTS.errorMonitoring.cmsIssues,
-        params: { page, limit, status, level, environment, q, sort },
+        params: { page, limit, status, level, environment, q, sort, regressed },
       }),
       transformResponse: (res) => res?.data ?? res, // { items, total, page, limit, totalPages }
       providesTags: [{ type: 'ErrorIssue', id: 'LIST' }],
@@ -28,10 +29,11 @@ export const errorMonitoringApi = baseApi.injectEndpoints({
       providesTags: (r, e, fingerprint) => [{ type: 'ErrorIssue', id: fingerprint }],
     }),
     updateErrorIssue: build.mutation({
-      query: ({ fingerprint, status }) => ({
+      // `note` opsiyonel — gönderilmezse backend mevcut gerekçeyi korur.
+      query: ({ fingerprint, status, note }) => ({
         url: ENDPOINTS.errorMonitoring.cmsResolve(fingerprint),
         method: 'PATCH',
-        body: { status },
+        body: note === undefined ? { status } : { status, note },
       }),
       invalidatesTags: (r, e, { fingerprint }) => [
         { type: 'ErrorIssue', id: fingerprint },
