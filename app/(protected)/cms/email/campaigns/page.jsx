@@ -294,6 +294,13 @@ function CampaignsPageInner() {
   const renderRow = (c) => {
     const m = statusMeta[c.status] || { label: c.status, variant: 'muted' };
     const progress = getProgress(c);
+    /**
+     * Bir parti bitince kampanya "Kısmi"de bekler ve kaç kişinin hiç mail
+     * almadığını `completion.remaining` taşır. Listede yalnız "Kısmi" yazmak
+     * o sayıyı gizliyordu — kanalın %95'i bekliyor olabilir.
+     */
+    const waiting =
+      c.completion?.reason === 'batch_done' ? Number(c.completion.remaining) || 0 : 0;
     return (
       <TableRow key={c._id}>
         <TableCell className="font-medium">
@@ -313,7 +320,10 @@ function CampaignsPageInner() {
         </TableCell>
         <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
         <TableCell>
-          <Badge variant={m.variant}>{m.label}</Badge>
+          <Badge variant={m.variant}>
+            {m.label}
+            {waiting ? ` · ${waiting} bekliyor` : ''}
+          </Badge>
           {c.status === 'scheduled' && c.schedule?.startAt && (
             <div className="mt-0.5 text-[11px] text-muted-foreground">
               {formatStartAt(c.schedule.startAt)}

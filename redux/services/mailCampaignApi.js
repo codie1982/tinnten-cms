@@ -279,6 +279,42 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
+    /**
+     * "Bitir" — kampanyayı bilerek kapatır, kalan kitleye GÖNDERMEZ.
+     *
+     * Kampanya kitle tükenmeden kendiliğinden "Gönderildi"ye geçmediği için
+     * (bir parti bitince "Kısmi"de bekler), yarım bırakılan yayını arşivlemenin
+     * tek yolu bu. Yanıt `remaining` ile kaç kişiye hiç gitmediğini söyler.
+     */
+    finishMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignFinish(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    /**
+     * "Baştan Başlat" — kampanyayı taslağa döndürür.
+     *
+     * ⚠️ Gönderim izlerini SİLER: açılma/tıklama geçmişi gider ve aynı kişilere
+     * yeniden mail gidebilir. Sunucu `confirm: true` olmadan 400 döner; çağıran
+     * kullanıcıya sormadan bu bayrağı GÖNDERMEMELİ.
+     */
+    restartMailCampaign: build.mutation({
+      query: (id) => ({
+        url: ENDPOINTS.email.campaignRestart(id),
+        method: 'POST',
+        body: { confirm: true },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
     // Kampanya önizlemesi — "önizlenen = gönderilen": şablon + konu override +
     // globalVars + gönderim anındaki header/footer chrome'u. `as` verilirse
     // token'lar o alıcının GERÇEK profil verisiyle çözülür (resolveEmailVars).
@@ -386,6 +422,8 @@ export const {
   useGetMailCampaignSeriesQuery,
   usePauseMailCampaignMutation,
   useResumeMailCampaignMutation,
+  useFinishMailCampaignMutation,
+  useRestartMailCampaignMutation,
   usePreviewMailCampaignMutation,
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
