@@ -293,6 +293,11 @@ export const ENDPOINTS = {
     campaignSeries: (id) => `/email/campaigns/${id}/series`,
     campaignPause: (id) => `/email/campaigns/${id}/pause`,
     campaignResume: (id) => `/email/campaigns/${id}/resume`,
+    // Kampanya kitle tükenmeden KENDİLİĞİNDEN kapanmaz; yarım kalan bir yayını
+    // "bitti" saymanın tek yolu budur. Kalan kişi sayısı kayda yazılır.
+    campaignFinish: (id) => `/email/campaigns/${id}/finish`,
+    // Yıkıcı: gönderim izlerini siler → aynı kişilere yeniden gidebilir.
+    campaignRestart: (id) => `/email/campaigns/${id}/restart`,
     campaignPreview: (id) => `/email/campaigns/${id}/preview`,
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
     campaignRecipients: (id) => `/email/campaigns/${id}/recipients`,

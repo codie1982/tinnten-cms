@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   ArrowLeft, Loader2, RefreshCw, Eye, MousePointerClick, Send, Users, Pause, Play,
+  CheckCircle2, RotateCcw, SendHorizontal,
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -27,6 +28,9 @@ import {
   useGetMailCampaignTimeSeriesQuery,
   usePauseMailCampaignMutation,
   useResumeMailCampaignMutation,
+  useFinishMailCampaignMutation,
+  useRestartMailCampaignMutation,
+  useContinueMailCampaignMutation,
 } from '@/redux/services';
 
 const PAGE = 25;
@@ -88,9 +92,24 @@ export default function CampaignDashboardPage() {
 
   const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
   const [resumeCampaign, { isLoading: resuming }] = useResumeMailCampaignMutation();
+  const [finishCampaign, { isLoading: finishing }] = useFinishMailCampaignMutation();
+  const [restartCampaign, { isLoading: restarting }] = useRestartMailCampaignMutation();
+  const [continueCampaign, { isLoading: continuing }] = useContinueMailCampaignMutation();
   const status = campaign?.status || 'draft';
   const isActive = ['queued', 'sending'].includes(status);
   const isPaused = status === 'paused';
+  const isTerminal = ['sent', 'partial', 'failed'].includes(status);
+
+  /**
+   * Kampanya kitle tükenmeden kapanmaz: bir parti bitince backend `partial` +
+   * `completion.reason:"batch_done"` yazar ve kalan sayısını taşır. Eskiden
+   * doğrudan "Gönderildi" oluyordu ve listenin %95'i mail almadığı hiçbir
+   * yerde görünmüyordu — bu yüzden bekleyen sayısı rozete kadar taşınıyor.
+   */
+  const waiting = Number(campaign?.completion?.remaining) || 0;
+  const isWaiting = campaign?.completion?.reason === 'batch_done' && waiting > 0;
+  // Yarım kalmış her yayın bitirilebilir; zaten tükenmişe "Bitir" göstermek anlamsız.
+  const canFinish = (isTerminal || isPaused) && waiting > 0;
 
   const {
     data: statsData,
@@ -148,6 +167,36 @@ export default function CampaignDashboardPage() {
     );
   };
 
+  const doContinue = async () => {
+    const r = await continueCampaign({ id, percent: 100 })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Devam ettirilemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refreshAll();
+    setNotice(r?.queued ? `${formatCount(r.queued)} alıcı kuyruğa alındı.` : 'Gönderilecek yeni alıcı bulunamadı.');
+  };
+
+  const doFinish = async () => {
+    // Kalan kitleye bir daha gidilmeyeceği için onay alınır; geri alınabilir
+    // ama "bitti" etiketi raporlara yansır.
+    if (!window.confirm(`Kampanya bitirilecek. Kalan ${formatCount(waiting)} kişiye GÖNDERİLMEYECEK. Onaylıyor musunuz?`)) return;
+    const r = await finishCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Bitirilemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refreshAll();
+    setNotice(r?.remaining ? `Kampanya bitirildi. ${formatCount(r.remaining)} kişiye gönderilmedi.` : 'Kampanya bitirildi.');
+  };
+
+  const doRestart = async () => {
+    // YIKICI: maillog satırları silinir → açılma/tıklama geçmişi gider ve aynı
+    // kişilere yeniden mail gidebilir. Yazılı onay istenmesinin sebebi bu.
+    const answer = window.prompt('Baştan başlatmak tüm gönderim ve tıklama geçmişini SİLER; aynı kişilere yeniden mail gidebilir. Onaylamak için BAŞTAN yazın:');
+    if ((answer || '').trim().toLocaleUpperCase('tr-TR') !== 'BAŞTAN') return;
+    const r = await restartCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Baştan başlatılamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    await refreshAll();
+    setNotice(`Kampanya taslağa döndürüldü. ${formatCount(r?.clearedLogs || 0)} gönderim kaydı silindi.`);
+  };
+
   const busy = campaignFetching || statsFetching || seriesFetching || recipientsFetching;
 
   return (
@@ -161,6 +210,7 @@ export default function CampaignDashboardPage() {
             {!campaignLoading && (
               <Badge variant={(STATUS_META[status] || {}).variant || 'secondary'}>
                 {(STATUS_META[status] || {}).label || status}
+                {isWaiting ? ` · ${formatCount(waiting)} bekliyor` : ''}
               </Badge>
             )}
             <Link href="/cms/email/campaigns"><Button variant="outline"><ArrowLeft className="size-4" /> Liste</Button></Link>
@@ -177,11 +227,36 @@ export default function CampaignDashboardPage() {
                 {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} Sürdür
               </Button>
             )}
+            {isTerminal && waiting > 0 && (
+              <Button onClick={doContinue} disabled={continuing}>
+                {continuing ? <Loader2 className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />} Devam Et
+              </Button>
+            )}
+            {canFinish && (
+              <Button variant="outline" onClick={doFinish} disabled={finishing}>
+                {finishing ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Bitir
+              </Button>
+            )}
+            {(isTerminal || isPaused) && (
+              <Button variant="outline" onClick={doRestart} disabled={restarting}>
+                {restarting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Baştan Başlat
+              </Button>
+            )}
           </div>
         }
       />
 
       {notice && <Alert variant="info" className="mb-4"><AlertDescription>{notice}</AlertDescription></Alert>}
+      {isWaiting && (
+        <Alert variant="warning" className="mb-4">
+          <AlertTitle>Kampanya tamamlanmadı — {formatCount(waiting)} kişi bekliyor</AlertTitle>
+          <AlertDescription>
+            {campaign?.pausedReason
+              || `Bu partinin gönderimi bitti. Listede henüz mail almamış ${formatCount(waiting)} kişi var.`}
+            {' '}Kalanlara göndermek için “Devam Et”, kampanyayı burada kapatmak için “Bitir”.
+          </AlertDescription>
+        </Alert>
+      )}
       {campaign?.pausedReason && isPaused && (
         <Alert variant="destructive" className="mb-4">
           <AlertTitle>Duraklatıldı</AlertTitle>
