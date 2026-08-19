@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Loader2, Plus, RefreshCw, Trash2, Search, FilterX } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
@@ -43,6 +44,8 @@ const VIEWS = [
   { value: 'done', label: 'Tamamlanan', hint: 'Gönderildi, kısmi ve başarısız koşular' },
   { value: 'all', label: 'Tümü', hint: 'Bütün kampanyalar' },
 ];
+
+const VIEW_KEYS = VIEWS.map((v) => v.value);
 
 // Durum seçenekleri görünüme göre daralır: "Etkin"te "Gönderildi" seçilebilse
 // segment ile tablo çelişirdi.
@@ -96,6 +99,43 @@ const formatDuration = (min) => {
   if (m % 60 === 0) return `${m / 60} saat`;
   return `${m} dk`;
 };
+/**
+ * Tamamlanan bir koşunun tarihi: `sentAt` yayının BAŞLADIĞI andır (operatörün
+ * "ne zaman gönderdim" sorusunun cevabı); yoksa son değişikliğe düşeriz —
+ * bitmiş bir kampanyada `updatedAt` pratikte tamamlanma anıdır.
+ */
+const getCompletedAt = (campaign) => {
+  const raw = campaign.sentAt || campaign.updatedAt || campaign.createdAt;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+// Sıra ÖNEMLİ: gruplar tabloda bu sırayla çıkar (yeniden eskiye).
+const DATE_BUCKETS = [
+  { key: 'today', label: 'Bugün' },
+  { key: 'yesterday', label: 'Dün' },
+  { key: 'week', label: 'Geçen hafta' },
+  { key: 'month', label: 'Geçen ay' },
+  { key: 'older', label: 'Daha eski' },
+  { key: 'unknown', label: 'Tarihi bilinmiyor' },
+];
+
+const bucketOf = (date, todayStart) => {
+  if (!date) return 'unknown';
+  // round (floor değil): DST'li bir bölgede iki gece yarısı arası 23 saat
+  // olabilir ve "dün" sessizce "bugün" kovasına düşerdi.
+  const days = Math.round((todayStart - startOfDay(date)) / 86400000);
+  // days < 0 = ileri tarihli damga (saat kayması); "Bugün"de kalsın, kaybolmasın.
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days <= 7) return 'week';
+  if (days <= 30) return 'month';
+  return 'older';
+};
+
 const getProgress = (campaign) => {
   const audience = campaign.audience || {};
   const progress = campaign.progress || {};
@@ -117,9 +157,12 @@ const getProgress = (campaign) => {
   };
 };
 
-export default function CampaignsPage() {
+function CampaignsPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const [notice, setNotice] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
 
@@ -137,6 +180,21 @@ export default function CampaignsPage() {
     const t = setTimeout(() => setQ(qInput.trim()), 350);
     return () => clearTimeout(t);
   }, [qInput]);
+
+  // Görünüm ↔ URL çift yönlü. Tıklama ?view=<key> yazar (selectView); bu efekt de
+  // URL değişimini (yeniden yükleme, ileri/geri, derin link, kampanya detayından
+  // dönüş) sekmeye yansıtır — aksi halde sekme her yüklemede "Etkin"e düşerdi.
+  useEffect(() => {
+    const next = searchParams.get('view');
+    setView(next && VIEW_KEYS.includes(next) ? next : 'active');
+  }, [searchParams]);
+
+  const selectView = (next) => {
+    setView(next);
+    // Durum seçenekleri gruba bağlı — görünüm değişince sıfırlanmalı.
+    setStatus('');
+    router.replace(next === 'active' ? pathname : `${pathname}?view=${next}`, { scroll: false });
+  };
 
   const filtersActive = Boolean(status || channelKey || recurring || q) || view !== 'active';
 
@@ -167,8 +225,48 @@ export default function CampaignsPage() {
   );
   const [deleteCampaign, { isLoading: deleting }] = useDeleteMailCampaignMutation();
 
+  /**
+   * Tamamlanan satırlar tarih kovalarına ayrılır: tekrarlı bir kampanya her
+   * koşuda yeni bir satır üretiyor, düz liste okunmuyordu. "Tümü" görünümünde
+   * etkin kampanyalar (tamamlanma tarihi olmayan taslak/zamanlanmış/akan
+   * koşular) en üstte tek bir grupta kalır. "Etkin" görünümünde gruplama yok.
+   */
+  const dateGroups = useMemo(() => {
+    if (view === 'active') return null;
+    const active = [];
+    const byBucket = new Map();
+    const todayStart = startOfDay(new Date());
+
+    for (const c of campaigns) {
+      if (!VIEW_STATUS_OPTIONS.done.includes(c.status)) {
+        active.push({ campaign: c, at: null });
+        continue;
+      }
+      const at = getCompletedAt(c);
+      const key = bucketOf(at, todayStart);
+      if (!byBucket.has(key)) byBucket.set(key, []);
+      byBucket.get(key).push({ campaign: c, at });
+    }
+
+    // Gruplanacak tamamlanan satır yoksa tek başına duran "Etkin" başlığı
+    // gürültüden ibaret olurdu — düz listeye dön.
+    if (byBucket.size === 0) return null;
+
+    const groups = active.length ? [{ key: 'active', label: 'Etkin', items: active }] : [];
+    for (const { key, label } of DATE_BUCKETS) {
+      const items = byBucket.get(key);
+      if (!items?.length) continue;
+      // Sunucu updatedAt'e göre sıralar; kova içinde gösterdiğimiz tarihe
+      // (sentAt) göre yeniden sıralamazsak satırlar rastgele görünürdü.
+      items.sort((a, b) => (b.at?.getTime() || 0) - (a.at?.getTime() || 0));
+      groups.push({ key, label, items });
+    }
+    return groups;
+  }, [campaigns, view]);
+
   const resetFilters = () => {
     setView('active');
+    router.replace(pathname, { scroll: false });
     setStatus('');
     setChannelKey('');
     setRecurring('');
@@ -191,6 +289,76 @@ export default function CampaignsPage() {
       return;
     }
     setNotice({ variant: 'info', message: result?.message || 'Taslak kampanya silindi.' });
+  };
+
+  const renderRow = (c) => {
+    const m = statusMeta[c.status] || { label: c.status, variant: 'muted' };
+    const progress = getProgress(c);
+    return (
+      <TableRow key={c._id}>
+        <TableCell className="font-medium">
+          <Link
+            // scheduled da edit sayfasına: dashboard'da iptal kontrolü yok.
+            href={['draft', 'scheduled'].includes(c.status) ? `/cms/email/campaigns/${c._id}` : `/cms/email/campaigns/${c._id}/dashboard`}
+            className="text-primary hover:underline"
+          >
+            {c.name}
+          </Link>
+          {c.recurrence?.enabled && (
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              Tekrarlı · {c.recurrence.occurrence || 1}. koşu ·{' '}
+              {formatRecurrence(c.recurrence)}
+            </div>
+          )}
+        </TableCell>
+        <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
+        <TableCell>
+          <Badge variant={m.variant}>{m.label}</Badge>
+          {c.status === 'scheduled' && c.schedule?.startAt && (
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              {formatStartAt(c.schedule.startAt)}
+              {c.schedule.durationMinutes ? ` · ${formatDuration(c.schedule.durationMinutes)} yayılır` : ''}
+            </div>
+          )}
+          {/* Tarih grubu kabaca söyler; satırın kendi damgası kova içinde
+              hangi koşu olduğunu ayırt ettirir. */}
+          {VIEW_STATUS_OPTIONS.done.includes(c.status) && getCompletedAt(c) && (
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              {formatStartAt(getCompletedAt(c))}
+            </div>
+          )}
+        </TableCell>
+        <TableCell className="min-w-[220px]">
+          {progress.total ? (
+            <div className="space-y-1.5">
+              <Progress value={progress.percent} indicatorClassName={progress.failed ? 'bg-amber-500' : undefined} />
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>{formatCount(progress.sent)}/{formatCount(progress.total)}</span>
+                {progress.pending > 0 && <span>Kuyrukta {formatCount(progress.pending)}</span>}
+                {progress.failed > 0 && <span className="text-destructive">{formatCount(progress.failed)} hata</span>}
+              </div>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
+          )}
+        </TableCell>
+        <TableCell className="text-right">
+          {c.status === 'draft' ? (
+            confirmId === c._id ? (
+              <Button size="sm" variant="destructive" onClick={() => handleDelete(c)} disabled={deleting}>
+                {deleting ? <Loader2 className="size-3.5 animate-spin" /> : 'Emin?'}
+              </Button>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setConfirmId(c._id)} title="Taslağı kaldır">
+                <Trash2 className="size-3.5" />
+              </Button>
+            )
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
+        </TableCell>
+      </TableRow>
+    );
   };
 
   return (
@@ -235,11 +403,7 @@ export default function CampaignsPage() {
                   size="sm"
                   variant={view === v.value ? 'primary' : 'ghost'}
                   title={v.hint}
-                  onClick={() => {
-                    setView(v.value);
-                    // Durum seçenekleri gruba bağlı — görünüm değişince sıfırlanmalı.
-                    setStatus('');
-                  }}
+                  onClick={() => selectView(v.value)}
                 >
                   {v.label}
                 </Button>
@@ -324,68 +488,24 @@ export default function CampaignsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {campaigns.map((c) => {
-                  const m = statusMeta[c.status] || { label: c.status, variant: 'muted' };
-                  const progress = getProgress(c);
-                  return (
-                    <TableRow key={c._id}>
-                      <TableCell className="font-medium">
-                        <Link
-                          // scheduled da edit sayfasına: dashboard'da iptal kontrolü yok.
-                          href={['draft', 'scheduled'].includes(c.status) ? `/cms/email/campaigns/${c._id}` : `/cms/email/campaigns/${c._id}/dashboard`}
-                          className="text-primary hover:underline"
-                        >
-                          {c.name}
-                        </Link>
-                        {c.recurrence?.enabled && (
-                          <div className="mt-0.5 text-[11px] text-muted-foreground">
-                            Tekrarlı · {c.recurrence.occurrence || 1}. koşu ·{' '}
-                            {formatRecurrence(c.recurrence)}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
-                      <TableCell>
-                        <Badge variant={m.variant}>{m.label}</Badge>
-                        {c.status === 'scheduled' && c.schedule?.startAt && (
-                          <div className="mt-0.5 text-[11px] text-muted-foreground">
-                            {formatStartAt(c.schedule.startAt)}
-                            {c.schedule.durationMinutes ? ` · ${formatDuration(c.schedule.durationMinutes)} yayılır` : ''}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="min-w-[220px]">
-                        {progress.total ? (
-                          <div className="space-y-1.5">
-                            <Progress value={progress.percent} indicatorClassName={progress.failed ? 'bg-amber-500' : undefined} />
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                              <span>{formatCount(progress.sent)}/{formatCount(progress.total)}</span>
-                              {progress.pending > 0 && <span>Kuyrukta {formatCount(progress.pending)}</span>}
-                              {progress.failed > 0 && <span className="text-destructive">{formatCount(progress.failed)} hata</span>}
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {c.status === 'draft' ? (
-                          confirmId === c._id ? (
-                            <Button size="sm" variant="destructive" onClick={() => handleDelete(c)} disabled={deleting}>
-                              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : 'Emin?'}
-                            </Button>
-                          ) : (
-                            <Button size="sm" variant="ghost" onClick={() => setConfirmId(c._id)} title="Taslağı kaldır">
-                              <Trash2 className="size-3.5" />
-                            </Button>
-                          )
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {dateGroups
+                  ? dateGroups.map((g) => (
+                      <Fragment key={g.key}>
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell
+                            colSpan={5}
+                            className="bg-muted/40 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                          >
+                            {g.label}
+                            <span className="ms-2 font-normal normal-case tracking-normal">
+                              {formatCount(g.items.length)} kampanya
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                        {g.items.map(({ campaign }) => renderRow(campaign))}
+                      </Fragment>
+                    ))
+                  : campaigns.map((c) => renderRow(c))}
               </TableBody>
             </Table>
           )}
@@ -401,5 +521,14 @@ export default function CampaignsPage() {
         </CardContent>
       </Card>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function CampaignsPage() {
+  return (
+    <Suspense fallback={null}>
+      <CampaignsPageInner />
+    </Suspense>
   );
 }
