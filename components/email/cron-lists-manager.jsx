@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Plus, Trash2, Play, Save, Loader2, X, Eye, RefreshCw, Users, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -127,6 +128,8 @@ const emptyForm = () => ({
  * detayına (üyeler) `/cms/email/lists/<channelKey>` ile gidilir.
  */
 export function CronListsManager({ authorized }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const { data: lists = [], isLoading } = useGetCronListsQuery({}, { skip: !authorized });
   const { data: schema } = useGetCronListSchemaQuery(undefined, { skip: !authorized });
 
@@ -144,6 +147,7 @@ export function CronListsManager({ authorized }) {
   const [dryRun, setDryRun] = useState(null);
   const [dryRunFor, setDryRunFor] = useState(null); // spinner hedefi: 'form' | row._id
   const [scanCap, setScanCap] = useState(SCAN_CAPS[0]); // "Test Et" tarama tavanı
+  const editId = searchParams.get('edit');
 
   const sources = schema?.sources || {};
   const ops = schema?.ops || ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin', 'exists'];
@@ -188,6 +192,17 @@ export function CronListsManager({ authorized }) {
       schedule: { cron: row.schedule?.cron || '0 9 * * *', timezone: row.schedule?.timezone || 'Europe/Istanbul' },
     });
   };
+
+  // Detay sayfasındaki "Ayarları düzenle" bağlantısı ilgili reçeteyi doğrudan
+  // açar. Önceden yalnızca cron sekmesine gidiyor, kullanıcı hangi kaydı
+  // düzenleyeceğini yeniden bulmak zorunda kalıyordu.
+  useEffect(() => {
+    if (!editId || form || !lists.length) return;
+    const row = lists.find((item) => item._id === editId || item.channelKey === editId);
+    if (!row) return;
+    openEdit(row);
+    router.replace('/cms/email/lists?tab=cron', { scroll: false });
+  }, [editId, form, lists, router]);
 
   const changeSource = (src) => setForm((f) => ({ ...f, source: src, filters: [], relations: [] }));
 
@@ -722,7 +737,7 @@ export function CronListsManager({ authorized }) {
  * elenenlerin nedeni. Build'de `skipped` yalnız sunucu loguna düştüğü için
  * (Keycloak hatası → sessiz kayıp) elenenler tablosu bunun tek görünür yeri.
  */
-function DryRunResult({ title, data, onClose }) {
+export function DryRunResult({ title, data, onClose }) {
   const skipped = data?.skipped || {};
   const totalSkipped = Object.values(skipped).reduce((sum, n) => sum + (Number(n) || 0), 0);
   const filterLines = describeFilter(data?.compiledFilter);
