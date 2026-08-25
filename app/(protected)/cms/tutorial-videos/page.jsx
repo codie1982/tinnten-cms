@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CONTENT_LOCALES } from '@/config/api';
 import { CMS_ROLES } from '@/lib/roles';
 import { uploadTutorialVideoAsset } from '@/lib/tutorial-video-upload';
+import { VideoTestEditor } from './VideoTestEditor';
 import {
   useCreateTutorialVideoMutation,
   useDeleteTutorialVideoMutation,
@@ -127,10 +128,18 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
 
   const setLocalizedAsset = (locale, field, asset) => {
     setForm((current) => {
-      const existing = current.localizations.find((item) => item.locale === locale) || { locale, audio: null, subtitle: null };
+      const existing = current.localizations.find((item) => item.locale === locale) || { locale, audio: null, subtitle: null, audioOffsetSeconds: 0 };
       const nextItem = { ...existing, [field]: asset };
       const rest = current.localizations.filter((item) => item.locale !== locale);
       return { ...current, localizations: [...rest, nextItem] };
+    });
+  };
+
+  const patchLocalization = (locale, patch) => {
+    setForm((current) => {
+      const existing = current.localizations.find((item) => item.locale === locale) || { locale, audio: null, subtitle: null, audioOffsetSeconds: 0 };
+      const rest = current.localizations.filter((item) => item.locale !== locale);
+      return { ...current, localizations: [...rest, { ...existing, ...patch }] };
     });
   };
 
@@ -225,7 +234,7 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
             <div className="flex items-center gap-2"><Languages className="size-4 text-primary" /><div><h3 className="text-sm font-semibold">Dil sesleri ve altyazılar</h3><p className="text-xs text-muted-foreground">Her dil için ses kaydı ve WebVTT (.vtt) altyazısı ekleyin.</p></div></div>
             <div className="grid gap-3 md:grid-cols-2">
               {CONTENT_LOCALES.map((language) => {
-                const localization = form.localizations.find((item) => item.locale === language.code) || { locale: language.code, audio: null, subtitle: null };
+                const localization = form.localizations.find((item) => item.locale === language.code) || { locale: language.code, audio: null, subtitle: null, audioOffsetSeconds: 0 };
                 return (
                   <div key={language.code} className="space-y-3 rounded-xl border border-border p-3">
                     <div className="flex items-center justify-between"><p className="text-sm font-medium">{language.name}</p><Badge variant={localization.audio || localization.subtitle ? 'success' : 'muted'}>{language.code.toUpperCase()}</Badge></div>
@@ -238,6 +247,16 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
               })}
             </div>
           </div>
+
+          {initial.id && (
+            <VideoTestEditor
+              video={form.video}
+              localizations={form.localizations}
+              tutorialVideoId={initial.id}
+              disabled={saving}
+              onLocalizationChange={patchLocalization}
+            />
+          )}
 
           <div className="flex justify-end gap-2 border-t border-border pt-4">
             <Button type="button" variant="ghost" onClick={onCancel} disabled={saving}>İptal</Button>
