@@ -23,6 +23,7 @@ import {
   useCreateTutorialVideoMutation,
   useDeleteTutorialVideoMutation,
   useGetCmsTutorialVideosQuery,
+  useReconcileTutorialVideoAssetsMutation,
   useUpdateTutorialVideoMutation,
 } from '@/redux/services';
 
@@ -188,6 +189,11 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
               <AlertDescription>Önce taslağı oluşturun. Ardından dosyalar bu eğitim videosuna ait özel S3 alanına yüklenir; hiçbir kullanıcı kotasından düşmez.</AlertDescription>
             </Alert>
           )}
+          {initial.id && (
+            <Alert variant="info">
+              <AlertDescription>Yüklediğiniz video, ses ve altyazılar anında bu taslağa bağlanır. Yayına almak için ekran kaydı yüklüyken <strong>Durum</strong> alanından <strong>Yayında</strong> seçin ve en alttaki kaydet düğmesine basın.</AlertDescription>
+            </Alert>
+          )}
           {notice && (
             <Alert variant={notice.type === 'error' ? 'destructive' : 'info'}>
               <AlertDescription>{notice.text}</AlertDescription>
@@ -231,7 +237,7 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center gap-2"><Languages className="size-4 text-primary" /><div><h3 className="text-sm font-semibold">Dil sesleri ve altyazılar</h3><p className="text-xs text-muted-foreground">Her dil için ses kaydı ve WebVTT (.vtt) altyazısı ekleyin.</p></div></div>
+            <div className="flex items-center gap-2"><Languages className="size-4 text-primary" /><div><h3 className="text-sm font-semibold">Dil sesleri ve isteğe bağlı altyazılar</h3><p className="text-xs text-muted-foreground">Ses kaydı ve WebVTT (.vtt) altyazısı birbirinden bağımsızdır; altyazı eklemek zorunlu değildir.</p></div></div>
             <div className="grid gap-3 md:grid-cols-2">
               {CONTENT_LOCALES.map((language) => {
                 const localization = form.localizations.find((item) => item.locale === language.code) || { locale: language.code, audio: null, subtitle: null, audioOffsetSeconds: 0 };
@@ -240,7 +246,7 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
                     <div className="flex items-center justify-between"><p className="text-sm font-medium">{language.name}</p><Badge variant={localization.audio || localization.subtitle ? 'success' : 'muted'}>{language.code.toUpperCase()}</Badge></div>
                     <AssetUpload asset={localization.audio} assetType="audio" locale={language.code} tutorialVideoId={initial.id} label="Ses kaydı" icon={FileAudio} accept="audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/aac,audio/webm" disabled={saving || !initial.id}
                       onUploaded={(asset) => setLocalizedAsset(language.code, 'audio', asset)} onClear={() => setLocalizedAsset(language.code, 'audio', null)} />
-                    <AssetUpload asset={localization.subtitle} assetType="subtitle" locale={language.code} tutorialVideoId={initial.id} label="Altyazı" icon={FileText} accept="text/vtt,.vtt" disabled={saving || !initial.id}
+                    <AssetUpload asset={localization.subtitle} assetType="subtitle" locale={language.code} tutorialVideoId={initial.id} label="Altyazı (isteğe bağlı)" icon={FileText} accept="text/vtt,.vtt" disabled={saving || !initial.id}
                       onUploaded={(asset) => setLocalizedAsset(language.code, 'subtitle', asset)} onClear={() => setLocalizedAsset(language.code, 'subtitle', null)} />
                   </div>
                 );
@@ -260,7 +266,7 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
 
           <div className="flex justify-end gap-2 border-t border-border pt-4">
             <Button type="button" variant="ghost" onClick={onCancel} disabled={saving}>İptal</Button>
-            <Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{initial.id ? 'Değişiklikleri kaydet' : 'Taslağı oluştur'}</Button>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{initial.id ? (form.status === 'published' ? 'Yayına al ve kaydet' : 'Taslağı kaydet') : 'Taslağı oluştur'}</Button>
           </div>
         </form>
       </CardContent>
@@ -283,6 +289,7 @@ export default function TutorialVideosPage() {
   });
   const [createTutorialVideo, { isLoading: creating }] = useCreateTutorialVideoMutation();
   const [updateTutorialVideo, { isLoading: updating }] = useUpdateTutorialVideoMutation();
+  const [reconcileTutorialVideoAssets, { isLoading: reconciling }] = useReconcileTutorialVideoAssetsMutation();
   const [deleteTutorialVideo, { isLoading: deleting }] = useDeleteTutorialVideoMutation();
   const items = data?.items ?? [];
   const pagination = data?.pagination;
@@ -314,6 +321,19 @@ export default function TutorialVideosPage() {
     }
   }
 
+  async function editVideo(video) {
+    setActionError('');
+    try {
+      const hydrated = await reconcileTutorialVideoAssets(video.id).unwrap();
+      setEditing(hydrated || video);
+    } catch (reconcileError) {
+      // Dosya geri bağlama sorgusu sorun yaşasa bile editör, mevcut kayıtla
+      // açılmalıdır; kullanıcı yeni dosya yükleyip çalışmalarına devam eder.
+      setActionError(toErrorMessage(reconcileError, 'Yüklenen dosyalar kontrol edilemedi.'));
+      setEditing(video);
+    }
+  }
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
       <PageHeader section="Eğitim içerikleri" title="Eğitim Videoları" description="Ekran kayıtlarını, dil seslerini ve WebVTT altyazılarını yönetin"
@@ -338,7 +358,7 @@ export default function TutorialVideosPage() {
             : isLoading ? <div className="space-y-3 p-4">{Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-12 w-full" />)}</div>
               : items.length === 0 ? <div className="flex flex-col items-center gap-3 py-16 text-center"><Filter className="size-6 text-muted-foreground" /><p className="font-semibold">Gösterilecek eğitim videosu bulunamadı</p><Button size="sm" variant="outline" onClick={() => { setQuery(''); changeFilter('all'); }}>Filtreleri sıfırla</Button></div>
                 : <Table><TableHeader><TableRow><TableHead className="w-16">Kapak</TableHead><TableHead>Video</TableHead><TableHead>Diller</TableHead><TableHead>Durum</TableHead><TableHead>Süre</TableHead><TableHead>Güncelleme</TableHead><TableHead className="w-24 text-right">İşlem</TableHead></TableRow></TableHeader>
-                  <TableBody>{items.map((video) => <TableRow key={video.id}><TableCell>{video.thumbnail?.url ? <img src={video.thumbnail.url} alt="" className="size-10 rounded-md object-cover" /> : <div className="flex size-10 items-center justify-center rounded-md bg-muted"><Video className="size-4 text-muted-foreground" /></div>}</TableCell><TableCell className="max-w-[360px]"><p className="line-clamp-1 font-medium">{video.title}</p><p className="mt-0.5 line-clamp-1 font-mono text-xs text-muted-foreground">/{video.slug}</p></TableCell><TableCell><div className="flex flex-wrap gap-1">{video.availableLocales?.length ? video.availableLocales.map((locale) => <Badge key={locale} variant="outline">{locale.toUpperCase()}</Badge>) : <span className="text-xs text-muted-foreground">Dil yok</span>}</div></TableCell><TableCell><Badge variant={STATUS_META[video.status]?.variant}>{STATUS_META[video.status]?.label ?? video.status}</Badge></TableCell><TableCell className="font-mono text-xs text-muted-foreground">{formatDuration(video.durationSeconds)}</TableCell><TableCell className="text-xs text-muted-foreground">{formatDate(video.updatedAt)}</TableCell><TableCell><div className="flex justify-end gap-1"><button type="button" onClick={() => setEditing(video)} className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Videoyu düzenle"><Pencil className="size-3.5" /></button><button type="button" disabled={deleting} onClick={() => deleteVideo(video)} className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50" aria-label="Videoyu sil"><Trash2 className="size-3.5" /></button></div></TableCell></TableRow>)}</TableBody>
+                  <TableBody>{items.map((video) => <TableRow key={video.id}><TableCell>{video.thumbnail?.url ? <img src={video.thumbnail.url} alt="" className="size-10 rounded-md object-cover" /> : <div className="flex size-10 items-center justify-center rounded-md bg-muted"><Video className="size-4 text-muted-foreground" /></div>}</TableCell><TableCell className="max-w-[360px]"><p className="line-clamp-1 font-medium">{video.title}</p><p className="mt-0.5 line-clamp-1 font-mono text-xs text-muted-foreground">/{video.slug}</p></TableCell><TableCell><div className="flex flex-wrap gap-1">{video.availableLocales?.length ? video.availableLocales.map((locale) => <Badge key={locale} variant="outline">{locale.toUpperCase()}</Badge>) : <span className="text-xs text-muted-foreground">Dil yok</span>}</div></TableCell><TableCell><Badge variant={STATUS_META[video.status]?.variant}>{STATUS_META[video.status]?.label ?? video.status}</Badge></TableCell><TableCell className="font-mono text-xs text-muted-foreground">{formatDuration(video.durationSeconds)}</TableCell><TableCell className="text-xs text-muted-foreground">{formatDate(video.updatedAt)}</TableCell><TableCell><div className="flex justify-end gap-1"><button type="button" disabled={reconciling} onClick={() => editVideo(video)} className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50" aria-label="Videoyu düzenle">{reconciling ? <Loader2 className="size-3.5 animate-spin" /> : <Pencil className="size-3.5" />}</button><button type="button" disabled={deleting || reconciling} onClick={() => deleteVideo(video)} className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50" aria-label="Videoyu sil"><Trash2 className="size-3.5" /></button></div></TableCell></TableRow>)}</TableBody>
                 </Table>}
         </CardContent>
       </Card>

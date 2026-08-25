@@ -90,7 +90,6 @@ export const CMS_NAV = [
       { title: 'SSS', path: '/cms/content/faq', roles: [CMS_ROLES.EDITOR] },
     ],
   },
-  { heading: 'EĞİTİM İÇERİKLERİ' },
   {
     title: 'Eğitim Videoları',
     icon: Video,

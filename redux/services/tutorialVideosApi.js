@@ -35,6 +35,14 @@ export const tutorialVideosApi = baseApi.injectEndpoints({
         { type: 'TutorialVideo', id: 'LIST' },
       ],
     }),
+    reconcileTutorialVideoAssets: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.tutorialVideos.reconcileAssets(id), method: 'POST' }),
+      transformResponse: (res) => (res?.data ?? res)?.tutorialVideo ?? null,
+      invalidatesTags: (_result, _error, id) => [
+        { type: 'TutorialVideo', id },
+        { type: 'TutorialVideo', id: 'LIST' },
+      ],
+    }),
     deleteTutorialVideo: build.mutation({
       query: (id) => ({ url: ENDPOINTS.tutorialVideos.remove(id), method: 'DELETE' }),
       invalidatesTags: [{ type: 'TutorialVideo', id: 'LIST' }],
@@ -48,5 +56,6 @@ export const {
   useGetCmsTutorialVideoQuery,
   useCreateTutorialVideoMutation,
   useUpdateTutorialVideoMutation,
+  useReconcileTutorialVideoAssetsMutation,
   useDeleteTutorialVideoMutation,
 } = tutorialVideosApi;
