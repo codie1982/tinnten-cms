@@ -71,7 +71,7 @@ function formatDuration(value) {
   return `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 
-function AssetUpload({ asset, assetType, locale, accept, label, icon: Icon, onUploaded, onClear, disabled }) {
+function AssetUpload({ asset, assetType, locale, tutorialVideoId, accept, label, icon: Icon, onUploaded, onClear, disabled }) {
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -83,7 +83,7 @@ function AssetUpload({ asset, assetType, locale, accept, label, icon: Icon, onUp
     setUploading(true);
     setError('');
     try {
-      const nextAsset = await uploadTutorialVideoAsset(file, assetType);
+      const nextAsset = await uploadTutorialVideoAsset(file, { tutorialVideoId, assetType, locale });
       onUploaded(nextAsset);
     } catch (uploadError) {
       setError(toErrorMessage(uploadError, 'Dosya yüklenemedi.'));
@@ -113,6 +113,7 @@ function AssetUpload({ asset, assetType, locale, accept, label, icon: Icon, onUp
         </button>
       )}
       <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={selectFile} />
+      {!asset && !tutorialVideoId && <p className="text-xs text-muted-foreground">Dosya eklemek için önce taslağı oluşturun.</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
@@ -151,7 +152,9 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
         title: form.title.trim(),
         description: form.description.trim(),
         slug: form.slug.trim(),
-        status: form.status,
+        // Yeni kayda video yüklenmeden "yayında" statüsü verilemez; taslak
+        // oluşturulduktan sonra dosya eklenir ve son kayıtta yayınlanır.
+        status: initial.id ? form.status : 'draft',
         video: form.video,
         thumbnail: form.thumbnail,
         durationSeconds: form.durationSeconds === '' ? null : Number(form.durationSeconds),
@@ -171,6 +174,11 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
       </CardHeader>
       <CardContent>
         <form className="space-y-6" onSubmit={submit}>
+          {!initial.id && (
+            <Alert variant="info">
+              <AlertDescription>Önce taslağı oluşturun. Ardından dosyalar bu eğitim videosuna ait özel S3 alanına yüklenir; hiçbir kullanıcı kotasından düşmez.</AlertDescription>
+            </Alert>
+          )}
           {notice && (
             <Alert variant={notice.type === 'error' ? 'destructive' : 'info'}>
               <AlertDescription>{notice.text}</AlertDescription>
@@ -184,7 +192,7 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Durum</label>
-              <Select value={form.status} onValueChange={(value) => setField('status', value)}>
+              <Select value={initial.id ? form.status : 'draft'} disabled={!initial.id} onValueChange={(value) => setField('status', value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{STATUS_OPTIONS.filter((item) => item.value !== 'all').map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
               </Select>
@@ -207,9 +215,9 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
           </div>
 
           <div className="grid gap-4 rounded-xl border border-border bg-muted/20 p-4 md:grid-cols-2">
-            <AssetUpload asset={form.video} assetType="video" label="Ekran kaydı" icon={Video} accept="video/mp4,video/webm,video/quicktime" disabled={saving}
+            <AssetUpload asset={form.video} assetType="video" tutorialVideoId={initial.id} label="Ekran kaydı" icon={Video} accept="video/mp4,video/webm,video/quicktime" disabled={saving || !initial.id}
               onUploaded={(asset) => setField('video', asset)} onClear={() => setField('video', null)} />
-            <AssetUpload asset={form.thumbnail} assetType="thumbnail" label="Kapak görseli" icon={Image} accept="image/jpeg,image/png,image/webp" disabled={saving}
+            <AssetUpload asset={form.thumbnail} assetType="thumbnail" tutorialVideoId={initial.id} label="Kapak görseli" icon={Image} accept="image/jpeg,image/png,image/webp" disabled={saving || !initial.id}
               onUploaded={(asset) => setField('thumbnail', asset)} onClear={() => setField('thumbnail', null)} />
           </div>
 
@@ -221,9 +229,9 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
                 return (
                   <div key={language.code} className="space-y-3 rounded-xl border border-border p-3">
                     <div className="flex items-center justify-between"><p className="text-sm font-medium">{language.name}</p><Badge variant={localization.audio || localization.subtitle ? 'success' : 'muted'}>{language.code.toUpperCase()}</Badge></div>
-                    <AssetUpload asset={localization.audio} assetType="audio" locale={language.code} label="Ses kaydı" icon={FileAudio} accept="audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/aac,audio/webm" disabled={saving}
+                    <AssetUpload asset={localization.audio} assetType="audio" locale={language.code} tutorialVideoId={initial.id} label="Ses kaydı" icon={FileAudio} accept="audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/aac,audio/webm" disabled={saving || !initial.id}
                       onUploaded={(asset) => setLocalizedAsset(language.code, 'audio', asset)} onClear={() => setLocalizedAsset(language.code, 'audio', null)} />
-                    <AssetUpload asset={localization.subtitle} assetType="subtitle" locale={language.code} label="Altyazı" icon={FileText} accept="text/vtt,.vtt" disabled={saving}
+                    <AssetUpload asset={localization.subtitle} assetType="subtitle" locale={language.code} tutorialVideoId={initial.id} label="Altyazı" icon={FileText} accept="text/vtt,.vtt" disabled={saving || !initial.id}
                       onUploaded={(asset) => setLocalizedAsset(language.code, 'subtitle', asset)} onClear={() => setLocalizedAsset(language.code, 'subtitle', null)} />
                   </div>
                 );
@@ -233,7 +241,7 @@ function TutorialVideoForm({ initial, saving, onSave, onCancel }) {
 
           <div className="flex justify-end gap-2 border-t border-border pt-4">
             <Button type="button" variant="ghost" onClick={onCancel} disabled={saving}>İptal</Button>
-            <Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{initial.id ? 'Değişiklikleri kaydet' : 'Video oluştur'}</Button>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{initial.id ? 'Değişiklikleri kaydet' : 'Taslağı oluştur'}</Button>
           </div>
         </form>
       </CardContent>
@@ -266,9 +274,15 @@ export default function TutorialVideosPage() {
 
   async function saveVideo(payload) {
     setActionError('');
-    if (editing?.id) await updateTutorialVideo({ id: editing.id, ...payload }).unwrap();
-    else await createTutorialVideo(payload).unwrap();
-    setEditing(null);
+    if (editing?.id) {
+      await updateTutorialVideo({ id: editing.id, ...payload }).unwrap();
+      setEditing(null);
+    } else {
+      // S3 yolu eğitim videosu ID'siyle kuruluyor. Bu nedenle yeni kaydı önce
+      // taslak olarak oluşturup, kullanıcıyı aynı formda dosya yüklemeye bırak.
+      const created = await createTutorialVideo(payload).unwrap();
+      setEditing(created);
+    }
   }
 
   async function deleteVideo(video) {

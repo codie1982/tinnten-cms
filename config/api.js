@@ -194,7 +194,7 @@ export const ENDPOINTS = {
     create: '/tutorial-videos/cms',
     update: (id) => `/tutorial-videos/cms/${id}`,
     remove: (id) => `/tutorial-videos/cms/${id}`,
-    upload: '/tutorial-videos/cms/upload',
+    upload: (id) => `/tutorial-videos/cms/${id}/assets`,
   },
   companies: {
     list: '/company/cms/list',
