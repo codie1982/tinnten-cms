@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   MessagesSquare,
   Package,
+  Video,
   LifeBuoy,
   Handshake,
 } from 'lucide-react';
@@ -88,6 +89,13 @@ export const CMS_NAV = [
       { title: 'Ana Sayfa', path: '/cms/content/homepage', roles: [CMS_ROLES.EDITOR] },
       { title: 'SSS', path: '/cms/content/faq', roles: [CMS_ROLES.EDITOR] },
     ],
+  },
+  { heading: 'EĞİTİM İÇERİKLERİ' },
+  {
+    title: 'Eğitim Videoları',
+    icon: Video,
+    path: '/cms/tutorial-videos',
+    roles: [CMS_ROLES.ADMIN],
   },
 
   { heading: 'SÖZLEŞMELER' },

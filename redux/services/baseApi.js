@@ -122,6 +122,7 @@ export const baseApi = createApi({
     'SupportTicket',
     'PartnerApplication',
     'SupportCallback',
+    'TutorialVideo',
   ],
   // Endpoint'ler ayrı servis dosyalarında injectEndpoints ile eklenir
   endpoints: () => ({}),

@@ -188,6 +188,14 @@ export const ENDPOINTS = {
     update: (id) => `/faq/cms/${id}`,
     remove: (id) => `/faq/cms/${id}`,
   },
+  tutorialVideos: {
+    cmsList: '/tutorial-videos/cms',
+    cmsDetail: (id) => `/tutorial-videos/cms/${id}`,
+    create: '/tutorial-videos/cms',
+    update: (id) => `/tutorial-videos/cms/${id}`,
+    remove: (id) => `/tutorial-videos/cms/${id}`,
+    upload: '/tutorial-videos/cms/upload',
+  },
   companies: {
     list: '/company/cms/list',
     detail: (id) => `/company/cms/${id}`,
