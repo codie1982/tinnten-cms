@@ -342,6 +342,7 @@ export const ENDPOINTS = {
     cmsStats: '/mail-list/cms/stats',
     cmsDetail: '/mail-list/cms/detail',
     cmsSuppressions: '/mail-list/cms/suppressions',
+    cmsSuppressionStats: '/mail-list/cms/suppressions/stats',
     cmsSuppressionRelease: '/mail-list/cms/suppressions/release',
   },
   files: {

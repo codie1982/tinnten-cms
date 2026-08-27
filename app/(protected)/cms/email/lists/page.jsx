@@ -7,7 +7,7 @@ import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
   Loader2, Pencil, Save, X, AlertTriangle, ChevronDown, ChevronRight,
-  UserCheck, UserMinus, FolderInput, FolderTree, FolderPlus,
+  UserCheck, UserMinus, FolderInput, FolderTree, FolderPlus, ShieldBan, ShieldCheck,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -31,11 +31,15 @@ import {
   useCreateMailChannelMutation,
   useUpdateMailChannelMutation,
   useDeleteMailChannelMutation,
+  useGetCmsSuppressionsQuery,
+  useGetCmsSuppressionStatsQuery,
+  useAddCmsSuppressionMutation,
+  useReleaseCmsSuppressionMutation,
 } from '@/redux/services';
 import { AddMembersPanel } from '@/components/email/add-members-panel';
 import { CronListsManager } from '@/components/email/cron-lists-manager';
 
-const SECTION_KEYS = ['general', 'custom', 'news', 'cron'];
+const SECTION_KEYS = ['general', 'custom', 'news', 'cron', 'blacklist'];
 
 const MEMBER_PAGE = 50;
 
@@ -44,6 +48,7 @@ const SECTIONS = [
   { key: 'custom', label: 'Özel Listeler', icon: ListFilter, desc: 'Oluşturduğunuz kullanıcı listeleri' },
   { key: 'news', label: 'Haber Listesi', icon: Newspaper, desc: 'Haber akışından abone olundu' },
   { key: 'cron', label: 'Cron Listeleri', icon: RefreshCw, desc: 'Zamanlı olarak oluşturulan listeler' },
+  { key: 'blacklist', label: 'Kara Liste', icon: ShieldBan, desc: 'Hiçbir gönderime alınmayacak adresler' },
 ];
 
 const TYPE_META = {
@@ -1035,6 +1040,160 @@ function NewsSection({ authorized }) {
   );
 }
 
+const REASON_LABELS = {
+  ses_bounce: 'Kalıcı bounce',
+  ses_complaint: 'Spam şikâyeti',
+  user_unsubscribed: 'Kullanıcı çıkışı',
+  user_unsubscribed_via_email: 'E-postadan çıkış',
+  one_click: 'Tek tıkla çıkış',
+  cms_removed: 'CMS ile çıkarıldı',
+  wrong_recipient_risk: 'Yanlış alıcı riski',
+  moved_to_language_channel: 'Dil listesine taşındı',
+  mail_list_removed: 'Listeden çıkarıldı',
+  manual: 'Elle eklendi',
+};
+
+const formatDateTime = (value) => value
+  ? new Intl.DateTimeFormat('tr-TR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+  : '—';
+
+/* ── Global Kara Liste ── */
+function BlacklistSection({ authorized }) {
+  const [skip, setSkip] = useState(0);
+  const [q, setQ] = useState('');
+  const [active, setActive] = useState('true');
+  const [email, setEmail] = useState('');
+  const [notice, setNotice] = useState(null);
+  const { data, isLoading, isFetching, error } = useGetCmsSuppressionsQuery(
+    { q, active, limit: MEMBER_PAGE, skip },
+    { skip: !authorized },
+  );
+  const { data: stats } = useGetCmsSuppressionStatsQuery(undefined, { skip: !authorized });
+  const [addSuppression, { isLoading: adding }] = useAddCmsSuppressionMutation();
+  const [releaseSuppression, { isLoading: releasing }] = useReleaseCmsSuppressionMutation();
+  const items = data?.items ?? [];
+
+  const add = async () => {
+    const target = email.trim().toLowerCase();
+    if (!target) return;
+    const result = await addSuppression({ email: target, reason: 'manual' })
+      .unwrap().catch((e) => ({ __err: e?.data?.message || 'Adres eklenemedi.' }));
+    if (result?.__err) {
+      setNotice({ variant: 'destructive', message: result.__err });
+      return;
+    }
+    setEmail('');
+    setSkip(0);
+    setNotice({ variant: 'info', message: `${target} kara listeye eklendi.` });
+  };
+
+  const release = async (target) => {
+    const result = await releaseSuppression({
+      email: target,
+      generalOptIn: false,
+      newsOptIn: false,
+    }).unwrap().catch((e) => ({
+      __err: e?.data?.message || 'Kara liste kaydı kaldırılamadı.',
+    }));
+    setNotice(result?.__err
+      ? { variant: 'destructive', message: result.__err }
+      : { variant: 'info', message: `${target} serbest bırakıldı; hiçbir listeye otomatik eklenmedi.` });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <SummaryCard icon={ShieldBan} tone="warning" label="Aktif kara liste" value={stats?.active} />
+        <SummaryCard icon={ShieldCheck} tone="success" label="Serbest bırakılan" value={stats?.released} />
+        <SummaryCard icon={Users} label="Tarihsel toplam" value={stats?.total} />
+      </div>
+      {notice?.message && (
+        <Alert variant={notice.variant}><AlertDescription>{notice.message}</AlertDescription></Alert>
+      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Kara Liste</CardTitle>
+          <CardToolbar className="gap-2">
+            <Input
+              value={q}
+              onChange={(e) => { setQ(e.target.value); setSkip(0); }}
+              placeholder="E-posta ara…"
+              className="h-8 w-52"
+            />
+            <Select value={active} onValueChange={(v) => { setActive(v); setSkip(0); }}>
+              <SelectTrigger className="h-8 w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="true">Aktif</SelectItem>
+                <SelectItem value="false">Serbest bırakılan</SelectItem>
+                <SelectItem value="all">Tümü</SelectItem>
+              </SelectContent>
+            </Select>
+            {isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="flex gap-2 border-b border-border p-4">
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && add()}
+              placeholder="Kara listeye e-posta ekle"
+            />
+            <Button onClick={add} disabled={adding || !email.trim()}>
+              {adding ? <Loader2 className="size-4 animate-spin" /> : <ShieldBan className="size-4" />}
+              Ekle
+            </Button>
+          </div>
+          {error ? (
+            <div className="p-4">
+              <Alert variant="destructive"><AlertDescription>{error?.data?.message || 'Sunucuya ulaşılamadı.'}</AlertDescription></Alert>
+            </div>
+          ) : isLoading ? (
+            <div className="space-y-1 p-4">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+            </div>
+          ) : items.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Kayıt bulunamadı.</p>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>E-posta</TableHead><TableHead>Sebep</TableHead>
+                    <TableHead>Kaynak</TableHead><TableHead>Tarih</TableHead>
+                    <TableHead>Durum</TableHead><TableHead className="text-right">İşlem</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-mono text-xs">{item.email}</TableCell>
+                      <TableCell><Badge variant="muted">{REASON_LABELS[item.reason] || item.reason || 'Bilinmiyor'}</Badge></TableCell>
+                      <TableCell>{item.source || '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.suppressedAt)}</TableCell>
+                      <TableCell><Badge variant={item.active ? 'destructive' : 'success'}>{item.active ? 'Engelli' : 'Serbest'}</Badge></TableCell>
+                      <TableCell className="text-right">
+                        {item.active && <Button size="sm" variant="outline" disabled={releasing} onClick={() => release(item.email)}>Serbest bırak</Button>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
+                <span className="text-muted-foreground">{skip + 1}–{skip + items.length} / {formatCount(data?.total)}</span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - MEMBER_PAGE))}>Önceki</Button>
+                  <Button size="sm" variant="outline" disabled={skip + items.length >= (data?.total || 0)} onClick={() => setSkip(skip + MEMBER_PAGE)}>Sonraki</Button>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /* ── Cron Listeleri (tam kurulum: oluştur/düzenle/üyeler) ── */
 function CronSection({ authorized }) {
   return <CronListsManager authorized={authorized} />;
@@ -1062,7 +1221,7 @@ function MailListsPageInner() {
       <PageHeader
         section="Email"
         title="Mail Listeleri"
-        description="Genel, özel, haber ve cron tabanlı e-posta listeleri"
+        description="E-posta listeleri, abonelikler ve global kara liste"
       />
 
       <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
@@ -1104,6 +1263,7 @@ function MailListsPageInner() {
           {section === 'custom' && <CustomListsSection authorized={authorized} />}
           {section === 'news' && <NewsSection authorized={authorized} />}
           {section === 'cron' && <CronSection authorized={authorized} />}
+          {section === 'blacklist' && <BlacklistSection authorized={authorized} />}
         </div>
       </div>
     </RoleGuard>
