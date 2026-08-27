@@ -56,6 +56,7 @@ import {
   useGetCategoryTreeQuery,
   useGenerateNewsMutation,
   useGetNewsJobQuery,
+  useDeleteNewsMutation,
 } from '@/redux/services';
 import { cn } from '@/lib/utils';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
@@ -635,6 +636,9 @@ export default function NewsListPage() {
   const [sortValue, setSortValue] = useState('updatedAt:desc');
   const [page, setPage] = useState(1);
   const [showAI, setShowAI] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [actionError, setActionError] = useState('');
+  const [deleteNews] = useDeleteNewsMutation();
 
   // Ülke değişince kategori filtresini sıfırla (kategoriler ülkeye özgü)
   useEffect(() => {
@@ -690,6 +694,27 @@ export default function NewsListPage() {
     setCategoryFilter('all'); setContentTypeFilter('all'); setSortValue('updatedAt:desc');
   };
 
+  async function handleDelete(news) {
+    if (!window.confirm(`“${news.title}” haberini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) return;
+
+    setActionError('');
+    setDeletingId(news.id);
+    try {
+      await deleteNews(news.id).unwrap();
+      // Son satır silindiyse boş bir sayfada kalma.
+      if (filtered.length === 1 && page > 1) setPage((current) => current - 1);
+    } catch (deleteError) {
+      setActionError(
+        deleteError?.data?.message ||
+          deleteError?.normalizedMessage ||
+          deleteError?.error ||
+          'Haber silinemedi.',
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
       {showAI && <AIGenerateModal onClose={() => setShowAI(false)} />}
@@ -713,6 +738,13 @@ export default function NewsListPage() {
           </div>
         }
       />
+
+      {actionError && (
+        <Alert variant="destructive" className="mb-5">
+          <AlertTitle>Haber silinemedi</AlertTitle>
+          <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Toolbar */}
       <Card className="mb-5">
@@ -897,8 +929,20 @@ export default function NewsListPage() {
                           <Link href={`/cms/content/news/${n.id}`}>
                             <Button variant="ghost" size="icon" className="size-7"><Pencil className="size-3.5" /></Button>
                           </Link>
-                          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive">
-                            <Trash2 className="size-3.5" />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-muted-foreground hover:text-destructive"
+                            disabled={deletingId !== null}
+                            aria-label={`${n.title} haberini sil`}
+                            onClick={() => handleDelete(n)}
+                          >
+                            {deletingId === n.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-3.5" />
+                            )}
                           </Button>
                         </div>
                       </TableCell>
