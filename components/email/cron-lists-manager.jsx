@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Plus, Trash2, Play, Save, Loader2, X, Eye, Pencil, Users, FlaskConical } from 'lucide-react';
@@ -326,7 +326,7 @@ export function CronListsManager({ authorized }) {
     }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
     setDryRunFor(null);
     if (r?.__err) return setNotice(r.__err);
-    setDryRun({ title: form.name.trim() || 'Taslak', data: r });
+    setDryRun({ title: form.name.trim() || 'Taslak', rowId: null, data: r });
   };
 
   /** Tablodaki kayıtlı reçeteyi olduğu gibi dener (form açmadan). */
@@ -335,8 +335,11 @@ export function CronListsManager({ authorized }) {
     const r = await dryRunList({ id: row._id }).unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
     setDryRunFor(null);
-    if (r?.__err) return setNotice(r.__err);
-    setDryRun({ title: row.name, data: r });
+    if (r?.__err) {
+      setDryRun({ title: row.name, rowId: row._id, error: r.__err });
+      return;
+    }
+    setDryRun({ title: row.name, rowId: row._id, data: r });
   };
 
   const save = async () => {
@@ -627,7 +630,9 @@ export function CronListsManager({ authorized }) {
         </Card>
       )}
 
-      {dryRun && <DryRunResult title={dryRun.title} data={dryRun.data} onClose={() => setDryRun(null)} />}
+      {dryRun && !dryRun.rowId && (
+        <DryRunResult title={dryRun.title} data={dryRun.data} onClose={() => setDryRun(null)} />
+      )}
 
       <Card>
         <CardHeader>
@@ -665,7 +670,8 @@ export function CronListsManager({ authorized }) {
                         : row.channelKey);
                     const isRunning = Boolean(runningRows[row._id]);
                     return (
-                    <tr key={row._id} className="border-b last:border-0 hover:bg-muted/30">
+                    <Fragment key={row._id}>
+                    <tr className="border-b last:border-0 hover:bg-muted/30">
                       <td className="p-3">
                         {detailKey ? (
                           <Link href={`/cms/email/lists/${detailKey}`} className="text-primary hover:underline">
@@ -771,6 +777,24 @@ export function CronListsManager({ authorized }) {
                         </div>
                       </td>
                     </tr>
+                    {dryRun?.rowId === row._id && (
+                      <tr className="border-b bg-muted/10">
+                        <td colSpan={7} className="p-3">
+                          {dryRun.error ? (
+                            <Alert variant="destructive">
+                              <AlertDescription>{dryRun.error}</AlertDescription>
+                            </Alert>
+                          ) : (
+                            <DryRunResult
+                              title={dryRun.title}
+                              data={dryRun.data}
+                              onClose={() => setDryRun(null)}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                     );
                   })}
                 </tbody>
