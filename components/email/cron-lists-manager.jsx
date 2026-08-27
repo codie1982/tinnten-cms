@@ -33,82 +33,8 @@ const CRON_PRESETS = [
   { label: 'Saatte bir', cron: '0 * * * *' },
 ];
 
-// CRM segmentleri. Pipeline $$NOW kullandığı için pencere her çalıştırmada
-// yeniden hesaplanır. `replace` modu aynı kanalı her gün güncel tutar.
-const userSegmentPipeline = ({ windowUnit, windowAmount, state, inactiveUnit, inactiveAmount, activityField = 'lastSeenAt' }) => {
-  const pipeline = [
-    {
-      $lookup: {
-        from: 'companies',
-        localField: '_id',
-        foreignField: 'userid',
-        as: 'companyDocs',
-      },
-    },
-    {
-      $lookup: {
-        from: 'asistans',
-        localField: 'companyDocs._id',
-        foreignField: 'companyId',
-        pipeline: [{ $match: { deleted: { $ne: true } } }],
-        as: 'assistantDocs',
-      },
-    },
-  ];
-
-  if (inactiveUnit) {
-    pipeline.push({
-      $lookup: {
-        from: 'user_devices',
-        localField: '_id',
-        foreignField: 'userId',
-        pipeline: [
-          { $match: { lastLoginStatus: 'success', $expr: { $gte: [`$${activityField}`, { $dateSubtract: { startDate: '$$NOW', unit: inactiveUnit, amount: inactiveAmount } }] } } },
-          { $limit: 1 },
-        ],
-        as: 'recentDevices',
-      },
-    });
-  }
-
-  const expressions = [];
-  if (windowUnit) expressions.push({ $gte: ['$createdAt', { $dateSubtract: { startDate: '$$NOW', unit: windowUnit, amount: windowAmount } }] });
-  if (state === 'no-account') expressions.push({ $eq: [{ $size: '$companyDocs' }, 0] });
-  if (state === 'no-assistant') expressions.push({ $and: [{ $gt: [{ $size: '$companyDocs' }, 0] }, { $eq: [{ $size: '$assistantDocs' }, 0] }] });
-  if (state === 'unpublished') {
-    expressions.push({ $gt: [{ $size: '$assistantDocs' }, 0] });
-    expressions.push({ $eq: [{ $size: { $filter: { input: '$assistantDocs', as: 'assistant', cond: { $in: ['$$assistant.status', ['published', 'active']] } } } }, 0] });
-  }
-  if (inactiveUnit) expressions.push({ $eq: [{ $size: '$recentDevices' }, 0] });
-  const match = expressions.length === 1 ? { $expr: expressions[0] } : { $expr: { $and: expressions } };
-  pipeline.push({ $match: match });
-  pipeline.push({ $project: { _id: 1, keyid: 1, email: 1, emailNormalized: 1, firstName: 1, lastName: 1 } });
-  return JSON.stringify(pipeline);
-};
-
-const READY_SEGMENTS = [
-  ['24h-no-account', 'Son 24 saatte üye olan — asistan hesabı oluşturmayanlar', 'Kayıt oldu, firma/asistan hesabı oluşturmadı.', { windowUnit: 'hour', windowAmount: 24, state: 'no-account' }],
-  ['24h-no-assistant', 'Son 24 saatte üye olan — hesabı var, asistanı olmayanlar', 'Hesap oluşturdu ancak henüz asistan oluşturmadı.', { windowUnit: 'hour', windowAmount: 24, state: 'no-assistant' }],
-  ['24h-unpublished', 'Son 24 saatte üye olan — asistanı var, yayına almayanlar', 'Asistan oluşturdu ancak hiçbir asistanı yayına almadı.', { windowUnit: 'hour', windowAmount: 24, state: 'unpublished' }],
-  ['7d-no-account', 'Son 7 günde üye olan — asistan hesabı oluşturmayanlar', 'Kayıt oldu, firma/asistan hesabı oluşturmadı.', { windowUnit: 'day', windowAmount: 7, state: 'no-account' }],
-  ['7d-no-assistant', 'Son 7 günde üye olan — hesabı var, asistanı olmayanlar', 'Hesap oluşturdu ancak henüz asistan oluşturmadı.', { windowUnit: 'day', windowAmount: 7, state: 'no-assistant' }],
-  ['7d-unpublished', 'Son 7 günde üye olan — asistanı var, yayına almayanlar', 'Asistan oluşturdu ancak hiçbir asistanı yayına almadı.', { windowUnit: 'day', windowAmount: 7, state: 'unpublished' }],
-  ['inactive-30d', 'Son 30 günde hiç faaliyeti olmayanlar', 'Son 30 günde cihaz/oturum aktivitesi görülmeyen kullanıcılar.', { inactiveUnit: 'day', inactiveAmount: 30 }],
-  ['inactive-6m', 'Son 6 ayda hiç faaliyeti olmayanlar', 'Son 180 günde cihaz/oturum aktivitesi görülmeyen kullanıcılar.', { inactiveUnit: 'day', inactiveAmount: 180 }],
-  ['no-login-7d', 'Son 7 gündür giriş yapmayanlar', 'Son 7 günde başarılı giriş kaydı olmayan kullanıcılar.', { inactiveUnit: 'day', inactiveAmount: 7, activityField: 'lastLoginAt' }],
-].map(([key, name, description, options]) => ({
-  key,
-  name,
-  description,
-  pipelineText: userSegmentPipeline(options),
-}));
-
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
-
-// "Test Et" tarama tavanı seçenekleri. Backend DRY_RUN_MAX_CAP=5000 ile sınırlar;
-// buradan daha büyük bir değer göndermek işe yaramaz.
-const SCAN_CAPS = [1000, 2500, 5000];
 
 const OP_LABELS = {
   eq: '= eşit', ne: '≠ değil', in: 'içinde (virgülle)', nin: 'dışında (virgülle)',
@@ -219,7 +145,6 @@ export function CronListsManager({ authorized }) {
   // { title, data } — form taslağının ya da tablodaki bir reçetenin test sonucu.
   const [dryRun, setDryRun] = useState(null);
   const [dryRunFor, setDryRunFor] = useState(null); // spinner hedefi: 'form' | row._id
-  const [scanCap, setScanCap] = useState(SCAN_CAPS[0]); // "Test Et" tarama tavanı
   const editId = searchParams.get('edit');
 
   const sources = schema?.sources || {};
@@ -385,7 +310,6 @@ export function CronListsManager({ authorized }) {
     try { query = buildQuery(); } catch (e) { setDryRunFor(null); return setNotice(e.message); }
     const r = await dryRunList({
       ...query,
-      cap: scanCap,
       name: form.name.trim() || 'Test listesi',
       buildMode: form.buildMode,
       // Yalnızca "tavan teste ait, build limiti şu" uyarısını doğru göstermek için.
@@ -401,7 +325,7 @@ export function CronListsManager({ authorized }) {
   /** Tablodaki kayıtlı reçeteyi olduğu gibi dener (form açmadan). */
   const doDryRunRow = async (row) => {
     setNotice(''); setDryRun(null); setDryRunFor(row._id);
-    const r = await dryRunList({ id: row._id, cap: scanCap }).unwrap()
+    const r = await dryRunList({ id: row._id }).unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
     setDryRunFor(null);
     if (r?.__err) return setNotice(r.__err);
@@ -435,36 +359,6 @@ export function CronListsManager({ authorized }) {
     if (form?.id === row._id) setForm(null);
   };
 
-  const createReadySegments = async () => {
-    setNotice('Hazır segmentler oluşturuluyor…');
-    const existingNames = new Set(lists.map((row) => row.name));
-    const pending = READY_SEGMENTS.filter((segment) => !existingNames.has(segment.name));
-    if (!pending.length) {
-      setNotice('Hazır segmentlerin tamamı zaten tanımlı.');
-      return;
-    }
-
-    let created = 0;
-    for (const segment of pending) {
-      const result = await createList({
-        name: segment.name,
-        description: segment.description,
-        source: 'users',
-        queryMode: 'aggregate',
-        pipelineText: segment.pipelineText,
-        buildMode: 'replace',
-        maxRecipients: 5000,
-        schedule: { cron: DAILY_REFRESH_CRON, timezone: 'Europe/Istanbul' },
-      }).unwrap().catch((error) => ({ __err: error?.data?.message || 'oluşturulamadı' }));
-      if (result?.__err) {
-        setNotice(`${created} segment oluşturuldu; “${segment.name}” oluşturulamadı: ${result.__err}`);
-        return;
-      }
-      created += 1;
-    }
-    setNotice(`${created} hazır segment oluşturuldu. Her biri her gün 06:00’da yenilenecek.`);
-  };
-
   return (
     <div className="space-y-4">
       <Alert>
@@ -475,26 +369,6 @@ export function CronListsManager({ authorized }) {
       </Alert>
 
       {notice && <Alert variant="info"><AlertDescription>{notice}</AlertDescription></Alert>}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle>Hazır CRM segmentleri</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Kayıt ve asistan durumuna göre segmentleri tek seferde oluşturur. Yenileme: her gün 06:00 (Europe/Istanbul).
-            </p>
-          </div>
-          <Button onClick={createReadySegments} disabled={creating}>
-            {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Hazır listeleri oluştur
-          </Button>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2 p-4 pt-0">
-          {READY_SEGMENTS.map((segment) => (
-            <Badge key={segment.key} variant="outline">{segment.name}</Badge>
-          ))}
-        </CardContent>
-      </Card>
 
       {form && (
         <Card>
@@ -696,20 +570,6 @@ export function CronListsManager({ authorized }) {
               <Button variant="outline" onClick={doDryRunForm} disabled={dryRunFor === 'form'} title="Liste oluşturmadan kimlerin geleceğini gösterir">
                 {dryRunFor === 'form' ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />} Test Et
               </Button>
-              {/* Test Et kişi başına sıralı DB sorgusu yapar (eleme sırası build ile
-                  birebir aynı kalmak zorunda, paralelleştirilemez) → tarama tavanı
-                  ayarlanabilir. Gerçek toplam için Önizleme kullanılır: o tek
-                  sorguda tam sayıyı döner. */}
-              <select
-                className={`${SELECT_CLS} w-44`}
-                value={scanCap}
-                onChange={(e) => setScanCap(Number(e.target.value))}
-                title="Test Et taramasının durduğu kayıt sayısı"
-              >
-                {SCAN_CAPS.map((n) => (
-                  <option key={n} value={n}>{formatCount(n)} kayıt tara</option>
-                ))}
-              </select>
               {preview && (
                 <span className="text-sm text-muted-foreground">
                   Eşleşen{preview.exact === false ? ' (alt sınır)' : ''}:{' '}
@@ -881,21 +741,6 @@ export function DryRunResult({ title, data, onClose }) {
         <Button variant="ghost" size="sm" onClick={onClose}><X className="size-4" /></Button>
       </CardHeader>
       <CardContent className="space-y-4 p-4">
-        {data?.capped && (
-          <Alert variant="warning">
-            <AlertDescription>
-              Tarama {formatCount(data.cap)} kayıtta durduruldu — aşağıdaki sayılar{' '}
-              <b>alt sınırdır</b>. Test, listeye kimin gireceğini ve elenenlerin nedenini
-              göstermek için kişi başına ayrı sorgu yapar; bu yüzden bir tavanı vardır.
-              Tavanı yukarıdaki <b>“kayıt tara”</b> seçiminden yükseltebilirsin.
-              Kitlenin <b>gerçek toplamı</b> için <b>Önizleme</b>’yi kullan — o tek sorguda
-              tam sayıyı verir. Not: bu tavan <b>yalnızca teste</b> aittir, listenin
-              kendisi çalışırken <b>{formatCount(data.maxRecipients || 5000)}</b> kişiye
-              kadar oluşturulur.
-            </AlertDescription>
-          </Alert>
-        )}
-
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-md border p-3">
             <div className="text-xs text-muted-foreground">Sorguya uyan</div>
