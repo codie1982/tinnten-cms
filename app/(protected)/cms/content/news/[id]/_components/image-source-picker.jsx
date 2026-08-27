@@ -155,7 +155,10 @@ export function ImageSourcePicker({
           multiple={multiple}
           className="hidden"
           onChange={async (e) => {
-            const files = e.target.files;
+            // FileList bazı tarayıcılarda input'a bağlı canlı bir nesnedir.
+            // Input'u temizlemeden önce snapshot almazsak `upload()` boş liste
+            // görür ve geçerli JPG/PNG dosyalarını da reddeder.
+            const files = Array.from(e.target.files || []);
             // Aynı dosyanın tekrar seçilebilmesi için input'u sıfırla.
             e.target.value = '';
             if (await upload(files)) setPanel(null);
