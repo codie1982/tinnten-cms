@@ -23,12 +23,85 @@ import {
 const SELECT_CLS =
   'h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30';
 
+const DAILY_REFRESH_CRON = '0 6 * * *';
+
 const CRON_PRESETS = [
+  { label: 'Her gün 06:00', cron: DAILY_REFRESH_CRON },
   { label: 'Her gün 09:00', cron: '0 9 * * *' },
   { label: 'Her hafta (Pzt 09:00)', cron: '0 9 * * 1' },
   { label: "Her ayın 1'i 09:00", cron: '0 9 1 * *' },
   { label: 'Saatte bir', cron: '0 * * * *' },
 ];
+
+// CRM segmentleri. Pipeline $$NOW kullandığı için pencere her çalıştırmada
+// yeniden hesaplanır. `replace` modu aynı kanalı her gün güncel tutar.
+const userSegmentPipeline = ({ windowUnit, windowAmount, state, inactiveUnit, inactiveAmount, activityField = 'lastSeenAt' }) => {
+  const pipeline = [
+    {
+      $lookup: {
+        from: 'companies',
+        localField: '_id',
+        foreignField: 'userid',
+        as: 'companyDocs',
+      },
+    },
+    {
+      $lookup: {
+        from: 'asistans',
+        localField: 'companyDocs._id',
+        foreignField: 'companyId',
+        pipeline: [{ $match: { deleted: { $ne: true } } }],
+        as: 'assistantDocs',
+      },
+    },
+  ];
+
+  if (inactiveUnit) {
+    pipeline.push({
+      $lookup: {
+        from: 'user_devices',
+        localField: '_id',
+        foreignField: 'userId',
+        pipeline: [
+          { $match: { lastLoginStatus: 'success', $expr: { $gte: [`$${activityField}`, { $dateSubtract: { startDate: '$$NOW', unit: inactiveUnit, amount: inactiveAmount } }] } } },
+          { $limit: 1 },
+        ],
+        as: 'recentDevices',
+      },
+    });
+  }
+
+  const expressions = [];
+  if (windowUnit) expressions.push({ $gte: ['$createdAt', { $dateSubtract: { startDate: '$$NOW', unit: windowUnit, amount: windowAmount } }] });
+  if (state === 'no-account') expressions.push({ $eq: [{ $size: '$companyDocs' }, 0] });
+  if (state === 'no-assistant') expressions.push({ $and: [{ $gt: [{ $size: '$companyDocs' }, 0] }, { $eq: [{ $size: '$assistantDocs' }, 0] }] });
+  if (state === 'unpublished') {
+    expressions.push({ $gt: [{ $size: '$assistantDocs' }, 0] });
+    expressions.push({ $eq: [{ $size: { $filter: { input: '$assistantDocs', as: 'assistant', cond: { $in: ['$$assistant.status', ['published', 'active']] } } } }, 0] });
+  }
+  if (inactiveUnit) expressions.push({ $eq: [{ $size: '$recentDevices' }, 0] });
+  const match = expressions.length === 1 ? { $expr: expressions[0] } : { $expr: { $and: expressions } };
+  pipeline.push({ $match: match });
+  pipeline.push({ $project: { _id: 1, keyid: 1, email: 1, emailNormalized: 1, firstName: 1, lastName: 1 } });
+  return JSON.stringify(pipeline);
+};
+
+const READY_SEGMENTS = [
+  ['24h-no-account', 'Son 24 saatte üye olan — asistan hesabı oluşturmayanlar', 'Kayıt oldu, firma/asistan hesabı oluşturmadı.', { windowUnit: 'hour', windowAmount: 24, state: 'no-account' }],
+  ['24h-no-assistant', 'Son 24 saatte üye olan — hesabı var, asistanı olmayanlar', 'Hesap oluşturdu ancak henüz asistan oluşturmadı.', { windowUnit: 'hour', windowAmount: 24, state: 'no-assistant' }],
+  ['24h-unpublished', 'Son 24 saatte üye olan — asistanı var, yayına almayanlar', 'Asistan oluşturdu ancak hiçbir asistanı yayına almadı.', { windowUnit: 'hour', windowAmount: 24, state: 'unpublished' }],
+  ['7d-no-account', 'Son 7 günde üye olan — asistan hesabı oluşturmayanlar', 'Kayıt oldu, firma/asistan hesabı oluşturmadı.', { windowUnit: 'day', windowAmount: 7, state: 'no-account' }],
+  ['7d-no-assistant', 'Son 7 günde üye olan — hesabı var, asistanı olmayanlar', 'Hesap oluşturdu ancak henüz asistan oluşturmadı.', { windowUnit: 'day', windowAmount: 7, state: 'no-assistant' }],
+  ['7d-unpublished', 'Son 7 günde üye olan — asistanı var, yayına almayanlar', 'Asistan oluşturdu ancak hiçbir asistanı yayına almadı.', { windowUnit: 'day', windowAmount: 7, state: 'unpublished' }],
+  ['inactive-30d', 'Son 30 günde hiç faaliyeti olmayanlar', 'Son 30 günde cihaz/oturum aktivitesi görülmeyen kullanıcılar.', { inactiveUnit: 'day', inactiveAmount: 30 }],
+  ['inactive-6m', 'Son 6 ayda hiç faaliyeti olmayanlar', 'Son 180 günde cihaz/oturum aktivitesi görülmeyen kullanıcılar.', { inactiveUnit: 'day', inactiveAmount: 180 }],
+  ['no-login-7d', 'Son 7 gündür giriş yapmayanlar', 'Son 7 günde başarılı giriş kaydı olmayan kullanıcılar.', { inactiveUnit: 'day', inactiveAmount: 7, activityField: 'lastLoginAt' }],
+].map(([key, name, description, options]) => ({
+  key,
+  name,
+  description,
+  pipelineText: userSegmentPipeline(options),
+}));
 
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
@@ -362,6 +435,36 @@ export function CronListsManager({ authorized }) {
     if (form?.id === row._id) setForm(null);
   };
 
+  const createReadySegments = async () => {
+    setNotice('Hazır segmentler oluşturuluyor…');
+    const existingNames = new Set(lists.map((row) => row.name));
+    const pending = READY_SEGMENTS.filter((segment) => !existingNames.has(segment.name));
+    if (!pending.length) {
+      setNotice('Hazır segmentlerin tamamı zaten tanımlı.');
+      return;
+    }
+
+    let created = 0;
+    for (const segment of pending) {
+      const result = await createList({
+        name: segment.name,
+        description: segment.description,
+        source: 'users',
+        queryMode: 'aggregate',
+        pipelineText: segment.pipelineText,
+        buildMode: 'replace',
+        maxRecipients: 5000,
+        schedule: { cron: DAILY_REFRESH_CRON, timezone: 'Europe/Istanbul' },
+      }).unwrap().catch((error) => ({ __err: error?.data?.message || 'oluşturulamadı' }));
+      if (result?.__err) {
+        setNotice(`${created} segment oluşturuldu; “${segment.name}” oluşturulamadı: ${result.__err}`);
+        return;
+      }
+      created += 1;
+    }
+    setNotice(`${created} hazır segment oluşturuldu. Her biri her gün 06:00’da yenilenecek.`);
+  };
+
   return (
     <div className="space-y-4">
       <Alert>
@@ -372,6 +475,26 @@ export function CronListsManager({ authorized }) {
       </Alert>
 
       {notice && <Alert variant="info"><AlertDescription>{notice}</AlertDescription></Alert>}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Hazır CRM segmentleri</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Kayıt ve asistan durumuna göre segmentleri tek seferde oluşturur. Yenileme: her gün 06:00 (Europe/Istanbul).
+            </p>
+          </div>
+          <Button onClick={createReadySegments} disabled={creating}>
+            {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            Hazır listeleri oluştur
+          </Button>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2 p-4 pt-0">
+          {READY_SEGMENTS.map((segment) => (
+            <Badge key={segment.key} variant="outline">{segment.name}</Badge>
+          ))}
+        </CardContent>
+      </Card>
 
       {form && (
         <Card>
