@@ -87,18 +87,18 @@ export function MemberListDialog({ open, onOpenChange, channel, channelKey, auth
     const r = await blockSubscriber({ key: channelKey, email })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Engellenemedi' }));
-    setNotice(r?.__err || `${email} tüm listelerden engellendi (bastırma listesine eklendi).`);
+    setNotice(r?.__err || `${email} tüm listelerden çıkarıldı ve Kara Listeye eklendi.`);
   };
 
   const handleResubscribe = async (email) => {
     const r = await updateMember({ key: channelKey, email, channelStatus: 'subscribed' })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Geri alınamadı' }));
-    // Bastırılmış (global engelli) adresi backend abone ETMEZ — "geri eklendi" deme.
+    // Kara listedeki adresi backend abone ETMEZ — "geri eklendi" deme.
     setNotice(
       r?.__err ||
         (r?.suppressed
-          ? `${email} bastırılmış (tüm listelerden engellenmiş) olduğu için geri eklenmedi.`
+          ? `${email} Kara Listede olduğu için geri eklenmedi.`
           : `${email} listeye geri eklendi.`),
     );
   };

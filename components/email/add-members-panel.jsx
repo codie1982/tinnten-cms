@@ -127,11 +127,11 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
     setManualText('');
     setManualName('');
     clearCsv();
-    // Bastırılmış (abonelikten çıkmış/engellenmiş) adresler backend'de kanala abone
+    // Kara listedeki adresler backend'de kanala abone
     // EDİLMEZ ve `added` sayılmaz — operatör "eklendi" sanmasın diye ayrıca listelenir.
     const suppressed = r?.suppressed ?? [];
     const suppressedNote = suppressed.length
-      ? ` ${suppressed.length} adres bastırılmış olduğu için abone edilmedi: ${suppressed
+      ? ` ${suppressed.length} adres Kara Listede olduğu için abone edilmedi: ${suppressed
           .slice(0, 3)
           .join(', ')}${suppressed.length > 3 ? ` +${suppressed.length - 3}` : ''}.`
       : '';
@@ -274,8 +274,8 @@ export function AddMembersPanel({ channelKey, authorized, note }) {
               </p>
             )}
             <p className="text-[11px] text-muted-foreground">
-              Sisteme kayıtlı olmayan adresler de eklenebilir. Abonelikten çıkmış (bastırılmış)
-              adresler yeniden abone edilmez.
+              Sisteme kayıtlı olmayan adresler de eklenebilir. Abonelikten çıkmış veya Kara
+              Listede olan adresler yeniden abone edilmez.
             </p>
           </>
         )}

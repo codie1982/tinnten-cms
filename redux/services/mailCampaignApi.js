@@ -89,7 +89,7 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'MailChannel', id: 'LIST' },
       ],
     }),
-    // Adresi GLOBAL bastırma listesine ekle (engelle) — tüm kanallardan çıkar.
+    // Adresi GLOBAL kara listeye ekle — tüm kanallardan çıkar.
     // Listeden çıkarmadan (removeChannelMember) farkı: kişi hiçbir listede
     // yeniden mail alamaz; reason "manual" (operatör aksiyonu) yazılır.
     blockSubscriber: build.mutation({
