@@ -28,7 +28,31 @@ const AI_SIZES = [
   ['256x256', 'Kare 256'],
 ];
 
-const isImageFile = (f) => !!f && (f.type ? f.type.startsWith('image/') : true);
+const IMAGE_MIME_BY_EXTENSION = {
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+};
+
+// Bazı tarayıcı/işletim sistemi kombinasyonları JPG dosyalarında MIME bilgisini
+// boş veya application/octet-stream döndürebiliyor. Bu durumda uzantıyı temel
+// alıp yüklemeye devam ediyoruz; doğru MIME'ı FormData'ya aktarabilmek için de
+// dosyayı gerektiğinde aynı içerikle yeniden oluşturuyoruz.
+function normalizeImageFile(file) {
+  if (!file) return null;
+  if (file.type?.startsWith('image/')) return file;
+
+  const extension = file.name?.split('.').pop()?.toLowerCase();
+  const mime = IMAGE_MIME_BY_EXTENSION[extension];
+  if (!mime) return null;
+
+  return new File([file], file.name, { type: mime, lastModified: file.lastModified });
+}
 
 /** Dosya listesini yükleyip URL'e çeviren ortak durum makinesi. */
 function useImageUpload({ multiple, onPicked }) {
@@ -37,7 +61,7 @@ function useImageUpload({ multiple, onPicked }) {
 
   const upload = useCallback(
     async (fileList) => {
-      const files = Array.from(fileList || []).filter(isImageFile);
+      const files = Array.from(fileList || []).map(normalizeImageFile).filter(Boolean);
       if (!files.length) {
         setError('Yalnızca görsel dosyaları yüklenebilir.');
         return false;
@@ -124,7 +148,7 @@ export function ImageSourcePicker({
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.jpg,.jpeg"
           multiple={multiple}
           className="hidden"
           onChange={async (e) => {
