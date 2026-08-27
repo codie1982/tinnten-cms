@@ -45,13 +45,16 @@ const IMAGE_MIME_BY_EXTENSION = {
 // dosyayı gerektiğinde aynı içerikle yeniden oluşturuyoruz.
 function normalizeImageFile(file) {
   if (!file) return null;
-  if (file.type?.startsWith('image/')) return file;
 
   const extension = file.name?.split('.').pop()?.toLowerCase();
   const mime = IMAGE_MIME_BY_EXTENSION[extension];
+  if (mime && file.type !== mime) {
+    return new File([file], file.name, { type: mime, lastModified: file.lastModified });
+  }
+  if (file.type?.startsWith('image/')) return file;
   if (!mime) return null;
 
-  return new File([file], file.name, { type: mime, lastModified: file.lastModified });
+  return file;
 }
 
 /** Dosya listesini yükleyip URL'e çeviren ortak durum makinesi. */
