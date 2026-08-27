@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Plus, Trash2, Play, Save, Loader2, X, Eye, RefreshCw, Users, FlaskConical } from 'lucide-react';
+import { Plus, Trash2, Play, Save, Loader2, X, Eye, Pencil, Users, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,9 @@ const CRON_PRESETS = [
 
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
+
+const RUN_POLL_INTERVAL_MS = 2000;
+const RUN_POLL_ATTEMPTS = 45;
 
 const OP_LABELS = {
   eq: '= eşit', ne: '≠ değil', in: 'içinde (virgülle)', nin: 'dışında (virgülle)',
@@ -129,7 +132,7 @@ const emptyForm = () => ({
 export function CronListsManager({ authorized }) {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data: lists = [], isLoading } = useGetCronListsQuery({}, { skip: !authorized });
+  const { data: lists = [], isLoading, refetch } = useGetCronListsQuery({}, { skip: !authorized });
   const { data: schema } = useGetCronListSchemaQuery(undefined, { skip: !authorized });
 
   const [createList, { isLoading: creating }] = useCreateCronListMutation();
@@ -145,6 +148,10 @@ export function CronListsManager({ authorized }) {
   // { title, data } — form taslağının ya da tablodaki bir reçetenin test sonucu.
   const [dryRun, setDryRun] = useState(null);
   const [dryRunFor, setDryRunFor] = useState(null); // spinner hedefi: 'form' | row._id
+  // Play ile başlatılan gerçek build'ler satır bazında izlenir. Backend 202
+  // döndürdüğü için mutation'ın bitmesi, listenin oluştuğu anlamına gelmez;
+  // lastBuiltAt değişene kadar tabloyu poll ederek butonu kilitli tutarız.
+  const [runningRows, setRunningRows] = useState({});
   const editId = searchParams.get('edit');
 
   const sources = schema?.sources || {};
@@ -348,8 +355,47 @@ export function CronListsManager({ authorized }) {
   };
 
   const onRun = async (row) => {
+    if (runningRows[row._id]) return;
+    const previousBuiltAt = row.lastBuiltAt ? new Date(row.lastBuiltAt).getTime() : 0;
+    setRunningRows((current) => ({ ...current, [row._id]: true }));
+    setNotice(`"${row.name}" tetikleniyor…`);
+
     const r = await runList(row._id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Tetiklenemedi' }));
-    setNotice(r?.__err || `"${row.name}" tetiklendi — liste arka planda oluşturuluyor.`);
+    if (r?.__err) {
+      setRunningRows((current) => {
+        const next = { ...current };
+        delete next[row._id];
+        return next;
+      });
+      setNotice(r.__err);
+      return;
+    }
+
+    setNotice(`"${row.name}" çalışıyor — alıcı listesi güncelleniyor…`);
+    let completedRow = null;
+    for (let attempt = 0; attempt < RUN_POLL_ATTEMPTS; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, RUN_POLL_INTERVAL_MS));
+      const refreshed = await refetch().catch(() => null);
+      const currentRow = refreshed?.data?.find((item) => item._id === row._id);
+      const builtAt = currentRow?.lastBuiltAt ? new Date(currentRow.lastBuiltAt).getTime() : 0;
+      if (builtAt > previousBuiltAt) {
+        completedRow = currentRow;
+        break;
+      }
+    }
+
+    setRunningRows((current) => {
+      const next = { ...current };
+      delete next[row._id];
+      return next;
+    });
+    if (!completedRow) {
+      setNotice(`"${row.name}" tetiklendi ancak tamamlanma 90 saniye içinde doğrulanamadı. İş arka planda sürüyor olabilir.`);
+    } else if (completedRow.lastError) {
+      setNotice(`"${row.name}" oluşturulamadı: ${completedRow.lastError}`);
+    } else {
+      setNotice(`"${row.name}" güncellendi — ${formatCount(completedRow.memberCount)} üye.`);
+    }
   };
 
   const onDelete = async (row) => {
@@ -617,6 +663,7 @@ export function CronListsManager({ authorized }) {
                       || (row.buildMode === 'new'
                         ? (row.lastBuiltChannelKey || row.channelKey)
                         : row.channelKey);
+                    const isRunning = Boolean(runningRows[row._id]);
                     return (
                     <tr key={row._id} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="p-3">
@@ -634,7 +681,13 @@ export function CronListsManager({ authorized }) {
                       </td>
                       <td className="p-3">{sources[row.source]?.label || row.source}</td>
                       <td className="p-3 text-right">
-                        {detailKey ? (
+                        {isRunning ? (
+                          <span className="inline-flex items-center justify-end gap-1.5 text-xs font-medium text-primary">
+                            <Loader2 className="size-3.5 animate-spin" />
+                            Güncelleniyor
+                            <span className="text-muted-foreground">({formatCount(row.memberCount)})</span>
+                          </span>
+                        ) : detailKey ? (
                           <Link
                             href={`/cms/email/lists/${detailKey}`}
                             className="inline-flex items-center gap-1.5 font-medium hover:underline"
@@ -652,10 +705,13 @@ export function CronListsManager({ authorized }) {
                         <span className="text-muted-foreground">({row.schedule?.timezone})</span>
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
-                        {/* lastBuiltCount = son koşuda YENİ eklenen; listenin toplamı Üye sütununda. */}
-                        {row.lastBuiltAt
-                          ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(row.lastBuiltCount)} yeni`
-                          : '—'}
+                        {isRunning ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-primary">
+                            <Loader2 className="size-3.5 animate-spin" /> Liste oluşturuluyor…
+                          </span>
+                        ) : row.lastBuiltAt ? (
+                          `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(row.lastBuiltCount)} yeni`
+                        ) : '—'}
                         {/* Elenenler artık koşuda kaydediliyor — Keycloak arızası
                             yüzünden küçülen liste burada fark edilir. */}
                         {row.lastBuiltStats?.noEmail > 0 && (
@@ -669,7 +725,9 @@ export function CronListsManager({ authorized }) {
                         {row.lastError && <div className="text-destructive">{row.lastError}</div>}
                       </td>
                       <td className="p-3">
-                        <Badge variant={row.status === 'active' ? 'secondary' : 'outline'}>{row.status}</Badge>
+                        <Badge variant={isRunning || row.status === 'active' ? 'secondary' : 'outline'}>
+                          {isRunning ? 'çalışıyor' : row.status}
+                        </Badge>
                       </td>
                       <td className="p-3">
                         <div className="flex justify-end gap-1">
@@ -685,19 +743,29 @@ export function CronListsManager({ authorized }) {
                             size="sm"
                             title="Test et — liste oluşturmadan kimlerin geleceğini gösterir"
                             onClick={() => doDryRunRow(row)}
-                            disabled={dryRunFor === row._id}
+                            disabled={dryRunFor === row._id || isRunning}
                           >
                             {dryRunFor === row._id
                               ? <Loader2 className="size-3.5 animate-spin" />
                               : <FlaskConical className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="sm" title="Şimdi çalıştır (GERÇEK liste oluşturur)" onClick={() => onRun(row)}>
-                            <Play className="size-3.5" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title={isRunning
+                              ? 'Liste oluşturuluyor — durdurma desteklenmiyor'
+                              : 'Şimdi çalıştır (GERÇEK liste oluşturur)'}
+                            onClick={() => onRun(row)}
+                            disabled={isRunning}
+                          >
+                            {isRunning
+                              ? <Loader2 className="size-3.5 animate-spin" />
+                              : <Play className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="sm" title="Düzenle" onClick={() => openEdit(row)}>
-                            <RefreshCw className="size-3.5" />
+                          <Button variant="ghost" size="sm" title="Düzenle" onClick={() => openEdit(row)} disabled={isRunning}>
+                            <Pencil className="size-3.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" title="Sil" onClick={() => onDelete(row)}>
+                          <Button variant="ghost" size="sm" title="Sil" onClick={() => onDelete(row)} disabled={isRunning}>
                             <Trash2 className="size-3.5" />
                           </Button>
                         </div>
