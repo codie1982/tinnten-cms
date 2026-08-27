@@ -29,6 +29,8 @@ import {
   RefreshCw,
   ExternalLink,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -49,6 +51,7 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import {
   useGetNewsQuery,
+  useGetNewsListQuery,
   useCreateNewsMutation,
   useUpdateNewsMutation,
   usePublishNewsMutation,
@@ -318,6 +321,27 @@ function NewsDetailPageInner({ params }) {
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
   const { data: doc, isLoading, error } = useGetNewsQuery(id, { skip: isNew || !authorized });
+  const { data: newsList } = useGetNewsListQuery(
+    {
+      countryCode: doc?.countryCode || DEFAULT_COUNTRY,
+      sort: 'updatedAt',
+      order: 'desc',
+      limit: 1000,
+      skip: 0,
+    },
+    { skip: isNew || !authorized || !doc },
+  );
+  const newsNavigation = useMemo(() => {
+    const items = newsList?.items ?? [];
+    const currentIndex = items.findIndex((item) => String(item._id ?? item.id) === String(id));
+
+    if (currentIndex < 0) return { previous: null, next: null };
+
+    return {
+      previous: items[currentIndex - 1] ?? null,
+      next: items[currentIndex + 1] ?? null,
+    };
+  }, [id, newsList]);
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
   const { data: tree = [] } = useGetCategoryTreeQuery({ countryCode: country }, { skip: !authorized });
   const categories = useMemo(() => flattenTree(tree), [tree]);
@@ -748,6 +772,36 @@ function NewsDetailPageInner({ params }) {
         title={isNew ? 'Yeni Haber Oluştur' : 'Haberi Düzenle'}
         actions={
           <div className="flex items-center gap-2">
+            {!isNew && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Önceki haber"
+                  title="Önceki haber"
+                  disabled={!newsNavigation.previous}
+                  onClick={() => {
+                    const target = newsNavigation.previous;
+                    if (target) router.push(`/cms/content/news/${target._id ?? target.id}`);
+                  }}
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Sonraki haber"
+                  title="Sonraki haber"
+                  disabled={!newsNavigation.next}
+                  onClick={() => {
+                    const target = newsNavigation.next;
+                    if (target) router.push(`/cms/content/news/${target._id ?? target.id}`);
+                  }}
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            )}
             <Badge variant={statusMeta[status]?.variant}>{statusMeta[status]?.label}</Badge>
             {publicUrl && (
               <a href={publicUrl} target="_blank" rel="noreferrer">
