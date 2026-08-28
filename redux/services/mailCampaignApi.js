@@ -279,6 +279,15 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
+    previewMailCampaignMerge: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.campaignMergePreview, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    mergeMailCampaigns: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.campaignMerge, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'EmailCampaign', id: 'LIST' }, { type: 'MailChannel', id: 'LIST' }],
+    }),
     /**
      * "Bitir" — kampanyayı bilerek kapatır, kalan kitleye GÖNDERMEZ.
      *
@@ -331,14 +340,21 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:stats` }],
     }),
-    // Dashboard: alıcı bazında açılma/tıklama listesi (sayfalı, engagement filtreli).
+    // Dashboard: gönderilen/gönderilmeyen alıcılar (sayfalı, engagement filtreli).
     getMailCampaignRecipients: build.query({
-      query: ({ id, page = 1, limit = 25, engagement = 'all' }) => ({
+      query: ({ id, page = 1, limit = 25, engagement = 'all', deliveryState = 'all' }) => ({
         url: ENDPOINTS.email.campaignRecipients(id),
-        params: { page, limit, engagement },
+        params: { page, limit, engagement, deliveryState },
       }),
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, { id }) => [{ type: 'EmailCampaign', id: `${id}:recipients` }],
+    }),
+    skipMailCampaignRecipient: build.mutation({
+      query: ({ id, email }) => ({ url: ENDPOINTS.email.campaignSkipRecipient(id), method: 'POST', body: { email } }),
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id: `${id}:recipients` },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
     }),
     // Dashboard: saatlik açılma/tıklama zaman serisi (grafik).
     getMailCampaignTimeSeries: build.query({
@@ -422,11 +438,14 @@ export const {
   useGetMailCampaignSeriesQuery,
   usePauseMailCampaignMutation,
   useResumeMailCampaignMutation,
+  usePreviewMailCampaignMergeMutation,
+  useMergeMailCampaignsMutation,
   useFinishMailCampaignMutation,
   useRestartMailCampaignMutation,
   usePreviewMailCampaignMutation,
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
+  useSkipMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   useGetMergeVariablesQuery,
   useGetRecipientCountQuery,

@@ -4,7 +4,7 @@ import { Fragment, Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Loader2, Plus, RefreshCw, Trash2, Search, FilterX } from 'lucide-react';
+import { Loader2, Plus, RefreshCw, Trash2, Search, FilterX, Combine } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
@@ -13,6 +13,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import {
+  Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
@@ -20,6 +23,8 @@ import {
   useDeleteMailCampaignMutation,
   useGetMailCampaignsQuery,
   useGetMailChannelsQuery,
+  useMergeMailCampaignsMutation,
+  usePreviewMailCampaignMergeMutation,
 } from '@/redux/services';
 
 const statusMeta = {
@@ -165,6 +170,10 @@ function CampaignsPageInner() {
   const pathname = usePathname();
   const [notice, setNotice] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergePreview, setMergePreview] = useState(null);
+  const [mergeName, setMergeName] = useState('');
 
   // Filtreler SUNUCUDA uygulanır: istemcide filtrelemek limitle kırpılmış
   // sayfada arardı ve bitmiş koşuların maillog aggregation'ı boşa koşardı.
@@ -224,6 +233,58 @@ function CampaignsPageInner() {
     { skip: !authorized },
   );
   const [deleteCampaign, { isLoading: deleting }] = useDeleteMailCampaignMutation();
+  const [previewMerge, { isLoading: previewingMerge }] = usePreviewMailCampaignMergeMutation();
+  const [mergeCampaigns, { isLoading: merging }] = useMergeMailCampaignsMutation();
+
+  const selectedCampaigns = selectedIds
+    .map((id) => campaigns.find((campaign) => campaign._id === id))
+    .filter(Boolean);
+
+  const toggleSelected = (id) => {
+    setSelectedIds((current) => {
+      if (current.includes(id)) return current.filter((value) => value !== id);
+      if (current.length >= 2) {
+        setNotice({ variant: 'destructive', message: 'Birleştirmek için en fazla iki kampanya seçebilirsiniz.' });
+        return current;
+      }
+      return [...current, id];
+    });
+  };
+
+  const openMerge = async () => {
+    if (selectedCampaigns.length !== 2) return;
+    const [primary, secondary] = selectedCampaigns;
+    const result = await previewMerge({ primaryId: primary._id, secondaryId: secondary._id })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Birleştirme önizlemesi alınamadı.' }));
+    if (result?.__err) {
+      setNotice({ variant: 'destructive', message: result.__err });
+      return;
+    }
+    setMergePreview(result);
+    setMergeName(primary.name || '');
+    setMergeOpen(true);
+  };
+
+  const applyMerge = async () => {
+    if (!mergePreview || !mergeName.trim()) return;
+    const result = await mergeCampaigns({
+      primaryId: mergePreview.primary.id,
+      secondaryId: mergePreview.secondary.id,
+      name: mergeName.trim(),
+      confirm: true,
+    })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Kampanyalar birleştirilemedi.' }));
+    if (result?.__err) {
+      setNotice({ variant: 'destructive', message: result.__err });
+      return;
+    }
+    setMergeOpen(false);
+    setMergePreview(null);
+    setSelectedIds([]);
+    setNotice({ variant: 'info', message: 'Kampanyalar birleştirildi ve duraklatıldı.' });
+  };
 
   /**
    * Tamamlanan satırlar tarih kovalarına ayrılır: tekrarlı bir kampanya her
@@ -304,6 +365,15 @@ function CampaignsPageInner() {
     return (
       <TableRow key={c._id}>
         <TableCell className="font-medium">
+          <div className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            aria-label={`${c.name} kampanyasını seç`}
+            checked={selectedIds.includes(c._id)}
+            onChange={() => toggleSelected(c._id)}
+            className="mt-1 size-4 accent-primary"
+          />
+          <div>
           <Link
             // scheduled da edit sayfasına: dashboard'da iptal kontrolü yok.
             href={['draft', 'scheduled'].includes(c.status) ? `/cms/email/campaigns/${c._id}` : `/cms/email/campaigns/${c._id}/dashboard`}
@@ -317,6 +387,8 @@ function CampaignsPageInner() {
               {formatRecurrence(c.recurrence)}
             </div>
           )}
+          </div>
+          </div>
         </TableCell>
         <TableCell><span className="font-mono text-xs">{c.channelKey}</span></TableCell>
         <TableCell>
@@ -392,8 +464,14 @@ function CampaignsPageInner() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Kampanyalar</CardTitle>
-          <CardToolbar className="gap-2">
+            <CardTitle>Kampanyalar</CardTitle>
+            <CardToolbar className="gap-2">
+            {selectedIds.length > 0 && (
+              <Button variant="outline" size="sm" onClick={openMerge} disabled={selectedIds.length !== 2 || previewingMerge}>
+                {previewingMerge ? <Loader2 className="size-3.5 animate-spin" /> : <Combine className="size-3.5" />}
+                Birleştir {selectedIds.length}/2
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isFetching}>
               {isFetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               Yenile
@@ -530,6 +608,41 @@ function CampaignsPageInner() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Kampanyaları birleştir</DialogTitle>
+            <DialogDescription>
+              İlk seçilen kampanya korunur; ikinci seçilen kampanya onun içine aktarılır ve sonuç duraklatılır.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+              <div><b>1. kampanya:</b> {mergePreview?.primary?.name}</div>
+              <div><b>2. kampanya:</b> {mergePreview?.secondary?.name}</div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Birleşik kampanya adı</label>
+              <Input value={mergeName} onChange={(e) => setMergeName(e.target.value)} autoFocus />
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="rounded-md border p-3"><div className="text-muted-foreground">Gönderildi</div><b>{formatCount(mergePreview?.audience?.sent)}</b></div>
+              <div className="rounded-md border p-3"><div className="text-muted-foreground">Gönderilmemiş</div><b>{formatCount(mergePreview?.audience?.unsent)}</b></div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {formatCount(mergePreview?.summary?.duplicateLogs)} yinelenen alıcı tekilleştirilecek. Sonraki başlatmada yalnız henüz gönderilmemiş aktif alıcılar hedeflenir.
+              {mergePreview?.requiresMergedChannel ? ' Farklı listeler için yeni, birleşik bir hedef liste oluşturulacak.' : ''}
+            </p>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMergeOpen(false)} disabled={merging}>Vazgeç</Button>
+            <Button variant="primary" onClick={applyMerge} disabled={merging || !mergeName.trim()}>
+              {merging && <Loader2 className="size-3.5 animate-spin" />} Birleştir ve duraklat
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </RoleGuard>
   );
 }

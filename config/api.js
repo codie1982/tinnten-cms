@@ -302,6 +302,8 @@ export const ENDPOINTS = {
     campaignSeries: (id) => `/email/campaigns/${id}/series`,
     campaignPause: (id) => `/email/campaigns/${id}/pause`,
     campaignResume: (id) => `/email/campaigns/${id}/resume`,
+    campaignMergePreview: '/email/campaigns/merge-preview',
+    campaignMerge: '/email/campaigns/merge',
     // Kampanya kitle tükenmeden KENDİLİĞİNDEN kapanmaz; yarım kalan bir yayını
     // "bitti" saymanın tek yolu budur. Kalan kişi sayısı kayda yazılır.
     campaignFinish: (id) => `/email/campaigns/${id}/finish`,
@@ -310,6 +312,7 @@ export const ENDPOINTS = {
     campaignPreview: (id) => `/email/campaigns/${id}/preview`,
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
     campaignRecipients: (id) => `/email/campaigns/${id}/recipients`,
+    campaignSkipRecipient: (id) => `/email/campaigns/${id}/recipients/skip`,
     campaignTimeseries: (id) => `/email/campaigns/${id}/timeseries`,
     // Yardımcı
     mergeVariables: '/email/merge-variables',

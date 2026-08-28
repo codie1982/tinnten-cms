@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -25,6 +25,7 @@ import {
   useGetMailCampaignQuery,
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
+  useSkipMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   usePauseMailCampaignMutation,
   useResumeMailCampaignMutation,
@@ -37,6 +38,12 @@ const PAGE = 25;
 const numberFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => numberFormatter.format(Number(value) || 0);
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+const formatRemaining = (ms) => {
+  const seconds = Math.max(0, Math.ceil(Number(ms) / 1000));
+  if (seconds < 1) return '< 1 sn';
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes} dk ${seconds % 60} sn` : `${seconds} sn`;
+};
 const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 const hhmm = (t) => new Date(t).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
@@ -45,6 +52,12 @@ const ENGAGEMENT_TABS = [
   { key: 'opened', label: 'Açanlar' },
   { key: 'clicked', label: 'Tıklayanlar' },
   { key: 'none', label: 'Tepkisiz' },
+];
+
+const DELIVERY_TABS = [
+  { key: 'sent', label: 'Gönderilenler' },
+  { key: 'queued', label: 'Kuyruktakiler' },
+  { key: 'unsent', label: 'Gönderilmeyenler' },
 ];
 
 const STATUS_META = {
@@ -79,9 +92,11 @@ export default function CampaignDashboardPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
   const [engagement, setEngagement] = useState('all');
+  const [deliveryState, setDeliveryState] = useState('sent');
   const [page, setPage] = useState(1);
   const [notice, setNotice] = useState('');
   const [previewRecipient, setPreviewRecipient] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const {
     data: campaign,
@@ -95,6 +110,7 @@ export default function CampaignDashboardPage() {
   const [finishCampaign, { isLoading: finishing }] = useFinishMailCampaignMutation();
   const [restartCampaign, { isLoading: restarting }] = useRestartMailCampaignMutation();
   const [continueCampaign, { isLoading: continuing }] = useContinueMailCampaignMutation();
+  const [skipRecipient, { isLoading: skipping }] = useSkipMailCampaignRecipientMutation();
   const status = campaign?.status || 'draft';
   const isActive = ['queued', 'sending'].includes(status);
   const isPaused = status === 'paused';
@@ -117,6 +133,16 @@ export default function CampaignDashboardPage() {
     refetch: refetchStats,
   } = useGetMailCampaignStatsQuery(id, { skip: !authorized });
   const stats = statsData?.stats;
+  const nextDelivery = statsData?.delivery?.nextDelivery;
+  const nextDeliveryRemaining = nextDelivery?.estimatedAt
+    ? Math.max(new Date(nextDelivery.estimatedAt).getTime() - now, 0)
+    : 0;
+
+  useEffect(() => {
+    if (!nextDelivery?.estimatedAt) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [nextDelivery?.estimatedAt]);
 
   const {
     data: series = [],
@@ -129,7 +155,7 @@ export default function CampaignDashboardPage() {
     isFetching: recipientsFetching,
     refetch: refetchRecipients,
   } = useGetMailCampaignRecipientsQuery(
-    { id, page, limit: PAGE, engagement },
+    { id, page, limit: PAGE, engagement, deliveryState },
     { skip: !authorized }
   );
   const recipients = recipientsData?.items || [];
@@ -138,6 +164,13 @@ export default function CampaignDashboardPage() {
   const changeEngagement = (key) => {
     setEngagement(key);
     setPage(1);
+  };
+
+  const changeDeliveryState = (key) => {
+    setDeliveryState(key);
+    setPage(1);
+    // Gönderilmeyen listesinde açılma/tıklama anlamlı değildir.
+    if (key === 'unsent') setEngagement('all');
   };
 
   const refreshAll = async () => {
@@ -195,6 +228,14 @@ export default function CampaignDashboardPage() {
     if (r?.__err) return setNotice(r.__err);
     await refreshAll();
     setNotice(`Kampanya taslağa döndürüldü. ${formatCount(r?.clearedLogs || 0)} gönderim kaydı silindi.`);
+  };
+
+  const doSkipRecipient = async (email) => {
+    if (!window.confirm(`${email} bu kampanyanın kuyruğundan atlanacak. Onaylıyor musunuz?`)) return;
+    const r = await skipRecipient({ id, email }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Alıcı atlanamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    await Promise.all([refetchRecipients(), refetchStats().catch(() => null), refetchCampaign()]);
+    setNotice(`${email} kuyruktan atlandı.`);
   };
 
   const busy = campaignFetching || statsFetching || seriesFetching || recipientsFetching;
@@ -261,6 +302,12 @@ export default function CampaignDashboardPage() {
         <Alert variant="destructive" className="mb-4">
           <AlertTitle>Duraklatıldı</AlertTitle>
           <AlertDescription>{campaign.pausedReason}</AlertDescription>
+        </Alert>
+      )}
+      {nextDelivery && (
+        <Alert variant="info" className="mb-4">
+          <AlertTitle>Sonraki mail yaklaşık {formatRemaining(nextDeliveryRemaining)} içinde işlenecek</AlertTitle>
+          <AlertDescription>Kuyruk yoğunluğu veya mail sağlayıcısı nedeniyle süre değişebilir.</AlertDescription>
         </Alert>
       )}
 
@@ -340,9 +387,25 @@ export default function CampaignDashboardPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Alıcılar</CardTitle>
+              <CardTitle>
+                {deliveryState === 'sent'
+                  ? 'Gönderilenler'
+                  : deliveryState === 'queued'
+                    ? 'Kuyruktakiler'
+                    : 'Gönderilmeyenler'}
+              </CardTitle>
               <CardToolbar className="gap-2">
-                {ENGAGEMENT_TABS.map((tab) => (
+                {DELIVERY_TABS.map((tab) => (
+                  <Button
+                    key={tab.key}
+                    size="sm"
+                    variant={deliveryState === tab.key ? 'default' : 'outline'}
+                    onClick={() => changeDeliveryState(tab.key)}
+                  >
+                    {tab.label}
+                  </Button>
+                ))}
+                {deliveryState === 'sent' && ENGAGEMENT_TABS.map((tab) => (
                   <Button
                     key={tab.key}
                     size="sm"
@@ -359,17 +422,18 @@ export default function CampaignDashboardPage() {
               {recipientsFetching && recipients.length === 0 ? (
                 <div className="space-y-1 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
               ) : recipients.length === 0 ? (
-                <p className="py-10 text-center text-sm text-muted-foreground">Bu filtreye uyan alıcı yok.</p>
+                <p className="py-10 text-center text-sm text-muted-foreground">Bu listede alıcı yok.</p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Alıcı</TableHead>
                       <TableHead>Durum</TableHead>
-                      <TableHead>Açıldı mı</TableHead>
-                      <TableHead>Tıklandı mı</TableHead>
-                      <TableHead>Son işlem</TableHead>
-                      <TableHead className="text-right">Önizleme</TableHead>
+                      {deliveryState === 'sent' && <TableHead>Açıldı mı</TableHead>}
+                      {deliveryState === 'sent' && <TableHead>Tıklandı mı</TableHead>}
+                      <TableHead>{deliveryState === 'sent' ? 'Son işlem' : deliveryState === 'queued' ? 'Kuyruğa alındı' : 'Kuyruk durumu'}</TableHead>
+                      {deliveryState === 'sent' && <TableHead className="text-right">Önizleme</TableHead>}
+                      {deliveryState === 'queued' && <TableHead className="text-right">İşlem</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -377,14 +441,14 @@ export default function CampaignDashboardPage() {
                       <TableRow key={r.to}>
                         <TableCell className="font-medium">{r.to}</TableCell>
                         <TableCell><Badge variant="secondary">{r.status}</Badge></TableCell>
-                        <TableCell>
+                        {deliveryState === 'sent' && <TableCell>
                           {r.openCount > 0 ? (
                             <span className="text-emerald-600">Evet · {r.openCount}× ({fmtDateTime(r.openedAt)})</span>
                           ) : (
                             <span className="text-muted-foreground">Hayır</span>
                           )}
-                        </TableCell>
-                        <TableCell>
+                        </TableCell>}
+                        {deliveryState === 'sent' && <TableCell>
                           {r.clickCount > 0 ? (
                             <span className="text-emerald-600">
                               Evet · {r.clickCount}× ({fmtDateTime(r.firstClickAt)})
@@ -395,11 +459,15 @@ export default function CampaignDashboardPage() {
                           ) : (
                             <span className="text-muted-foreground">Hayır</span>
                           )}
-                        </TableCell>
+                        </TableCell>}
                         <TableCell className="text-xs text-muted-foreground">
-                          {fmtDateTime(r.firstClickAt || r.openedAt || r.sentAt)}
+                          {deliveryState === 'sent'
+                            ? fmtDateTime(r.firstClickAt || r.openedAt || r.sentAt)
+                            : deliveryState === 'queued'
+                              ? fmtDateTime(r.sentAt)
+                              : (r.status === 'not_targeted' ? 'Henüz hedeflenmedi' : `${r.status}${r.error ? ` · ${r.error}` : ''}`)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        {deliveryState === 'sent' && <TableCell className="text-right">
                           <Button
                             size="sm"
                             variant="ghost"
@@ -408,7 +476,17 @@ export default function CampaignDashboardPage() {
                           >
                             <Eye className="size-4" />
                           </Button>
-                        </TableCell>
+                        </TableCell>}
+                        {deliveryState === 'queued' && <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={skipping}
+                            onClick={() => doSkipRecipient(r.to)}
+                          >
+                            Bu maili atla
+                          </Button>
+                        </TableCell>}
                       </TableRow>
                     ))}
                   </TableBody>
