@@ -241,6 +241,7 @@ export default function CampaignEditPage() {
   const isScheduled = status === 'scheduled';
   const isActive = ['queued', 'sending'].includes(status);
   const isPaused = status === 'paused';
+  const canEditDetails = isDraft || isPaused;
   // Kapanmış koşu: kısmi (test) yayından sonra kalan kitleye devam edilebilir.
   const isFinished = ['sent', 'partial', 'failed'].includes(status);
   // Süre seçiliyse drip: stats polling'i gevşet — getStats her çağrıda kampanyanın
@@ -297,7 +298,9 @@ export default function CampaignEditPage() {
           },
         },
         schedule: {
-          startAt: toLocalInput(campaign.schedule?.startAt),
+          // Geçmiş başlangıç tarihini yeniden planlama alanına taşıma;
+          // operatör ileri tarih seçerse bilinçli olarak yeniden girer.
+          startAt: campaign.status === 'paused' ? '' : toLocalInput(campaign.schedule?.startAt),
           durationMinutes: campaign.schedule?.durationMinutes
             ? String(campaign.schedule.durationMinutes)
             : '',
@@ -314,7 +317,14 @@ export default function CampaignEditPage() {
           ? '100'
           : String(savedPct),
       );
-      setPublishWhen(campaign.schedule?.startAt || campaign.schedule?.durationMinutes ? 'at' : 'now');
+      // Duraklatılmış kampanyanın eski başlangıç tarihi geçmiştedir;
+      // yeniden planlama ekranı "şimdi" ile açılır. Süre ve diğer
+      // yayın ayarları ise bir önceki koşudan aynen gelir.
+      setPublishWhen(
+        campaign.status === 'paused'
+          ? 'now'
+          : campaign.schedule?.startAt || campaign.schedule?.durationMinutes ? 'at' : 'now',
+      );
       const r = campaign.recurrence || {};
       setRec({
         enabled: Boolean(r.enabled),
@@ -433,6 +443,9 @@ export default function CampaignEditPage() {
       fromAddress: form.sendConfig.fromAddress.trim() || null,
       maxPerRecipientPerDay:
         form.sendConfig.maxPerRecipientPerDay === '' ? 1 : Math.max(0, Number(form.sendConfig.maxPerRecipientPerDay) || 0),
+      // Bu ayar arayüzde bu formda değiştirilmiyor; paused yeniden planlama
+      // kaydı eski true değerini sessizce false'a çevirmemeli.
+      excludePriorRecipients: campaign?.sendConfig?.excludePriorRecipients === true,
       circuitBreaker: {
         enabled: !!form.sendConfig.circuitBreaker.enabled,
         bounceRatePct: Number(form.sendConfig.circuitBreaker.bounceRatePct) || 3,
@@ -449,11 +462,20 @@ export default function CampaignEditPage() {
     },
   });
 
+  // Duraklatılmış kampanyada tanım ve yayın ayarları taslak benzeri
+  // düzenlenir; kanal kimliği ise sent geçmişi/cursor ile bağlı olduğundan
+  // bu payload'a bilinçli olarak girmez.
+  const buildPausedPayload = () => {
+    const payload = buildPayload();
+    delete payload.channelKey;
+    return payload;
+  };
+
   const save = async () => {
     if (!form.name.trim() || !form.channelKey || !form.templateId) {
       return setNotice('Ad, kanal ve şablon zorunlu.');
     }
-    const payload = buildPayload();
+    const payload = isPaused ? buildPausedPayload() : buildPayload();
     if (isNew) {
       const r = await createCampaign(payload).unwrap().catch((e) => ({ __err: e?.data?.message || 'Oluşturulamadı' }));
       if (r?.__err) return setNotice(r.__err);
@@ -496,6 +518,45 @@ export default function CampaignEditPage() {
       if (!ok) return;
       setPublishOpen(false);
       return setNotice('Tekrar ayarı kaydedildi.');
+    }
+
+    if (isPaused) {
+      if (!form.name.trim() || !form.templateId) {
+        return setPublishError('Kampanya adı ve şablon zorunlu.');
+      }
+      const schedule = {
+        startAt:
+          publishWhen === 'at' && form.schedule.startAt
+            ? new Date(form.schedule.startAt).toISOString()
+            : null,
+        durationMinutes: Number(form.schedule.durationMinutes) || null,
+      };
+      if (publishWhen === 'at' && !schedule.startAt) {
+        return setPublishError('Yeniden zamanlamak için başlangıç tarihi seçin.');
+      }
+
+      // Pause durumunda düzenlenen kampanya detayları ve yayın ayarları
+      // birlikte kaydedilir; kanal/sent geçmişi aynı kalır.
+      const pausedPayload = buildPausedPayload();
+      const saved = await updateCampaign({
+        id,
+        ...pausedPayload,
+        schedule,
+      }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Kampanya ayarları kaydedilemedi' }));
+      if (saved?.__err) return setPublishError(saved.__err);
+
+      const r = await resumeCampaign({ id, ...schedule })
+        .unwrap()
+        .catch((e) => ({ __err: e?.data?.message || 'Kampanya yeniden başlatılamadı' }));
+      if (r?.__err) return setPublishError(r.__err);
+      setPublishOpen(false);
+      await refetchCampaign();
+      await refetchStats().catch(() => null);
+      return setNotice(
+        r?.scheduled
+          ? `Kampanya yeniden zamanlandı: ${formatDateTime(r.startAt)}`
+          : `Kampanya kalan alıcılarla sürdürüldü${schedule.durationMinutes ? `; ${formatDuration(schedule.durationMinutes)} içine yayılacak` : ''}.`,
+      );
     }
 
     if (!form.name.trim() || !form.channelKey || !form.templateId) {
@@ -577,17 +638,6 @@ export default function CampaignEditPage() {
     setNotice('Kampanya duraklatıldı.');
   };
 
-  const doResume = async () => {
-    const r = await resumeCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Sürdürülemedi' }));
-    if (r?.__err) return setNotice(r.__err);
-    await refetchCampaign();
-    setNotice(
-      r?.requeued || r?.rescanned
-        ? `Kampanya sürdürüldü (${(r.requeued || 0) + (r.rescanned || 0)} alıcı yeniden kuyruğa alındı).`
-        : 'Kampanya sürdürüldü.'
-    );
-  };
-
   const refreshCampaign = async () => {
     if (isNew) return;
     await refetchCampaign();
@@ -641,15 +691,15 @@ export default function CampaignEditPage() {
               </Button>
             )}
             {isPaused && (
-              <Button variant="outline" onClick={doResume} disabled={resuming}>
-                {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} Sürdür
+              <Button variant="outline" onClick={() => { setPublishError(''); setPublishOpen(true); }} disabled={resuming}>
+                {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} Yeniden planla / sürdür
               </Button>
             )}
-            {isDraft && (
+            {canEditDetails && (
               // Bu buton YAYINLAMAZ, taslağı kaydeder ("Sonra Yayınla" etiketi
               // yayın butonu sanılıyordu). Yayın sağdaki özet kartından yapılır.
               <Button onClick={save} disabled={creating || saving} title="Taslağı kaydet (yayınlamaz)">
-                {creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Kaydet
+                {creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} {isPaused ? 'Değişiklikleri kaydet' : 'Kaydet'}
               </Button>
             )}
             {isDraft && !isNew && (
@@ -679,9 +729,17 @@ export default function CampaignEditPage() {
             <Card>
               <CardHeader><CardTitle>Kampanya</CardTitle></CardHeader>
               <CardContent className="space-y-4 p-4">
+                {isPaused && (
+                  <Alert variant="info">
+                    <AlertDescription>
+                      Buradaki içerik değişiklikleri yalnız henüz gönderilmemiş alıcılara uygulanır.
+                      Alıcı listesi, gönderilmiş geçmişle aynı kampanyayı korumak için sabittir.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <div>
                   <label className="mb-1 block text-xs text-muted-foreground">Ad</label>
-                  <Input value={form.name} onChange={(e) => set('name', e.target.value)} disabled={!isDraft} />
+                  <Input value={form.name} onChange={(e) => set('name', e.target.value)} disabled={!canEditDetails} />
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <div className="min-w-[200px] flex-1">
@@ -724,7 +782,7 @@ export default function CampaignEditPage() {
                   </div>
                   <div className="min-w-[200px] flex-1">
                     <label className="mb-1 block text-xs text-muted-foreground">Şablon</label>
-                    <select value={form.templateId} onChange={(e) => set('templateId', e.target.value)} disabled={!isDraft}
+                    <select value={form.templateId} onChange={(e) => set('templateId', e.target.value)} disabled={!canEditDetails}
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30">
                       <option value="">— seçin —</option>
                       {templates.map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
@@ -733,7 +791,7 @@ export default function CampaignEditPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-muted-foreground">Konu override (boşsa şablon konusu)</label>
-                  <Input value={form.subjectOverride} onChange={(e) => set('subjectOverride', e.target.value)} disabled={!isDraft} />
+                  <Input value={form.subjectOverride} onChange={(e) => set('subjectOverride', e.target.value)} disabled={!canEditDetails} />
                 </div>
 
                 {/* globalVars */}
@@ -742,15 +800,15 @@ export default function CampaignEditPage() {
                   <div className="space-y-2">
                     {vars.map((v, i) => (
                       <div key={i} className="flex gap-2">
-                        <Input placeholder="DEGISKEN" value={v.key} disabled={!isDraft}
+                        <Input placeholder="DEGISKEN" value={v.key} disabled={!canEditDetails}
                           onChange={(e) => setVars((arr) => arr.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))}
                           className="font-mono text-xs" />
-                        <Input placeholder="değer" value={v.value} disabled={!isDraft}
+                        <Input placeholder="değer" value={v.value} disabled={!canEditDetails}
                           onChange={(e) => setVars((arr) => arr.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))} />
-                        {isDraft && <Button variant="ghost" size="sm" onClick={() => setVars((arr) => arr.filter((_, j) => j !== i))}><Trash2 className="size-3.5" /></Button>}
+                        {canEditDetails && <Button variant="ghost" size="sm" onClick={() => setVars((arr) => arr.filter((_, j) => j !== i))}><Trash2 className="size-3.5" /></Button>}
                       </div>
                     ))}
-                    {isDraft && (
+                    {canEditDetails && (
                       <Button variant="outline" size="sm" onClick={() => setVars((arr) => [...arr, { key: '', value: '' }])}>
                         <Plus className="size-3.5" /> Değişken ekle
                       </Button>
@@ -915,7 +973,7 @@ export default function CampaignEditPage() {
 
               {/* TEK eylem. Yüzde ve zaman kararı çekmecenin içinde; zamanlanmışta
                   yanına iptal gelir (saati değiştirmenin tek yolu odur). */}
-              {!isNew && (isDraft || isScheduled || isFinished) && (
+              {!isNew && (isDraft || isScheduled || isFinished || isPaused) && (
                 <div className="flex gap-2">
                   <Button
                     className="flex-1"
@@ -924,7 +982,7 @@ export default function CampaignEditPage() {
                     title={!form.channelKey ? 'Önce alıcı listesi seçin' : undefined}
                   >
                     <Megaphone className="size-4" />
-                    {isScheduled ? 'Zamanlamayı düzenle' : isFinished ? 'Kalanı yayına al' : 'Yayına al'}
+                    {isScheduled ? 'Zamanlamayı düzenle' : isPaused ? 'Yeniden planla / sürdür' : isFinished ? 'Kalanı yayına al' : 'Yayına al'}
                   </Button>
                   {isScheduled && (
                     confirmUnschedule ? (
@@ -962,6 +1020,7 @@ export default function CampaignEditPage() {
           campaign={campaign}
           status={status}
           isFinished={isFinished}
+          isPaused={isPaused}
           recipientCount={recipientCount}
           delivery={delivery}
           percent={publishPercent}
@@ -974,7 +1033,7 @@ export default function CampaignEditPage() {
           setSched={setSched}
           rec={rec}
           setR={setR}
-          busy={saving || sending || scheduling || continuing || savingRecurrence}
+          busy={saving || sending || scheduling || continuing || savingRecurrence || resuming}
           error={publishError}
           onSubmit={submitPublish}
         />

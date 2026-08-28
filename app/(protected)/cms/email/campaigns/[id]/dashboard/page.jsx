@@ -29,7 +29,6 @@ import {
   useSuppressMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   usePauseMailCampaignMutation,
-  useResumeMailCampaignMutation,
   useFinishMailCampaignMutation,
   useRestartMailCampaignMutation,
   useContinueMailCampaignMutation,
@@ -107,7 +106,6 @@ export default function CampaignDashboardPage() {
   } = useGetMailCampaignQuery(id, { skip: !authorized });
 
   const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
-  const [resumeCampaign, { isLoading: resuming }] = useResumeMailCampaignMutation();
   const [finishCampaign, { isLoading: finishing }] = useFinishMailCampaignMutation();
   const [restartCampaign, { isLoading: restarting }] = useRestartMailCampaignMutation();
   const [continueCampaign, { isLoading: continuing }] = useContinueMailCampaignMutation();
@@ -196,17 +194,6 @@ export default function CampaignDashboardPage() {
     setNotice('Kampanya duraklatıldı.');
   };
 
-  const doResume = async () => {
-    const r = await resumeCampaign(id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Sürdürülemedi' }));
-    if (r?.__err) return setNotice(r.__err);
-    await refreshAll();
-    setNotice(
-      r?.requeued || r?.rescanned
-        ? `Kampanya sürdürüldü (${(r.requeued || 0) + (r.rescanned || 0)} alıcı yeniden kuyruğa alındı).`
-        : 'Kampanya sürdürüldü.'
-    );
-  };
-
   const doContinue = async () => {
     const r = await continueCampaign({ id, percent: 100 })
       .unwrap()
@@ -279,9 +266,9 @@ export default function CampaignDashboardPage() {
               </Button>
             )}
             {isPaused && (
-              <Button variant="outline" onClick={doResume} disabled={resuming}>
-                {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} Sürdür
-              </Button>
+              <Link href={`/cms/email/campaigns/${id}`}>
+                <Button variant="outline"><Play className="size-4" /> Yeniden planla / sürdür</Button>
+              </Link>
             )}
             {isTerminal && waiting > 0 && (
               <Button onClick={doContinue} disabled={continuing}>

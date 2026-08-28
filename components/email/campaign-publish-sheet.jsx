@@ -111,6 +111,7 @@ export function CampaignPublishSheet({
   campaign,
   status,
   isFinished,
+  isPaused,
   recipientCount,
   delivery,
   percent,
@@ -138,12 +139,15 @@ export function CampaignPublishSheet({
   const scheduleLocked = isScheduled;
 
   const total = Number(delivery?.channelTotal ?? recipientCount) || 0;
-  const left = isFinished ? Number(delivery?.remaining) || 0 : total;
-  const sent = isFinished ? Number(delivery?.covered) || 0 : 0;
+  const isContinuation = isFinished || isPaused;
+  const left = isContinuation ? Number(delivery?.remaining) || 0 : total;
+  const sent = isContinuation ? Number(delivery?.covered) || 0 : 0;
 
   const pct = Math.min(Math.max(Math.round(Number(percent) || 0), 1), 100);
   // Payda tüm liste; devam yayınında kalandan fazlası istenemez.
-  const target = Math.min(Math.ceil((total * pct) / 100), left);
+  // Pause devamında kitle yeniden örneklenmez; mevcut cursor'daki kalanların
+  // tamamı korunur. Yüzde seçimi yalnız yeni/devam partileri içindir.
+  const target = isPaused ? left : Math.min(Math.ceil((total * pct) / 100), left);
   const capped = isFinished && target >= left && left > 0;
   const coverAfter = total ? Math.round(((sent + target) / total) * 100) : 0;
 
@@ -168,13 +172,15 @@ export function CampaignPublishSheet({
       ? (isFinished ? 'Bu kampanyayı almamış kimse kalmadı.' : 'Kanal seçilmedi — gönderilecek alıcı yok.')
       : effWhen === 'at' && !form.schedule.startAt && !effDuration
         ? 'Başlangıç tarihi veya yayılma süresi girin — yoksa "Hemen" seçin.'
-        : effWhen === 'at' && rec.enabled && rec.unit === 'week' && !rec.byWeekday?.length
+        : !isPaused && effWhen === 'at' && rec.enabled && rec.unit === 'week' && !rec.byWeekday?.length
           ? 'Haftalık tekrar için en az bir gün seçin.'
           : tooFast
             ? `Süre çok kısa: ${fmt(target)} alıcı ${rate} mail/sn hızla en az ${formatDuration(minMinutes)} sürer.`
             : null;
 
-  const who = isFinished
+  const who = isPaused
+    ? `henüz gönderilmemiş ${fmt(left)} kişinin tamamına`
+    : isFinished
     ? (capped
         ? `bu kampanyayı almamış ${fmt(left)} kişinin tamamına`
         : `kalan ${fmt(left)} kişi arasından rastgele ${fmt(target)} kişiye (listenin %${pct}’${suf(pct)})`)
@@ -188,14 +194,16 @@ export function CampaignPublishSheet({
       ? `şimdi, ${formatDuration(effDuration)} içine yayılarak`
       : `${formatDateTime(form.schedule.startAt) || 'hemen'}’de${effDuration ? `, ${formatDuration(effDuration)} içine yayılarak` : ''}`;
 
-  const cta = isFinished ? 'Kalanı yayına al' : wantsSchedule ? 'Zamanla' : 'Yayına al';
+  const cta = isPaused
+    ? (effWhen === 'at' ? 'Yeniden zamanla' : 'Kalanlarla sürdür')
+    : isFinished ? 'Kalanı yayına al' : wantsSchedule ? 'Zamanla' : 'Yayına al';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-[460px]">
         <SheetHeader className="border-b border-border px-5 py-4 pe-12">
           <SheetTitle>
-            {isScheduled ? 'Zamanlamayı düzenle' : isFinished ? 'Kalanı yayına al' : 'Yayına al'}
+            {isScheduled ? 'Zamanlamayı düzenle' : isPaused ? 'Kampanyayı yeniden planla' : isFinished ? 'Kalanı yayına al' : 'Yayına al'}
           </SheetTitle>
           <SheetDescription className="truncate">
             {campaign?.name || 'Kampanya'} · <span className="font-mono">{form.channelKey || '—'}</span>
@@ -209,14 +217,14 @@ export function CampaignPublishSheet({
             title="Kimlere gidecek"
             aside={
               <span className="text-[11.5px] tabular-nums">
-                {isFinished
+                {isContinuation
                   ? `Tüm liste ${fmt(total)} · ${fmt(sent)} gönderildi · ${fmt(left)} kaldı`
                   : `Tüm liste · ${fmt(total)} kişi`}
               </span>
             }
           >
             <div className="flex flex-wrap gap-1.5">
-              {PCT_PRESETS.map((p) => (
+              {!isPaused && PCT_PRESETS.map((p) => (
                 <Button
                   key={p}
                   type="button"
@@ -229,7 +237,7 @@ export function CampaignPublishSheet({
                 </Button>
               ))}
             </div>
-            <div className="flex gap-2.5">
+            {!isPaused && <div className="flex gap-2.5">
               <div className="w-[92px]">
                 <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pubPct">Yüzde</label>
                 <Input id="pubPct" type="number" min={1} max={100} value={percent}
@@ -239,9 +247,11 @@ export function CampaignPublishSheet({
                 <label className="mb-1 block text-xs text-muted-foreground">Gidecek kişi</label>
                 <Input value={fmt(target)} readOnly className="tabular-nums" />
               </div>
-            </div>
+            </div>}
             <p className="text-[11.5px] text-muted-foreground">
-              {pct >= 100 && !isFinished
+              {isPaused
+                ? `Gönderilmiş ${fmt(sent)} alıcı korunur; yalnız kalan ${fmt(left)} alıcı yeni plana girer.`
+                : pct >= 100 && !isFinished
                 ? '%100 — listedeki herkes.'
                 : capped
                   ? `Kalan ${fmt(left)} kişinin tamamına gider; kampanya %100 kapsamaya ulaşır.`
@@ -279,7 +289,7 @@ export function CampaignPublishSheet({
                 ))}
               </div>
 
-              {when === 'at' && (
+              {when === 'at' && !isPaused && (
                 <div className="min-w-[190px] pt-1">
                   <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pubStart">Başlangıç tarihi</label>
                   <input

@@ -271,13 +271,19 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       ],
     }),
     resumeMailCampaign: build.mutation({
-      query: (id) => ({ url: ENDPOINTS.email.campaignResume(id), method: 'POST' }),
+      query: (arg) => {
+        const { id, ...body } = typeof arg === 'object' ? arg : { id: arg };
+        return { url: ENDPOINTS.email.campaignResume(id), method: 'POST', body };
+      },
       transformResponse: (res) => res?.data ?? res,
-      invalidatesTags: (r, e, id) => [
+      invalidatesTags: (r, e, arg) => {
+        const id = typeof arg === 'object' ? arg.id : arg;
+        return [
         { type: 'EmailCampaign', id },
         { type: 'EmailCampaign', id: 'LIST' },
         { type: 'EmailCampaign', id: `${id}:stats` },
-      ],
+        ];
+      },
     }),
     previewMailCampaignMerge: build.mutation({
       query: (body) => ({ url: ENDPOINTS.email.campaignMergePreview, method: 'POST', body }),
