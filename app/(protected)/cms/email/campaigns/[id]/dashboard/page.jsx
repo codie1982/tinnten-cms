@@ -455,7 +455,11 @@ export default function CampaignDashboardPage() {
                     {recipients.map((r) => (
                       <TableRow key={r.to}>
                         <TableCell className="font-medium">{r.to}</TableCell>
-                        <TableCell><Badge variant="secondary">{r.status}</Badge></TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">
+                            {r.status === 'not_targeted' ? 'Sırası bekliyor' : r.status}
+                          </Badge>
+                        </TableCell>
                         {deliveryState === 'sent' && <TableCell>
                           {r.openCount > 0 ? (
                             <span className="text-emerald-600">Evet · {r.openCount}× ({fmtDateTime(r.openedAt)})</span>
@@ -479,7 +483,7 @@ export default function CampaignDashboardPage() {
                           {deliveryState === 'sent'
                             ? fmtDateTime(r.firstClickAt || r.openedAt || r.sentAt)
                             : deliveryState === 'queued'
-                              ? fmtDateTime(r.sentAt)
+                              ? (r.sentAt ? fmtDateTime(r.sentAt) : 'Gönderim sırası bekleniyor')
                               : (r.status === 'not_targeted' ? 'Henüz hedeflenmedi' : `${r.status}${r.error ? ` · ${r.error}` : ''}`)}
                         </TableCell>
                         {deliveryState === 'sent' && <TableCell className="text-right">
