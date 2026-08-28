@@ -555,7 +555,7 @@ export default function CampaignEditPage() {
       return setNotice(
         r?.scheduled
           ? `Kampanya yeniden zamanlandı: ${formatDateTime(r.startAt)}`
-          : `Kampanya kalan alıcılarla sürdürüldü${schedule.durationMinutes ? `; ${formatDuration(schedule.durationMinutes)} içine yayılacak` : ''}.`,
+          : `Kampanya hemen başlatıldı; ${formatCount(r?.planned || 0)} kalan alıcı${schedule.durationMinutes ? ` ${formatDuration(schedule.durationMinutes)} içine eşit yayılarak` : ''} gönderilecek.`,
       );
     }
 

@@ -313,7 +313,7 @@ export default function CampaignDashboardPage() {
     return setNotice(
       result?.scheduled
         ? `Kalan alıcılar için kampanya ${fmtDateTime(result.startAt)} tarihine yeniden planlandı.`
-        : `Kampanya kalan alıcılarla sürdürüldü${durationMinutes ? `; ${formatDuration(durationMinutes)} içine yayılacak` : ''}.`,
+        : `Kampanya hemen başlatıldı; ${formatCount(result?.planned || 0)} kalan alıcı${durationMinutes ? ` ${formatDuration(durationMinutes)} içine eşit yayılarak` : ''} gönderilecek.`,
     );
   };
 
@@ -426,7 +426,7 @@ export default function CampaignDashboardPage() {
           </AlertDescription>
         </Alert>
       )}
-      {campaign?.pausedReason && isPaused && (
+      {campaign?.pausedReason && isPaused && campaign?.completion?.reason !== 'batch_done' && (
         <Alert variant="destructive" className="mb-4">
           <AlertTitle>Duraklatıldı</AlertTitle>
           <AlertDescription>{campaign.pausedReason}</AlertDescription>
@@ -455,7 +455,9 @@ export default function CampaignDashboardPage() {
             <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-md border border-border p-3">
                 <div className="text-xs text-muted-foreground">Planlanan başlangıç</div>
-                <div className="mt-1 font-medium">{fmtDateTime(campaign?.schedule?.startAt)}</div>
+                <div className="mt-1 font-medium">
+                  {fmtDateTime(campaign?.schedule?.startAt || campaign?.dispatch?.startedAt || campaign?.sentAt)}
+                </div>
               </div>
               <div className="rounded-md border border-border p-3">
                 <div className="text-xs text-muted-foreground">Gerçek ilk başlangıç</div>
