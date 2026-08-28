@@ -26,6 +26,7 @@ import {
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
   useSkipMailCampaignRecipientMutation,
+  useSuppressMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   usePauseMailCampaignMutation,
   useResumeMailCampaignMutation,
@@ -111,6 +112,7 @@ export default function CampaignDashboardPage() {
   const [restartCampaign, { isLoading: restarting }] = useRestartMailCampaignMutation();
   const [continueCampaign, { isLoading: continuing }] = useContinueMailCampaignMutation();
   const [skipRecipient, { isLoading: skipping }] = useSkipMailCampaignRecipientMutation();
+  const [suppressRecipient, { isLoading: suppressing }] = useSuppressMailCampaignRecipientMutation();
   const status = campaign?.status || 'draft';
   const isActive = ['queued', 'sending'].includes(status);
   const isPaused = status === 'paused';
@@ -236,6 +238,14 @@ export default function CampaignDashboardPage() {
     if (r?.__err) return setNotice(r.__err);
     await Promise.all([refetchRecipients(), refetchStats().catch(() => null), refetchCampaign()]);
     setNotice(`${email} kuyruktan atlandı.`);
+  };
+
+  const doSuppressRecipient = async (email) => {
+    if (!window.confirm(`${email} kuyruktan çıkarılıp GLOBAL kara listeye alınacak. Bu adres sonraki kampanyalarda da mail almaz. Onaylıyor musunuz?`)) return;
+    const r = await suppressRecipient({ id, email }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Adres kara listeye alınamadı' }));
+    if (r?.__err) return setNotice(r.__err);
+    await Promise.all([refetchRecipients(), refetchStats().catch(() => null), refetchCampaign()]);
+    setNotice(`${email} kuyruktan çıkarıldı ve kara listeye alındı.`);
   };
 
   const busy = campaignFetching || statsFetching || seriesFetching || recipientsFetching;
@@ -481,10 +491,19 @@ export default function CampaignDashboardPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={skipping}
+                            disabled={skipping || suppressing}
                             onClick={() => doSkipRecipient(r.to)}
                           >
                             Bu maili atla
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="ml-2 text-destructive hover:text-destructive"
+                            disabled={skipping || suppressing}
+                            onClick={() => doSuppressRecipient(r.to)}
+                          >
+                            Kara listeye al
                           </Button>
                         </TableCell>}
                       </TableRow>

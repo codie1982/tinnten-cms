@@ -313,6 +313,7 @@ export const ENDPOINTS = {
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
     campaignRecipients: (id) => `/email/campaigns/${id}/recipients`,
     campaignSkipRecipient: (id) => `/email/campaigns/${id}/recipients/skip`,
+    campaignSuppressRecipient: (id) => `/email/campaigns/${id}/recipients/suppress`,
     campaignTimeseries: (id) => `/email/campaigns/${id}/timeseries`,
     // Yardımcı
     mergeVariables: '/email/merge-variables',

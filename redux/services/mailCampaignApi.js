@@ -356,6 +356,13 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
+    suppressMailCampaignRecipient: build.mutation({
+      query: ({ id, email }) => ({ url: ENDPOINTS.email.campaignSuppressRecipient(id), method: 'POST', body: { email } }),
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id: `${id}:recipients` },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
     // Dashboard: saatlik açılma/tıklama zaman serisi (grafik).
     getMailCampaignTimeSeries: build.query({
       query: (id) => ENDPOINTS.email.campaignTimeseries(id),
@@ -446,6 +453,7 @@ export const {
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
   useSkipMailCampaignRecipientMutation,
+  useSuppressMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   useGetMergeVariablesQuery,
   useGetRecipientCountQuery,
