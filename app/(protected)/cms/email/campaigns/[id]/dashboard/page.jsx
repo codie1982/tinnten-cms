@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { MailPreviewPanel } from '@/components/email/mail-preview-panel';
+import { CampaignPublishSheet } from '@/components/email/campaign-publish-sheet';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetMailCampaignQuery,
@@ -29,6 +30,8 @@ import {
   useSuppressMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   usePauseMailCampaignMutation,
+  useResumeMailCampaignMutation,
+  useUpdateMailCampaignMutation,
   useFinishMailCampaignMutation,
   useRestartMailCampaignMutation,
   useContinueMailCampaignMutation,
@@ -45,6 +48,13 @@ const formatRemaining = (ms) => {
   return minutes ? `${minutes} dk ${seconds % 60} sn` : `${seconds} sn`;
 };
 const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+const formatDuration = (minutes) => {
+  const n = Number(minutes) || 0;
+  if (!n) return 'Tek seferde';
+  if (n % 1440 === 0) return `${n / 1440} gün`;
+  if (n % 60 === 0) return `${n / 60} saat`;
+  return `${n} dakika`;
+};
 const hhmm = (t) => new Date(t).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 const ENGAGEMENT_TABS = [
@@ -97,6 +107,21 @@ export default function CampaignDashboardPage() {
   const [notice, setNotice] = useState('');
   const [previewRecipient, setPreviewRecipient] = useState(null);
   const [now, setNow] = useState(() => Date.now());
+  const [replanOpen, setReplanOpen] = useState(false);
+  const [replanWhen, setReplanWhen] = useState('now');
+  const [replanError, setReplanError] = useState('');
+  const [replanForm, setReplanForm] = useState({
+    channelKey: '',
+    sendConfig: {
+      ratePerSec: 5,
+      batchSize: 500,
+      maxRecipients: '',
+      fromAddress: '',
+      maxPerRecipientPerDay: 1,
+      circuitBreaker: { enabled: true, bounceRatePct: 3, complaintRatePct: 0.08 },
+    },
+    schedule: { startAt: '', durationMinutes: '' },
+  });
 
   const {
     data: campaign,
@@ -106,6 +131,8 @@ export default function CampaignDashboardPage() {
   } = useGetMailCampaignQuery(id, { skip: !authorized });
 
   const [pauseCampaign, { isLoading: pausing }] = usePauseMailCampaignMutation();
+  const [resumeCampaign, { isLoading: resuming }] = useResumeMailCampaignMutation();
+  const [updateCampaign, { isLoading: updatingCampaign }] = useUpdateMailCampaignMutation();
   const [finishCampaign, { isLoading: finishing }] = useFinishMailCampaignMutation();
   const [restartCampaign, { isLoading: restarting }] = useRestartMailCampaignMutation();
   const [continueCampaign, { isLoading: continuing }] = useContinueMailCampaignMutation();
@@ -142,6 +169,36 @@ export default function CampaignDashboardPage() {
   const nextDeliveryRemaining = nextDelivery?.estimatedAt
     ? Math.max(new Date(nextDelivery.estimatedAt).getTime() - now, 0)
     : 0;
+
+  const openReplan = () => {
+    const sc = campaign?.sendConfig || {};
+    setReplanForm({
+      channelKey: campaign?.channelKey || '',
+      sendConfig: {
+        ratePerSec: sc.ratePerSec ?? 5,
+        batchSize: sc.batchSize ?? 500,
+        maxRecipients: sc.maxRecipients ?? '',
+        fromAddress: sc.fromAddress ?? '',
+        maxPerRecipientPerDay: sc.maxPerRecipientPerDay ?? 1,
+        circuitBreaker: {
+          enabled: sc.circuitBreaker?.enabled !== false,
+          bounceRatePct: sc.circuitBreaker?.bounceRatePct ?? 3,
+          complaintRatePct: sc.circuitBreaker?.complaintRatePct ?? 0.08,
+        },
+      },
+      // Eski başlangıç tarihi geçmişte olabilir; yeni tarih operatör
+      // tarafından seçilir. Önceki yayılma süresi korunur.
+      schedule: {
+        startAt: '',
+        durationMinutes: campaign?.schedule?.durationMinutes
+          ? String(campaign.schedule.durationMinutes)
+          : '',
+      },
+    });
+    setReplanWhen('now');
+    setReplanError('');
+    setReplanOpen(true);
+  };
 
   useEffect(() => {
     if (!nextDelivery?.estimatedAt) return undefined;
@@ -192,6 +249,72 @@ export default function CampaignDashboardPage() {
     if (r?.__err) return setNotice(r.__err);
     await refreshAll();
     setNotice('Kampanya duraklatıldı.');
+  };
+
+  const setReplanSC = (key, value) => setReplanForm((current) => ({
+    ...current,
+    sendConfig: { ...current.sendConfig, [key]: value },
+  }));
+  const setReplanCB = (key, value) => setReplanForm((current) => ({
+    ...current,
+    sendConfig: {
+      ...current.sendConfig,
+      circuitBreaker: { ...current.sendConfig.circuitBreaker, [key]: value },
+    },
+  }));
+  const setReplanSchedule = (key, value) => setReplanForm((current) => ({
+    ...current,
+    schedule: { ...current.schedule, [key]: value },
+  }));
+
+  const submitReplan = async () => {
+    setReplanError('');
+    const startAt = replanWhen === 'at' && replanForm.schedule.startAt
+      ? new Date(replanForm.schedule.startAt).toISOString()
+      : null;
+    if (replanWhen === 'at' && !startAt) {
+      return setReplanError('Yeni başlangıç tarihini seçin.');
+    }
+    if (startAt && new Date(startAt).getTime() <= Date.now()) {
+      return setReplanError('Yeni başlangıç tarihi gelecekte olmalı.');
+    }
+    const durationMinutes = Number(replanForm.schedule.durationMinutes) || null;
+    const currentSC = campaign?.sendConfig || {};
+    const sendConfig = {
+      ratePerSec: Number(replanForm.sendConfig.ratePerSec) || 5,
+      batchSize: Number(replanForm.sendConfig.batchSize) || 500,
+      maxRecipients: replanForm.sendConfig.maxRecipients
+        ? Number(replanForm.sendConfig.maxRecipients)
+        : null,
+      fromAddress: replanForm.sendConfig.fromAddress?.trim() || null,
+      maxPerRecipientPerDay: replanForm.sendConfig.maxPerRecipientPerDay === ''
+        ? 1
+        : Math.max(0, Number(replanForm.sendConfig.maxPerRecipientPerDay) || 0),
+      excludePriorRecipients: currentSC.excludePriorRecipients === true,
+      samplePercent: currentSC.samplePercent ?? null,
+      circuitBreaker: {
+        enabled: replanForm.sendConfig.circuitBreaker.enabled !== false,
+        bounceRatePct: Number(replanForm.sendConfig.circuitBreaker.bounceRatePct) || 3,
+        complaintRatePct: Number(replanForm.sendConfig.circuitBreaker.complaintRatePct) || 0.08,
+      },
+    };
+    const schedule = { startAt, durationMinutes };
+    const saved = await updateCampaign({ id, sendConfig, schedule })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Planlama ayarları kaydedilemedi' }));
+    if (saved?.__err) return setReplanError(saved.__err);
+
+    const result = await resumeCampaign({ id, ...schedule })
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Kampanya yeniden planlanamadı' }));
+    if (result?.__err) return setReplanError(result.__err);
+    setReplanOpen(false);
+    await refreshAll();
+    return setNotice(
+      result?.scheduled
+        ? `Kalan alıcılar için kampanya ${fmtDateTime(result.startAt)} tarihine yeniden planlandı.`
+        : `Kampanya kalan alıcılarla sürdürüldü${durationMinutes ? `; ${formatDuration(durationMinutes)} içine yayılacak` : ''}.`,
+    );
   };
 
   const doContinue = async () => {
@@ -266,9 +389,12 @@ export default function CampaignDashboardPage() {
               </Button>
             )}
             {isPaused && (
-              <Link href={`/cms/email/campaigns/${id}`}>
-                <Button variant="outline"><Play className="size-4" /> Yeniden planla / sürdür</Button>
-              </Link>
+              <Button variant="outline" onClick={openReplan} disabled={resuming || updatingCampaign}>
+                {resuming || updatingCampaign
+                  ? <Loader2 className="size-4 animate-spin" />
+                  : <Play className="size-4" />}
+                Yeniden planla / sürdür
+              </Button>
             )}
             {isTerminal && waiting > 0 && (
               <Button onClick={doContinue} disabled={continuing}>
@@ -323,6 +449,42 @@ export default function CampaignDashboardPage() {
             <StatCard icon={MousePointerClick} label="Tıklama" value={formatCount(stats?.clicked)} sub={formatPercent(stats?.clickRate)} />
             <StatCard icon={Users} label="Alıcı" value={formatCount(stats?.total)} />
           </div>
+
+          <Card>
+            <CardHeader><CardTitle>Yayınlanma şartları</CardTitle></CardHeader>
+            <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Planlanan başlangıç</div>
+                <div className="mt-1 font-medium">{fmtDateTime(campaign?.schedule?.startAt)}</div>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Gerçek ilk başlangıç</div>
+                <div className="mt-1 font-medium">{fmtDateTime(campaign?.sentAt || campaign?.dispatch?.startedAt)}</div>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Yayılma planı</div>
+                <div className="mt-1 font-medium">{formatDuration(campaign?.schedule?.durationMinutes)}</div>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Gönderim hızı</div>
+                <div className="mt-1 font-medium">{campaign?.sendConfig?.ratePerSec || 5} mail/sn</div>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Batch boyutu</div>
+                <div className="mt-1 font-medium">{formatCount(campaign?.sendConfig?.batchSize || 500)}</div>
+              </div>
+              <div className="rounded-md border border-border p-3 sm:col-span-2">
+                <div className="text-xs text-muted-foreground">Gönderen</div>
+                <div className="mt-1 truncate font-medium">{campaign?.sendConfig?.fromAddress || 'Varsayılan gönderen'}</div>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Kalan alıcı</div>
+                <div className="mt-1 font-medium">
+                  {formatCount((Number(statsData?.delivery?.remaining) || 0) + (Number(stats?.queued) || 0))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader><CardTitle>Açılma / Tıklama Zaman Grafiği</CardTitle></CardHeader>
@@ -526,6 +688,33 @@ export default function CampaignDashboardPage() {
         initialAs={previewRecipient}
         open={Boolean(previewRecipient)}
         onClose={() => setPreviewRecipient(null)}
+      />
+      <CampaignPublishSheet
+        open={replanOpen}
+        onOpenChange={(open) => { setReplanOpen(open); if (!open) setReplanError(''); }}
+        campaign={campaign}
+        status={status}
+        isFinished={false}
+        isPaused={isPaused}
+        recipientCount={Number(statsData?.delivery?.channelTotal || stats?.total || 0)}
+        delivery={{
+          ...(statsData?.delivery || {}),
+          covered: Number(stats?.sent) || 0,
+          remaining: (Number(statsData?.delivery?.remaining) || 0) + (Number(stats?.queued) || 0),
+        }}
+        percent="100"
+        setPercent={() => {}}
+        when={replanWhen}
+        setWhen={setReplanWhen}
+        form={replanForm}
+        setSC={setReplanSC}
+        setCB={setReplanCB}
+        setSched={setReplanSchedule}
+        rec={{ enabled: false, unit: 'day', byWeekday: [] }}
+        setR={() => {}}
+        busy={resuming || updatingCampaign}
+        error={replanError}
+        onSubmit={submitReplan}
       />
     </RoleGuard>
   );
