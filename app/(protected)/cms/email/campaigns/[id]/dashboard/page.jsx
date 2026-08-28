@@ -133,7 +133,12 @@ export default function CampaignDashboardPage() {
     data: statsData,
     isFetching: statsFetching,
     refetch: refetchStats,
-  } = useGetMailCampaignStatsQuery(id, { skip: !authorized });
+  } = useGetMailCampaignStatsQuery(id, {
+    skip: !authorized,
+    // Sayaç sıfıra ulaştığında yeni dispatch sırasını al. Mail başına sorgu
+    // yok; aktif dashboard açıkken sabit 5 saniyelik hafif polling yapılır.
+    pollingInterval: isActive ? 5000 : 0,
+  });
   const stats = statsData?.stats;
   const nextDelivery = statsData?.delivery?.nextDelivery;
   const nextDeliveryRemaining = nextDelivery?.estimatedAt
@@ -316,7 +321,7 @@ export default function CampaignDashboardPage() {
       )}
       {nextDelivery && (
         <Alert variant="info" className="mb-4">
-          <AlertTitle>Sonraki mail yaklaşık {formatRemaining(nextDeliveryRemaining)} içinde işlenecek</AlertTitle>
+          <AlertTitle>Sonraki mail yaklaşık {formatRemaining(nextDeliveryRemaining)} sonra kuyruğa alınacak</AlertTitle>
           <AlertDescription>Kuyruk yoğunluğu veya mail sağlayıcısı nedeniyle süre değişebilir.</AlertDescription>
         </Alert>
       )}
