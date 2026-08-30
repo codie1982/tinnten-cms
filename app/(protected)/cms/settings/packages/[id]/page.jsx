@@ -48,6 +48,12 @@ const INTERVALS = [
   { value: 'lifetime', label: 'Ömür Boyu' },
 ];
 const CURRENCIES = ['USD', 'TRY', 'EUR'];
+const MCP_PLAN_DEFAULTS = {
+  free: { requestsPerMinute: 60, maxConcurrent: 4 },
+  basic: { requestsPerMinute: 300, maxConcurrent: 10 },
+  premium: { requestsPerMinute: 600, maxConcurrent: 20 },
+  enterprise: { requestsPerMinute: 3000, maxConcurrent: 100 },
+};
 // Backend systemPackagesController.buildLimitPayload ile birebir uyumlu birimler
 const SIZE_UNITS = ['kb', 'mb', 'gb', 'tb'];
 const STREAM_UNITS = ['mb', 'gb', 'tb'];
@@ -72,6 +78,10 @@ const DEFAULT_LIMITS = {
   // Firma oluşturma limiti — yalnız Kullanıcı Paketi (forCompany:false) için anlamlı.
   // Kayıtta kullanıcının account snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok.
   company: { count: 1 },
+  // server = firma başına MCP server adedi. Diğer iki alan null kaldığında
+  // runtime kategori varsayılanını kullanır; yalnız müşteri/paket özelinde
+  // gerçekten farklı bir değer gerekiyorsa override girilir.
+  mcp: { server: 1, requestsPerMinute: null, maxConcurrent: null },
   // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
   // snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok. Periyot backend'de
   // fatura döngüsüne bağlı; paket bazında ayrıca bir periyot alanı tutulmaz.
@@ -310,6 +320,11 @@ export default function PackageEditorPage({ params }) {
       // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (firma açılamaz).
       company: {
         count: nullable(limits.company?.count, 1),
+      },
+      mcp: {
+        server: nullable(limits.mcp?.server, 1),
+        requestsPerMinute: nullable(limits.mcp?.requestsPerMinute, null),
+        maxConcurrent: nullable(limits.mcp?.maxConcurrent, null),
       },
       // web_search limiti KALDIRILDI — web araması LLM kredi bütçesinden düşülür (AI gibi).
       maxDevices:
@@ -845,6 +860,49 @@ export default function PackageEditorPage({ params }) {
                 </div>
               </div>
 
+              {/* Hosted MCP limitleri — yalnız Business paketlerinde anlamlıdır. */}
+              {form.forCompany && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">MCP Server</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                      İstek ve eşzamanlılık alanlarını boş bırakırsanız <strong className="capitalize">{form.category}</strong>{' '}
+                      planı varsayılanı kullanılır: {MCP_PLAN_DEFAULTS[form.category]?.requestsPerMinute ?? 60}/dk ve{' '}
+                      {MCP_PLAN_DEFAULTS[form.category]?.maxConcurrent ?? 4} eşzamanlı istek.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <LimitRow
+                      label="Server adedi"
+                      value={limits.mcp?.server}
+                      unit="server"
+                      onChange={(v) => setLimitField('mcp', 'server', v)}
+                      helper="Firma başına oluşturulabilecek MCP server sayısı · boş = sınırsız · 0 = kota yok"
+                    />
+                    <LimitRow
+                      label="İstek / dakika override"
+                      value={limits.mcp?.requestsPerMinute}
+                      unit="istek/dk"
+                      min={1}
+                      max={100000}
+                      placeholder={String(MCP_PLAN_DEFAULTS[form.category]?.requestsPerMinute ?? 60)}
+                      onChange={(v) => setLimitField('mcp', 'requestsPerMinute', v === '' ? null : v)}
+                      helper="Boş bırakılırsa paket kategorisinin varsayılanı uygulanır"
+                    />
+                    <LimitRow
+                      label="Eşzamanlı istek override"
+                      value={limits.mcp?.maxConcurrent}
+                      unit="istek"
+                      min={1}
+                      max={1000}
+                      placeholder={String(MCP_PLAN_DEFAULTS[form.category]?.maxConcurrent ?? 4)}
+                      onChange={(v) => setLimitField('mcp', 'maxConcurrent', v === '' ? null : v)}
+                      helper="Boş bırakılırsa paket kategorisinin varsayılanı uygulanır"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Asistan limitleri */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Asistan</p>
@@ -1141,14 +1199,15 @@ export default function PackageEditorPage({ params }) {
 
 // ── Limit input helpers ─────────────────────────────────────────────────────
 
-function LimitRow({ label, value, unit, onChange, placeholder, helper }) {
+function LimitRow({ label, value, unit, onChange, placeholder, helper, min = 0, max }) {
   return (
     <div>
       <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
       <div className="flex items-center gap-2">
         <Input
           type="number"
-          min={0}
+          min={min}
+          max={max}
           value={value ?? ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder ?? '0'}

@@ -78,7 +78,7 @@ export default function SettingsPackagesPage() {
       <PageHeader
         section="Sistem Ayarları"
         title="Paketler"
-        description="Sistem paketlerini yönetin: fiyatlandırma, çok dilli içerik, yayın durumu"
+        description="Sistem paketlerini yönetin: fiyatlandırma, kullanım ve MCP limitleri, çok dilli içerik"
         actions={
           <Link href="/cms/settings/packages/new" className={buttonVariants()}>
             <Plus className="size-4" /> Yeni Paket
