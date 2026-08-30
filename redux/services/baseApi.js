@@ -25,7 +25,13 @@ const rawBaseQuery = fetchBaseQuery({
     // 2) redux auth slice fallback
     const token = getAuthToken() || getState()?.auth?.accessToken;
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    // FormData yüklemelerinde boundary değerini tarayıcı üretir. Endpoint,
+    // geçici header ile JSON varsayımını kapatır; işaret sunucuya gönderilmez.
+    const skipJsonContentType = headers.get('x-skip-json-content-type') === '1';
+    headers.delete('x-skip-json-content-type');
+    if (!skipJsonContentType && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
     return headers;
   },
 });
@@ -85,6 +91,7 @@ export const baseApi = createApi({
     'MailChannel',
     'MailChannelMember',
     'MailTemplate',
+    'MailMediaAsset',
     'MergeVar',
     'FetcherStatus',
     'FetcherDomain',
