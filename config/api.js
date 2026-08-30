@@ -99,7 +99,8 @@ export const ENDPOINTS = {
     cover: (id) => `/news-content/${id}/cover`,
     socialPosts: (id) => `/news-content/${id}/social-posts`,
     socialPost: (id, postId) => `/news-content/${id}/social-posts/${postId}`,
-    socialPostRequeue: (id, postId) => `/news-content/${id}/social-posts/${postId}/requeue`,
+    socialPostRequeue: (id, postId) =>
+      `/news-content/${id}/social-posts/${postId}/requeue`,
   },
   newsCategories: {
     tree: (countryCode) => `/news-categories/${countryCode}/tree`,
@@ -121,7 +122,8 @@ export const ENDPOINTS = {
     cmsCreate: '/asistans/cms',
     cmsAssignCompany: (id) => `/asistans/cms/${id}/company`,
     // Sihirbazın ürettiği intent metinlerini yazar (cms:admin, sahiplik aranmaz).
-    cmsToolDefinition: (id, toolKey) => `/asistans/cms/${id}/tool-definitions/${toolKey}`,
+    cmsToolDefinition: (id, toolKey) =>
+      `/asistans/cms/${id}/tool-definitions/${toolKey}`,
     // Ortak (cms öneki YOK) — asistan gerektirmeyen stateless uçlar:
     // taslak config'ten LLM ile intent metni üretir / global tool default'ları.
     previewIntents: '/asistans/tool-definitions/preview-intents',
@@ -224,9 +226,11 @@ export const ENDPOINTS = {
     cmsDelete: (id) => `/products/cms/product/${id}`,
     cmsStatus: (id) => `/products/cms/product/${id}/status`,
     cmsBasePrice: (id) => `/products/cms/product/${id}/base-price`,
-    cmsBasePriceItem: (id, prid) => `/products/cms/product/${id}/base-price/${prid}`,
+    cmsBasePriceItem: (id, prid) =>
+      `/products/cms/product/${id}/base-price/${prid}`,
     cmsGallery: (id) => `/products/cms/product/${id}/gallery`,
-    cmsGalleryImage: (id, imageid) => `/products/cms/product/${id}/gallery/image/${imageid}`,
+    cmsGalleryImage: (id, imageid) =>
+      `/products/cms/product/${id}/gallery/image/${imageid}`,
     cmsVariants: (id) => `/products/cms/product/${id}/variants`,
   },
   /**
@@ -240,7 +244,8 @@ export const ENDPOINTS = {
   categories: {
     general: '/categories/general',
     generalSearch: '/categories/general/search',
-    generalSubcategories: (parentId) => `/categories/general/${parentId}/subcategories`,
+    generalSubcategories: (parentId) =>
+      `/categories/general/${parentId}/subcategories`,
     generalDetail: (idOrSlug) => `/categories/general/${idOrSlug}`,
     companyList: (companyid) => `/categories/company/${companyid}`,
     companyCategoryAttributes: (companyid, categoryId) =>
@@ -278,6 +283,7 @@ export const ENDPOINTS = {
     template: (id) => `/email/templates/${id}`,
     templatePreview: (id) => `/email/templates/${id}/preview`,
     templateTestSend: (id) => `/email/templates/${id}/test-send`,
+    mediaAssets: '/email/media-assets',
     // Kampanyalar
     campaigns: '/email/campaigns',
     campaign: (id) => `/email/campaigns/${id}`,
@@ -357,7 +363,8 @@ export const ENDPOINTS = {
     // Firma bazlı indeks görünümü. index-stats ve config, tinnten-server üzerinden
     // tinnten-embedding'e proxy'lenir (CMS embedding servisine doğrudan erişemez).
     cmsCompanies: '/embedding/cms/companies',
-    cmsCompanyIndexStats: (id) => `/embedding/cms/companies/${encodeURIComponent(id)}/index-stats`,
+    cmsCompanyIndexStats: (id) =>
+      `/embedding/cms/companies/${encodeURIComponent(id)}/index-stats`,
     cmsConfig: '/embedding/cms/config',
   },
   fetcher: {
@@ -367,21 +374,29 @@ export const ENDPOINTS = {
     domain: (d) => `/fetcher/domains/${encodeURIComponent(d)}`,
     domainStats: (d) => `/fetcher/domains/${encodeURIComponent(d)}/stats`,
     domainUrls: (d) => `/fetcher/domains/${encodeURIComponent(d)}/urls`,
-    domainUrl: (d, id) => `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}`,
-    domainUrlContent: (d, id) => `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}/content`,
-    domainVerification: (d) => `/fetcher/domains/${encodeURIComponent(d)}/verification`,
-    scrapingStart: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/start`,
-    scrapingStop: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/stop`,
-    scrapingRestart: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/restart`,
+    domainUrl: (d, id) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}`,
+    domainUrlContent: (d, id) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}/content`,
+    domainVerification: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/verification`,
+    scrapingStart: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/scraping/start`,
+    scrapingStop: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/scraping/stop`,
+    scrapingRestart: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/scraping/restart`,
     urls: '/fetcher/urls',
     logs: '/fetcher/logs',
     nodes: '/fetcher/scraper-nodes',
     node: (id) => `/fetcher/scraper-nodes/${encodeURIComponent(id)}`,
-    nodeAction: (id, action) => `/fetcher/scraper-nodes/${encodeURIComponent(id)}/${action}`,
+    nodeAction: (id, action) =>
+      `/fetcher/scraper-nodes/${encodeURIComponent(id)}/${action}`,
     // Abonelikler (admin: izle + yönet)
     subscriptions: '/fetcher/subscriptions',
     subscription: (id) => `/fetcher/subscriptions/${encodeURIComponent(id)}`,
-    subscriptionReindex: (id) => `/fetcher/subscriptions/${encodeURIComponent(id)}/reindex`,
+    subscriptionReindex: (id) =>
+      `/fetcher/subscriptions/${encodeURIComponent(id)}/reindex`,
     // Domain başına abone dökümü (abonelik koleksiyonu boşsa legacy
     // informationOwners üzerinden aynı şekli döner — satırdaki `source` söyler).
     subscriptionStats: '/fetcher/subscriptions/stats/by-domain',
@@ -391,14 +406,20 @@ export const ENDPOINTS = {
     restrictedDomains: '/fetcher/reports/restricted-domains',
     rabbitmqHealth: '/fetcher/health/rabbitmq',
     // Scraping config + reset
-    scrapingConfig: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping-config`,
-    scrapingReset: (d) => `/fetcher/domains/${encodeURIComponent(d)}/scraping/reset`,
+    scrapingConfig: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/scraping-config`,
+    scrapingReset: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/scraping/reset`,
     // Etkileşimli onboarding sihirbazı (admin, kullanıcı-bağımsız)
     domainAnalysis: (d) => `/fetcher/domains/${encodeURIComponent(d)}/analysis`,
-    domainAnalysisStart: (d) => `/fetcher/domains/${encodeURIComponent(d)}/analysis/start`,
-    domainSchemasGenerate: (d) => `/fetcher/domains/${encodeURIComponent(d)}/schemas/generate`,
-    domainSchemasTest: (d) => `/fetcher/domains/${encodeURIComponent(d)}/schemas/test`,
-    domainSchemasCommit: (d) => `/fetcher/domains/${encodeURIComponent(d)}/schemas/commit`,
+    domainAnalysisStart: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/analysis/start`,
+    domainSchemasGenerate: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/schemas/generate`,
+    domainSchemasTest: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/schemas/test`,
+    domainSchemasCommit: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/schemas/commit`,
   },
   inbox: {
     cmsList: '/inbox/cms',

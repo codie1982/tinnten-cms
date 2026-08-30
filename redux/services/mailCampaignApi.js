@@ -1,7 +1,7 @@
 'use client';
 
-import { baseApi } from './baseApi';
 import { ENDPOINTS } from '@/config/api';
+import { baseApi } from './baseApi';
 
 /**
  * Toplu mail kampanya sistemi (backend /email/*):
@@ -19,24 +19,36 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       providesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
     createMailChannel: build.mutation({
-      query: (body) => ({ url: ENDPOINTS.email.channels, method: 'POST', body }),
+      query: (body) => ({
+        url: ENDPOINTS.email.channels,
+        method: 'POST',
+        body,
+      }),
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
     updateMailChannel: build.mutation({
-      query: ({ id, ...body }) => ({ url: ENDPOINTS.email.channel(id), method: 'PATCH', body }),
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.email.channel(id),
+        method: 'PATCH',
+        body,
+      }),
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
     // `force: true` → listede üye olsa bile kalıcı sil (backend aksi halde arşivler).
     deleteMailChannel: build.mutation({
       query: (arg) => {
-        const { id, force } = typeof arg === 'object' && arg !== null ? arg : { id: arg };
+        const { id, force } =
+          typeof arg === 'object' && arg !== null ? arg : { id: arg };
         return {
           url: ENDPOINTS.email.channel(id),
           method: 'DELETE',
           ...(force ? { params: { force: 'true' } } : {}),
         };
       },
-      transformResponse: (res) => ({ ...(res?.data ?? {}), message: res?.message }),
+      transformResponse: (res) => ({
+        ...(res?.data ?? {}),
+        message: res?.message,
+      }),
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
 
@@ -47,12 +59,19 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       providesTags: (r, e, key) => [{ type: 'MailChannelMember', id: key }],
     }),
     getChannelMembers: build.query({
-      query: ({ key, ...params }) => ({ url: ENDPOINTS.email.channelMembers(key), params }),
+      query: ({ key, ...params }) => ({
+        url: ENDPOINTS.email.channelMembers(key),
+        params,
+      }),
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, { key }) => [{ type: 'MailChannelMember', id: key }],
     }),
     addChannelMembers: build.mutation({
-      query: ({ key, ...body }) => ({ url: ENDPOINTS.email.channelMembers(key), method: 'POST', body }),
+      query: ({ key, ...body }) => ({
+        url: ENDPOINTS.email.channelMembers(key),
+        method: 'POST',
+        body,
+      }),
       invalidatesTags: (r, e, { key }) => [
         { type: 'MailChannelMember', id: key },
         { type: 'MailChannel', id: 'LIST' },
@@ -110,11 +129,19 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       providesTags: (r, e, id) => [{ type: 'MailTemplate', id }],
     }),
     createMailTemplate: build.mutation({
-      query: (body) => ({ url: ENDPOINTS.email.templates, method: 'POST', body }),
+      query: (body) => ({
+        url: ENDPOINTS.email.templates,
+        method: 'POST',
+        body,
+      }),
       invalidatesTags: [{ type: 'MailTemplate', id: 'LIST' }],
     }),
     updateMailTemplate: build.mutation({
-      query: ({ id, ...body }) => ({ url: ENDPOINTS.email.template(id), method: 'PATCH', body }),
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.email.template(id),
+        method: 'PATCH',
+        body,
+      }),
       invalidatesTags: (r, e, { id }) => [
         { type: 'MailTemplate', id },
         { type: 'MailTemplate', id: 'LIST' },
@@ -139,9 +166,33 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       query: ({ id, to, from, sampleVars }) => ({
         url: ENDPOINTS.email.templateTestSend(id),
         method: 'POST',
-        body: { to, ...(from ? { from } : {}), ...(sampleVars ? { sampleVars } : {}) },
+        body: {
+          to,
+          ...(from ? { from } : {}),
+          ...(sampleVars ? { sampleVars } : {}),
+        },
       }),
       transformResponse: (res) => res?.data ?? res,
+    }),
+    getMailMediaAssets: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.email.mediaAssets, params }),
+      transformResponse: (res) => res?.data?.items ?? [],
+      providesTags: [{ type: 'MailMediaAsset', id: 'LIST' }],
+    }),
+    uploadMailMediaAsset: build.mutation({
+      query: ({ file, name }) => {
+        const body = new FormData();
+        body.append('file', file);
+        if (name) body.append('name', name);
+        return {
+          url: ENDPOINTS.email.mediaAssets,
+          method: 'POST',
+          body,
+          headers: { 'x-skip-json-content-type': '1' },
+        };
+      },
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'MailMediaAsset', id: 'LIST' }],
     }),
 
     // ── Kampanyalar ──
@@ -156,11 +207,19 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       providesTags: (r, e, id) => [{ type: 'EmailCampaign', id }],
     }),
     createMailCampaign: build.mutation({
-      query: (body) => ({ url: ENDPOINTS.email.campaigns, method: 'POST', body }),
+      query: (body) => ({
+        url: ENDPOINTS.email.campaigns,
+        method: 'POST',
+        body,
+      }),
       invalidatesTags: [{ type: 'EmailCampaign', id: 'LIST' }],
     }),
     updateMailCampaign: build.mutation({
-      query: ({ id, ...body }) => ({ url: ENDPOINTS.email.campaign(id), method: 'PATCH', body }),
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.email.campaign(id),
+        method: 'PATCH',
+        body,
+      }),
       invalidatesTags: (r, e, { id }) => [
         { type: 'EmailCampaign', id },
         { type: 'EmailCampaign', id: 'LIST' },
@@ -171,7 +230,10 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       invalidatesTags: [{ type: 'EmailCampaign', id: 'LIST' }],
     }),
     sendMailCampaign: build.mutation({
-      query: (id) => ({ url: ENDPOINTS.email.campaignSend(id), method: 'POST' }),
+      query: (id) => ({
+        url: ENDPOINTS.email.campaignSend(id),
+        method: 'POST',
+      }),
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, id) => [
         { type: 'EmailCampaign', id },
@@ -181,7 +243,9 @@ export const mailCampaignApi = baseApi.injectEndpoints({
     getMailCampaignStats: build.query({
       query: (id) => ENDPOINTS.email.campaignStats(id),
       transformResponse: (res) => res?.data ?? res,
-      providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:stats` }],
+      providesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
     }),
     // Dashboard: alıcı bazında açılma/tıklama listesi (sayfalı, engagement filtreli).
     getMailCampaignRecipients: build.query({
@@ -190,13 +254,17 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         params: { page, limit, engagement },
       }),
       transformResponse: (res) => res?.data ?? res,
-      providesTags: (r, e, { id }) => [{ type: 'EmailCampaign', id: `${id}:recipients` }],
+      providesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id: `${id}:recipients` },
+      ],
     }),
     // Dashboard: saatlik açılma/tıklama zaman serisi (grafik).
     getMailCampaignTimeSeries: build.query({
       query: (id) => ENDPOINTS.email.campaignTimeseries(id),
       transformResponse: (res) => res?.data?.points ?? [],
-      providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:timeseries` }],
+      providesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id: `${id}:timeseries` },
+      ],
     }),
 
     // ── Yardımcı ──
@@ -205,7 +273,10 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data?.variables ?? res?.data ?? [],
     }),
     getRecipientCount: build.query({
-      query: (channelKey) => ({ url: ENDPOINTS.email.recipientCount, params: { channelKey } }),
+      query: (channelKey) => ({
+        url: ENDPOINTS.email.recipientCount,
+        params: { channelKey },
+      }),
       transformResponse: (res) => res?.data ?? res,
     }),
 
@@ -225,11 +296,19 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       providesTags: (r, e, id) => [{ type: 'MergeVar', id }],
     }),
     createMergeDef: build.mutation({
-      query: (body) => ({ url: ENDPOINTS.email.mergeDefs, method: 'POST', body }),
+      query: (body) => ({
+        url: ENDPOINTS.email.mergeDefs,
+        method: 'POST',
+        body,
+      }),
       invalidatesTags: [{ type: 'MergeVar', id: 'LIST' }],
     }),
     updateMergeDef: build.mutation({
-      query: ({ id, ...body }) => ({ url: ENDPOINTS.email.mergeDef(id), method: 'PATCH', body }),
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.email.mergeDef(id),
+        method: 'PATCH',
+        body,
+      }),
       invalidatesTags: (r, e, { id }) => [
         { type: 'MergeVar', id },
         { type: 'MergeVar', id: 'LIST' },
@@ -261,6 +340,8 @@ export const {
   useDeleteMailTemplateMutation,
   usePreviewMailTemplateMutation,
   useTestSendMailTemplateMutation,
+  useGetMailMediaAssetsQuery,
+  useUploadMailMediaAssetMutation,
   useGetMailCampaignsQuery,
   useGetMailCampaignQuery,
   useCreateMailCampaignMutation,

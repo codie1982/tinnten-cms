@@ -1,40 +1,47 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
+import Image from '@tiptap/extension-image';
 import TiptapLink from '@tiptap/extension-link';
-import { TextStyle, Color, FontSize } from '@tiptap/extension-text-style';
 import { TextAlign } from '@tiptap/extension-text-align';
+import { Color, FontSize, TextStyle } from '@tiptap/extension-text-style';
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import {
-  Bold,
-  Italic,
-  Underline as UnderlineIcon,
-  Strikethrough,
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Baseline,
+  Bold,
+  Heading2,
+  ImagePlus,
+  Italic,
   Link2,
   List,
   ListOrdered,
-  Heading2,
   MousePointerClick,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
-  Undo,
   Redo,
+  Strikethrough,
+  Underline as UnderlineIcon,
+  Undo,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogBody,
-  DialogFooter,
 } from '@/components/ui/dialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { MailMediaLibrary } from '@/components/cms/mail-media-library';
 
 const sanitizeTrackingLabel = (value) =>
   String(value || '')
@@ -50,9 +57,7 @@ const escapeHtml = (value) =>
     .replace(/>/g, '&gt;');
 
 const escapeAttr = (value) =>
-  escapeHtml(value)
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  escapeHtml(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const normalizeHref = (value) => {
   const href = String(value || '').trim();
@@ -63,9 +68,18 @@ const normalizeHref = (value) => {
 
 // E-posta güvenli renkler/boyutlar — hepsi inline style olarak serialize olur.
 const TEXT_COLORS = [
-  '#111827', '#374151', '#6B7280', '#9CA3AF',
-  '#DC2626', '#EA580C', '#CA8A04', '#16A34A',
-  '#2563EB', '#7C3AED', '#DB2777', '#0891B2',
+  '#111827',
+  '#374151',
+  '#6B7280',
+  '#9CA3AF',
+  '#DC2626',
+  '#EA580C',
+  '#CA8A04',
+  '#16A34A',
+  '#2563EB',
+  '#7C3AED',
+  '#DB2777',
+  '#0891B2',
 ];
 const FONT_SIZES = [
   { label: 'Küçük', value: '12px' },
@@ -94,7 +108,8 @@ const TrackedLink = TiptapLink.extend({
       style: {
         default: null,
         parseHTML: (element) => element.getAttribute('style'),
-        renderHTML: (attributes) => (attributes.style ? { style: attributes.style } : {}),
+        renderHTML: (attributes) =>
+          attributes.style ? { style: attributes.style } : {},
       },
     };
   },
@@ -125,6 +140,15 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
       // diye kapatıyoruz; underline/strike mark'ları açık kalır.
       StarterKit.configure({ link: false }),
       TrackedLink,
+      Image.configure({
+        inline: false,
+        allowBase64: false,
+        HTMLAttributes: {
+          width: '536',
+          style:
+            'display:block;width:100%;max-width:536px;height:auto;border:0;',
+        },
+      }),
       TextStyle, // renk & font-size için inline <span style> taşıyıcısı
       Color,
       FontSize,
@@ -153,13 +177,25 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
 
   const [colorOpen, setColorOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
-  const [linkForm, setLinkForm] = useState({ href: '', text: '', track: '', applyToExisting: false });
+  const [linkForm, setLinkForm] = useState({
+    href: '',
+    text: '',
+    track: '',
+    applyToExisting: false,
+  });
   const [ctaOpen, setCtaOpen] = useState(false);
-  const [ctaForm, setCtaForm] = useState({ text: 'Hemen Başla', href: 'https://tinten.ai/register', track: '', bg: '#1F2937' });
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [ctaForm, setCtaForm] = useState({
+    text: 'Hemen Başla',
+    href: 'https://tinten.ai/register',
+    track: '',
+    bg: '#1F2937',
+  });
 
   if (!editor) return null;
 
-  const insertVar = (token) => editor.chain().focus().insertContent(`{{${token}}}`).run();
+  const insertVar = (token) =>
+    editor.chain().focus().insertContent(`{{${token}}}`).run();
 
   const applyColor = (color) => {
     editor.chain().focus().setColor(color).run();
@@ -195,21 +231,35 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
     const dataTrack = sanitizeTrackingLabel(linkForm.track);
 
     if (linkForm.applyToExisting) {
-      editor.chain().focus().extendMarkRange('link').setLink({ href, dataTrack: dataTrack || null }).run();
-    } else {
-      const text = linkForm.text.trim() || href;
-      const trackAttr = dataTrack ? ` data-track="${escapeAttr(dataTrack)}"` : '';
       editor
         .chain()
         .focus()
-        .insertContent(`<a href="${escapeAttr(href)}"${trackAttr}>${escapeHtml(text)}</a>`)
+        .extendMarkRange('link')
+        .setLink({ href, dataTrack: dataTrack || null })
+        .run();
+    } else {
+      const text = linkForm.text.trim() || href;
+      const trackAttr = dataTrack
+        ? ` data-track="${escapeAttr(dataTrack)}"`
+        : '';
+      editor
+        .chain()
+        .focus()
+        .insertContent(
+          `<a href="${escapeAttr(href)}"${trackAttr}>${escapeHtml(text)}</a>`,
+        )
         .run();
     }
     setLinkOpen(false);
   };
 
   const openCtaDialog = () => {
-    setCtaForm({ text: 'Hemen Başla', href: 'https://tinten.ai/register', track: '', bg: '#1F2937' });
+    setCtaForm({
+      text: 'Hemen Başla',
+      href: 'https://tinten.ai/register',
+      track: '',
+      bg: '#1F2937',
+    });
     setCtaOpen(true);
   };
 
@@ -224,10 +274,26 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
       .chain()
       .focus()
       .insertContent(
-        `<a href="${escapeAttr(href)}" data-track="${escapeAttr(dataTrack)}" style="${escapeAttr(style)}">${escapeHtml(text)}</a>`
+        `<a href="${escapeAttr(href)}" data-track="${escapeAttr(dataTrack)}" style="${escapeAttr(style)}">${escapeHtml(text)}</a>`,
       )
       .run();
     setCtaOpen(false);
+  };
+
+  const insertMedia = (asset) => {
+    if (asset.kind === 'image') {
+      editor
+        .chain()
+        .focus()
+        .setImage({
+          src: asset.url,
+          alt: asset.name || asset.originalName || '',
+        })
+        .run();
+    } else {
+      editor.chain().focus().insertContent(asset.embedHtml).run();
+    }
+    setMediaOpen(false);
   };
 
   const Btn = ({ active, onClick, title, children }) => (
@@ -235,7 +301,10 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
       type="button"
       title={title}
       onClick={onClick}
-      className={cn('rounded-md px-2 py-1 hover:bg-accent', active && 'bg-primary/10 text-primary')}
+      className={cn(
+        'rounded-md px-2 py-1 hover:bg-accent',
+        active && 'bg-primary/10 text-primary',
+      )}
     >
       {children}
     </button>
@@ -246,16 +315,32 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
   return (
     <div className="rounded-lg border border-input bg-background">
       <div className="flex flex-wrap items-center gap-1 border-b border-border p-1.5">
-        <Btn title="Kalın" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>
+        <Btn
+          title="Kalın"
+          active={editor.isActive('bold')}
+          onClick={() => editor.chain().focus().toggleBold().run()}
+        >
           <Bold className="size-4" />
         </Btn>
-        <Btn title="İtalik" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>
+        <Btn
+          title="İtalik"
+          active={editor.isActive('italic')}
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+        >
           <Italic className="size-4" />
         </Btn>
-        <Btn title="Altı çizili" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>
+        <Btn
+          title="Altı çizili"
+          active={editor.isActive('underline')}
+          onClick={() => editor.chain().focus().toggleUnderline().run()}
+        >
           <UnderlineIcon className="size-4" />
         </Btn>
-        <Btn title="Üstü çizili" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}>
+        <Btn
+          title="Üstü çizili"
+          active={editor.isActive('strike')}
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+        >
           <Strikethrough className="size-4" />
         </Btn>
 
@@ -267,12 +352,19 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
             <button
               type="button"
               title="Metin rengi"
-              className={cn('rounded-md px-2 py-1 hover:bg-accent', editor.isActive('textStyle') && 'bg-primary/10 text-primary')}
+              className={cn(
+                'rounded-md px-2 py-1 hover:bg-accent',
+                editor.isActive('textStyle') && 'bg-primary/10 text-primary',
+              )}
             >
               <Baseline className="size-4" />
             </button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-auto p-3" onCloseAutoFocus={(e) => e.preventDefault()}>
+          <PopoverContent
+            align="start"
+            className="w-auto p-3"
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
             <div className="grid grid-cols-6 gap-1.5">
               {TEXT_COLORS.map((c) => (
                 <button
@@ -294,7 +386,11 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
                 />
                 Özel
               </label>
-              <button type="button" onClick={clearColor} className="text-xs text-muted-foreground hover:text-foreground">
+              <button
+                type="button"
+                onClick={clearColor}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
                 Rengi kaldır
               </button>
             </div>
@@ -318,50 +414,91 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
 
         <Divider />
 
-        <Btn title="Başlık" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
+        <Btn
+          title="Başlık"
+          active={editor.isActive('heading', { level: 2 })}
+          onClick={() =>
+            editor.chain().focus().toggleHeading({ level: 2 }).run()
+          }
+        >
           <Heading2 className="size-4" />
         </Btn>
-        <Btn title="Liste" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>
+        <Btn
+          title="Liste"
+          active={editor.isActive('bulletList')}
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+        >
           <List className="size-4" />
         </Btn>
-        <Btn title="Sıralı liste" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
+        <Btn
+          title="Sıralı liste"
+          active={editor.isActive('orderedList')}
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        >
           <ListOrdered className="size-4" />
         </Btn>
 
         <Divider />
 
-        <Btn title="Sola hizala" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}>
+        <Btn
+          title="Sola hizala"
+          active={editor.isActive({ textAlign: 'left' })}
+          onClick={() => editor.chain().focus().setTextAlign('left').run()}
+        >
           <AlignLeft className="size-4" />
         </Btn>
-        <Btn title="Ortala" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}>
+        <Btn
+          title="Ortala"
+          active={editor.isActive({ textAlign: 'center' })}
+          onClick={() => editor.chain().focus().setTextAlign('center').run()}
+        >
           <AlignCenter className="size-4" />
         </Btn>
-        <Btn title="Sağa hizala" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}>
+        <Btn
+          title="Sağa hizala"
+          active={editor.isActive({ textAlign: 'right' })}
+          onClick={() => editor.chain().focus().setTextAlign('right').run()}
+        >
           <AlignRight className="size-4" />
         </Btn>
 
         <Divider />
 
-        <Btn title="Bağlantı ekle" active={editor.isActive('link')} onClick={openLinkDialog}>
+        <Btn
+          title="Bağlantı ekle"
+          active={editor.isActive('link')}
+          onClick={openLinkDialog}
+        >
           <Link2 className="size-4" />
         </Btn>
         <Btn title="Buton ekle (CTA)" onClick={openCtaDialog}>
           <MousePointerClick className="size-4" />
         </Btn>
+        <Btn title="Medya kütüphanesi" onClick={() => setMediaOpen(true)}>
+          <ImagePlus className="size-4" />
+        </Btn>
 
         <Divider />
 
-        <Btn title="Geri al" onClick={() => editor.chain().focus().undo().run()}>
+        <Btn
+          title="Geri al"
+          onClick={() => editor.chain().focus().undo().run()}
+        >
           <Undo className="size-4" />
         </Btn>
-        <Btn title="İleri al" onClick={() => editor.chain().focus().redo().run()}>
+        <Btn
+          title="İleri al"
+          onClick={() => editor.chain().focus().redo().run()}
+        >
           <Redo className="size-4" />
         </Btn>
 
         {variables.length > 0 && (
           <>
             <Divider />
-            <span className="text-xs text-muted-foreground">Değişken ekle:</span>
+            <span className="text-xs text-muted-foreground">
+              Değişken ekle:
+            </span>
             {variables.map((v) => (
               <button
                 key={v.token}
@@ -378,45 +515,75 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
       </div>
       <EditorContent editor={editor} />
 
+      <MailMediaLibrary
+        open={mediaOpen}
+        onOpenChange={setMediaOpen}
+        onInsert={insertMedia}
+      />
+
       {/* Bağlantı dialogu */}
       <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
-        <DialogContent className="max-w-md" onCloseAutoFocus={(e) => e.preventDefault()}>
+        <DialogContent
+          className="max-w-md"
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>Bağlantı</DialogTitle>
           </DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); applyLink(); }}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              applyLink();
+            }}
+          >
             <DialogBody className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">URL</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  URL
+                </label>
                 <Input
                   autoFocus
                   value={linkForm.href}
-                  onChange={(e) => setLinkForm((f) => ({ ...f, href: e.target.value }))}
+                  onChange={(e) =>
+                    setLinkForm((f) => ({ ...f, href: e.target.value }))
+                  }
                   placeholder="https://…"
                 />
               </div>
               {!linkForm.applyToExisting && (
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Bağlantı metni</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Bağlantı metni
+                  </label>
                   <Input
                     value={linkForm.text}
-                    onChange={(e) => setLinkForm((f) => ({ ...f, text: e.target.value }))}
+                    onChange={(e) =>
+                      setLinkForm((f) => ({ ...f, text: e.target.value }))
+                    }
                     placeholder="Boşsa URL gösterilir"
                   />
                 </div>
               )}
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">İzleme etiketi (opsiyonel)</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  İzleme etiketi (opsiyonel)
+                </label>
                 <Input
                   value={linkForm.track}
-                  onChange={(e) => setLinkForm((f) => ({ ...f, track: e.target.value }))}
+                  onChange={(e) =>
+                    setLinkForm((f) => ({ ...f, track: e.target.value }))
+                  }
                   placeholder="örn. blog-link"
                   className="font-mono text-xs"
                 />
               </div>
             </DialogBody>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setLinkOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setLinkOpen(false)}
+              >
                 Vazgeç
               </Button>
               <Button type="submit">Ekle</Button>
@@ -427,51 +594,79 @@ export function MailTemplateEditor({ value, onChange, variables = [] }) {
 
       {/* CTA buton dialogu */}
       <Dialog open={ctaOpen} onOpenChange={setCtaOpen}>
-        <DialogContent className="max-w-md" onCloseAutoFocus={(e) => e.preventDefault()}>
+        <DialogContent
+          className="max-w-md"
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>Buton (CTA)</DialogTitle>
           </DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); applyCta(); }}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              applyCta();
+            }}
+          >
             <DialogBody className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Buton metni</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Buton metni
+                </label>
                 <Input
                   autoFocus
                   value={ctaForm.text}
-                  onChange={(e) => setCtaForm((f) => ({ ...f, text: e.target.value }))}
+                  onChange={(e) =>
+                    setCtaForm((f) => ({ ...f, text: e.target.value }))
+                  }
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">URL</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  URL
+                </label>
                 <Input
                   value={ctaForm.href}
-                  onChange={(e) => setCtaForm((f) => ({ ...f, href: e.target.value }))}
+                  onChange={(e) =>
+                    setCtaForm((f) => ({ ...f, href: e.target.value }))
+                  }
                   placeholder="https://…"
                 />
               </div>
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">İzleme etiketi</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    İzleme etiketi
+                  </label>
                   <Input
                     value={ctaForm.track}
-                    onChange={(e) => setCtaForm((f) => ({ ...f, track: e.target.value }))}
+                    onChange={(e) =>
+                      setCtaForm((f) => ({ ...f, track: e.target.value }))
+                    }
                     placeholder="Boşsa metinden türetilir"
                     className="font-mono text-xs"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Arka plan</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Arka plan
+                  </label>
                   <input
                     type="color"
                     value={ctaForm.bg}
-                    onChange={(e) => setCtaForm((f) => ({ ...f, bg: e.target.value }))}
+                    onChange={(e) =>
+                      setCtaForm((f) => ({ ...f, bg: e.target.value }))
+                    }
                     className="h-9 w-12 cursor-pointer rounded-md border border-input bg-transparent p-1"
                   />
                 </div>
               </div>
             </DialogBody>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCtaOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCtaOpen(false)}
+              >
                 Vazgeç
               </Button>
               <Button type="submit">Ekle</Button>
