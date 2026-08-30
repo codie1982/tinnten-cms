@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Plus, Trash2, Play, Save, Loader2, X, Eye, RefreshCw, Users } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Plus, Trash2, Play, Save, Loader2, X, Eye, Pencil, Users, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,12 +17,16 @@ import {
   useDeleteCronListMutation,
   useRunCronListMutation,
   usePreviewCronListMutation,
+  useDryRunCronListMutation,
 } from '@/redux/services';
 
 const SELECT_CLS =
   'h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/30';
 
+const DAILY_REFRESH_CRON = '0 6 * * *';
+
 const CRON_PRESETS = [
+  { label: 'Her gün 06:00', cron: DAILY_REFRESH_CRON },
   { label: 'Her gün 09:00', cron: '0 9 * * *' },
   { label: 'Her hafta (Pzt 09:00)', cron: '0 9 * * 1' },
   { label: "Her ayın 1'i 09:00", cron: '0 9 1 * *' },
@@ -31,9 +36,77 @@ const CRON_PRESETS = [
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
 
+const RUN_POLL_INTERVAL_MS = 2000;
+const RUN_POLL_ATTEMPTS = 45;
+
 const OP_LABELS = {
   eq: '= eşit', ne: '≠ değil', in: 'içinde (virgülle)', nin: 'dışında (virgülle)',
   gt: '> büyük', gte: '≥ büyük/eşit', lt: '< küçük', lte: '≤ küçük/eşit', exists: 'var/yok',
+};
+
+// Tarih alanları için göreli pencere birimi. Backend hem relativeDays hem
+// relativeHours çözer; "son 24 saat" gibi gün'e bölünmeyen pencereler saatle
+// kurulmalı — gün alanına 0 yazmak `createdAt >= şimdi` demektir (boş liste).
+const REL_UNITS = [
+  { value: '', label: 'sabit değer' },
+  { value: 'days', label: 'son N gün' },
+  { value: 'hours', label: 'son N saat' },
+];
+
+// Satır bazında `reason` (snake_case) ve özet sayaç anahtarları (camelCase) ayrı
+// gelir — ikisi de aynı etiketlere bağlanır.
+const SKIP_REASONS = {
+  no_email: 'E-posta yok',
+  keycloak_error: 'Keycloak’a ulaşılamadı',
+  duplicate: 'Aynı e-posta tekrar',
+  unsubscribed: 'Listeden çıkmış',
+  already_member: 'Zaten üye',
+  guest: 'Misafir kullanıcı',
+  no_source: 'Kaynak kaydı yok',
+};
+
+const SKIP_COUNTER_LABELS = {
+  noEmail: SKIP_REASONS.no_email,
+  keycloakError: SKIP_REASONS.keycloak_error,
+  duplicate: SKIP_REASONS.duplicate,
+  unsubscribed: SKIP_REASONS.unsubscribed,
+  alreadyMember: SKIP_REASONS.already_member,
+  guest: SKIP_REASONS.guest,
+  noSource: SKIP_REASONS.no_source,
+};
+
+// Alıcının e-postasının nereden çözüldüğü. "mongo" dışı pay, Keycloak→Mongo
+// kimlik senkronunun eksik olduğunu gösterir (bkz. auditKeycloakIdentitySync).
+const SOURCE_LABELS = { mongo: 'Mongo', keycloak: 'Keycloak', company: 'Firma e-postası' };
+
+const MONGO_OP_SYMBOLS = {
+  $eq: '=', $ne: '≠', $gt: '>', $gte: '≥', $lt: '<', $lte: '≤',
+  $in: 'içinde', $nin: 'dışında', $exists: 'var mı',
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const formatFilterValue = (v) => {
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'string' && ISO_DATE.test(v)) return new Date(v).toLocaleString('tr-TR');
+  if (typeof v === 'boolean') return v ? 'evet' : 'hayır';
+  return String(v);
+};
+
+/**
+ * Derlenmiş Mongo filtresini okunur satırlara çevirir. Göreli tarihler backend'de
+ * ÇÖZÜLMÜŞ geldiği için "createdAt ≥ 10.08.2026 09:00" gibi gerçek pencere görünür
+ * — sessizce boş liste üreten hatalı göreli değerler burada yakalanır.
+ */
+const describeFilter = (filter) => {
+  if (!filter || typeof filter !== 'object') return [];
+  return Object.entries(filter).flatMap(([field, cond]) => {
+    if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
+      return Object.entries(cond).map(
+        ([op, v]) => `${field} ${MONGO_OP_SYMBOLS[op] || op} ${formatFilterValue(v)}`
+      );
+    }
+    return [`${field} = ${formatFilterValue(cond)}`];
+  });
 };
 
 const emptyForm = () => ({
@@ -47,6 +120,7 @@ const emptyForm = () => ({
   pipelineText: '[\n  { "$match": {} }\n]',
   buildMode: 'append',
   maxRecipients: 5000,
+  channelKey: null, // kayıtlı reçetede üyelik/çıkış kontrolü için gerekli
   schedule: { cron: '0 9 * * *', timezone: 'Europe/Istanbul' },
 });
 
@@ -56,7 +130,9 @@ const emptyForm = () => ({
  * detayına (üyeler) `/cms/email/lists/<channelKey>` ile gidilir.
  */
 export function CronListsManager({ authorized }) {
-  const { data: lists = [], isLoading } = useGetCronListsQuery({}, { skip: !authorized });
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { data: lists = [], isLoading, refetch } = useGetCronListsQuery({}, { skip: !authorized });
   const { data: schema } = useGetCronListSchemaQuery(undefined, { skip: !authorized });
 
   const [createList, { isLoading: creating }] = useCreateCronListMutation();
@@ -64,10 +140,19 @@ export function CronListsManager({ authorized }) {
   const [deleteList] = useDeleteCronListMutation();
   const [runList] = useRunCronListMutation();
   const [previewList, { isLoading: previewing }] = usePreviewCronListMutation();
+  const [dryRunList] = useDryRunCronListMutation();
 
   const [form, setForm] = useState(null);
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(null);
+  // { title, data } — form taslağının ya da tablodaki bir reçetenin test sonucu.
+  const [dryRun, setDryRun] = useState(null);
+  const [dryRunFor, setDryRunFor] = useState(null); // spinner hedefi: 'form' | row._id
+  // Play ile başlatılan gerçek build'ler satır bazında izlenir. Backend 202
+  // döndürdüğü için mutation'ın bitmesi, listenin oluştuğu anlamına gelmez;
+  // lastBuiltAt değişene kadar tabloyu poll ederek butonu kilitli tutarız.
+  const [runningRows, setRunningRows] = useState({});
+  const editId = searchParams.get('edit');
 
   const sources = schema?.sources || {};
   const ops = schema?.ops || ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin', 'exists'];
@@ -80,50 +165,108 @@ export function CronListsManager({ authorized }) {
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setSchedule = (k, v) => setForm((f) => ({ ...f, schedule: { ...f.schedule, [k]: v } }));
 
-  const openNew = () => { setPreview(null); setNotice(''); setForm(emptyForm()); };
+  const openNew = () => { setPreview(null); setDryRun(null); setNotice(''); setForm(emptyForm()); };
   const openEdit = (row) => {
-    setPreview(null); setNotice('');
+    setPreview(null); setDryRun(null); setNotice('');
     setForm({
       id: row._id,
       name: row.name || '',
       description: row.description || '',
       source: row.source || 'company',
       queryMode: row.queryMode || 'builder',
-      filters: (row.filters || []).map((f) => ({
-        field: f.field, op: f.op,
-        rel: f.value && typeof f.value === 'object' && 'relativeDays' in f.value,
-        value: f.value && typeof f.value === 'object' && 'relativeDays' in f.value
-          ? f.value.relativeDays
-          : Array.isArray(f.value) ? f.value.join(',') : f.value,
-      })),
+      // Göreli değerin BİRİMİNİ koru. Yalnız relativeDays'e bakan eski sürüm,
+      // saatle kurulmuş bir filtreyi ekranda [object Object] gösterip kaydedince
+      // relativeDays:0'a (boş liste) çeviriyordu.
+      filters: (row.filters || []).map((f) => {
+        const obj = f.value && typeof f.value === 'object' && !Array.isArray(f.value) ? f.value : null;
+        const rel = obj && 'relativeHours' in obj ? 'hours' : obj && 'relativeDays' in obj ? 'days' : '';
+        return {
+          field: f.field,
+          op: f.op,
+          rel,
+          value: rel === 'hours' ? obj.relativeHours
+            : rel === 'days' ? obj.relativeDays
+            : Array.isArray(f.value) ? f.value.join(',') : f.value,
+        };
+      }),
       relations: row.relations || [],
       pipelineText: JSON.stringify(row.pipeline || [], null, 2),
       buildMode: row.buildMode || 'append',
       maxRecipients: row.maxRecipients ?? 5000,
+      channelKey: row.channelKey || null,
       schedule: { cron: row.schedule?.cron || '0 9 * * *', timezone: row.schedule?.timezone || 'Europe/Istanbul' },
     });
   };
 
+  // Detay sayfasındaki "Ayarları düzenle" bağlantısı ilgili reçeteyi doğrudan
+  // açar. Önceden yalnızca cron sekmesine gidiyor, kullanıcı hangi kaydı
+  // düzenleyeceğini yeniden bulmak zorunda kalıyordu.
+  useEffect(() => {
+    if (!editId || form || !lists.length) return;
+    const row = lists.find((item) => item._id === editId || item.channelKey === editId);
+    if (!row) return;
+    openEdit(row);
+    router.replace('/cms/email/lists?tab=cron', { scroll: false });
+  }, [editId, form, lists, router]);
+
   const changeSource = (src) => setForm((f) => ({ ...f, source: src, filters: [], relations: [] }));
 
-  const addFilter = () => set('filters', [...form.filters, { field: fields[0]?.name || '', op: 'eq', value: '', rel: false }]);
-  const setFilter = (i, patch) => set('filters', form.filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  const addFilter = () => set('filters', [...form.filters, { field: fields[0]?.name || '', op: 'eq', value: '', rel: '' }]);
+
+  /**
+   * Operatör değişince `value` normalize edilir. Önceden devralınıyordu ve
+   * `exists`'e geçen satır `value: ''` ile kalıyordu: `buildQuery` bunu
+   * `false`'a çevirdiği için, ekranda "var" yazarken sorguya `$exists: false`
+   * ("alan YOK") gidiyordu — yani tam tersi. Kullanıcı dropdown'a hiç
+   * dokunmazsa liste sessizce boş/yanlış çıkıyordu.
+   */
+  const setFilter = (i, patch) =>
+    set('filters', form.filters.map((f, j) => {
+      if (j !== i) return f;
+      const next = { ...f, ...patch };
+      if (patch.op !== undefined && patch.op !== f.op) {
+        next.value = patch.op === 'exists' ? 'true' : '';
+        if (patch.op === 'exists') next.rel = '';
+      }
+      return next;
+    }));
   const rmFilter = (i) => set('filters', form.filters.filter((_, j) => j !== i));
 
   const toggleRelation = (name) =>
     set('relations', form.relations.includes(name) ? form.relations.filter((r) => r !== name) : [...form.relations, name]);
 
-  const parsePipeline = () => {
+  /**
+   * Pipeline'ı doğrular ve backend'e DÜZ METİN olarak gönderilecek hâlini üretir.
+   *
+   * Dizi olarak gönderilemez: backend'deki global `express-mongo-sanitize`
+   * `$match`/`$group` gibi anahtarları silip pipeline'ı `[{}]`'e çeviriyordu —
+   * reçete sorunsuz kaydediliyor ama liste hiç oluşmuyordu. Sanitizer string
+   * değerlere dokunmadığı için metin olarak yollanır, backend parse eder.
+   */
+  const buildPipelineText = () => {
     let p;
     try { p = JSON.parse(form.pipelineText || '[]'); }
     catch (e) { throw new Error('Pipeline JSON geçersiz: ' + e.message); }
     if (!Array.isArray(p)) throw new Error('Pipeline bir dizi (array) olmalı.');
-    return p;
+    if (p.length === 0) throw new Error('Aggregate pipeline boş olamaz (örn. [ { "$match": { ... } } ]).');
+    p.forEach((stage, i) => {
+      if (!stage || typeof stage !== 'object' || Array.isArray(stage)) {
+        throw new Error(`Pipeline ${i + 1}. stage bir nesne olmalı.`);
+      }
+      const keys = Object.keys(stage);
+      if (keys.length !== 1) {
+        throw new Error(`Pipeline ${i + 1}. stage tam olarak bir operatör içermeli (örn. { "$match": { ... } }).`);
+      }
+      if (!keys[0].startsWith('$')) {
+        throw new Error(`Pipeline ${i + 1}. stage operatörü "$" ile başlamalı ("${keys[0]}").`);
+      }
+    });
+    return JSON.stringify(p);
   };
 
   const buildQuery = () => {
     if (form.queryMode === 'aggregate') {
-      return { source: form.source, queryMode: 'aggregate', pipeline: parsePipeline() };
+      return { source: form.source, queryMode: 'aggregate', pipelineText: buildPipelineText() };
     }
     return {
       source: form.source,
@@ -132,8 +275,17 @@ export function CronListsManager({ authorized }) {
         let value;
         if (f.op === 'exists') value = f.value === true || f.value === 'true';
         else if (f.op === 'in' || f.op === 'nin') value = String(f.value).split(',').map((s) => s.trim()).filter(Boolean);
-        else if (f.rel) value = { relativeDays: Number(f.value) || 0 };
-        else value = f.value;
+        else if (f.rel) {
+          const n = Number(f.value);
+          // 0/boş → pencere "şimdiden itibaren" olur ve liste her koşuda BOŞ
+          // çıkar, hiçbir hata da üretmez. Kaydettirmeden burada durdur.
+          if (!Number.isFinite(n) || n <= 0) {
+            throw new Error(
+              `"${f.field}" için göreli pencere 0'dan büyük olmalı (örn. son 24 saat → 24).`
+            );
+          }
+          value = f.rel === 'hours' ? { relativeHours: n } : { relativeDays: n };
+        } else value = f.value;
         return { field: f.field, op: f.op, value };
       }),
       relations: form.relations,
@@ -158,6 +310,38 @@ export function CronListsManager({ authorized }) {
     setPreview(r);
   };
 
+  /** Formdaki (kaydedilmemiş) taslağı yazmadan dener. */
+  const doDryRunForm = async () => {
+    setNotice(''); setDryRun(null); setDryRunFor('form');
+    let query;
+    try { query = buildQuery(); } catch (e) { setDryRunFor(null); return setNotice(e.message); }
+    const r = await dryRunList({
+      ...query,
+      name: form.name.trim() || 'Test listesi',
+      buildMode: form.buildMode,
+      // Yalnızca "tavan teste ait, build limiti şu" uyarısını doğru göstermek için.
+      maxRecipients: Number(form.maxRecipients) || 5000,
+      channelKey: form.channelKey || undefined,
+      schedule: { timezone: form.schedule.timezone },
+    }).unwrap().catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
+    setDryRunFor(null);
+    if (r?.__err) return setNotice(r.__err);
+    setDryRun({ title: form.name.trim() || 'Taslak', rowId: null, data: r });
+  };
+
+  /** Tablodaki kayıtlı reçeteyi olduğu gibi dener (form açmadan). */
+  const doDryRunRow = async (row) => {
+    setNotice(''); setDryRun(null); setDryRunFor(row._id);
+    const r = await dryRunList({ id: row._id }).unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Test başarısız' }));
+    setDryRunFor(null);
+    if (r?.__err) {
+      setDryRun({ title: row.name, rowId: row._id, error: r.__err });
+      return;
+    }
+    setDryRun({ title: row.name, rowId: row._id, data: r });
+  };
+
   const save = async () => {
     setNotice('');
     if (!form.name.trim()) return setNotice('Liste adı zorunlu.');
@@ -174,8 +358,47 @@ export function CronListsManager({ authorized }) {
   };
 
   const onRun = async (row) => {
+    if (runningRows[row._id]) return;
+    const previousBuiltAt = row.lastBuiltAt ? new Date(row.lastBuiltAt).getTime() : 0;
+    setRunningRows((current) => ({ ...current, [row._id]: true }));
+    setNotice(`"${row.name}" tetikleniyor…`);
+
     const r = await runList(row._id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Tetiklenemedi' }));
-    setNotice(r?.__err || `"${row.name}" tetiklendi — liste arka planda oluşturuluyor.`);
+    if (r?.__err) {
+      setRunningRows((current) => {
+        const next = { ...current };
+        delete next[row._id];
+        return next;
+      });
+      setNotice(r.__err);
+      return;
+    }
+
+    setNotice(`"${row.name}" çalışıyor — alıcı listesi güncelleniyor…`);
+    let completedRow = null;
+    for (let attempt = 0; attempt < RUN_POLL_ATTEMPTS; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, RUN_POLL_INTERVAL_MS));
+      const refreshed = await refetch().catch(() => null);
+      const currentRow = refreshed?.data?.find((item) => item._id === row._id);
+      const builtAt = currentRow?.lastBuiltAt ? new Date(currentRow.lastBuiltAt).getTime() : 0;
+      if (builtAt > previousBuiltAt) {
+        completedRow = currentRow;
+        break;
+      }
+    }
+
+    setRunningRows((current) => {
+      const next = { ...current };
+      delete next[row._id];
+      return next;
+    });
+    if (!completedRow) {
+      setNotice(`"${row.name}" tetiklendi ancak tamamlanma 90 saniye içinde doğrulanamadı. İş arka planda sürüyor olabilir.`);
+    } else if (completedRow.lastError) {
+      setNotice(`"${row.name}" oluşturulamadı: ${completedRow.lastError}`);
+    } else {
+      setNotice(`"${row.name}" güncellendi — ${formatCount(completedRow.memberCount)} üye.`);
+    }
   };
 
   const onDelete = async (row) => {
@@ -279,7 +502,21 @@ export function CronListsManager({ authorized }) {
                   <div className="space-y-2">
                     {form.filters.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2">
-                        <select className={`${SELECT_CLS} w-44`} value={f.field} onChange={(e) => setFilter(i, { field: e.target.value })}>
+                        <select
+                          className={`${SELECT_CLS} w-44`}
+                          value={f.field}
+                          // Tarih olmayan alanda göreli pencere anlamsız → birimi sıfırla,
+                          // aksi halde gizli `rel` kalıp değeri {relativeDays} nesnesine çevirir.
+                          onChange={(e) => setFilter(i, {
+                            field: e.target.value,
+                            ...(fieldType(e.target.value) === 'date' ? {} : { rel: '' }),
+                            // Bool alana geçerken serbest metin devralınırsa backend
+                            // onu sessizce `false`'a çevirir → varsayılanı netleştir.
+                            ...(fieldType(e.target.value) === 'bool' && f.op !== 'exists'
+                              ? { value: 'true' }
+                              : {}),
+                          })}
+                        >
                           {fields.map((fl) => <option key={fl.name} value={fl.name}>{fl.name} ({fl.type})</option>)}
                         </select>
                         <select className={`${SELECT_CLS} w-40`} value={f.op} onChange={(e) => setFilter(i, { op: e.target.value })}>
@@ -290,19 +527,40 @@ export function CronListsManager({ authorized }) {
                             <option value="true">var</option>
                             <option value="false">yok</option>
                           </select>
+                        ) : fieldType(f.field) === 'bool' && f.op !== 'in' && f.op !== 'nin' ? (
+                          // Bool alanlar serbest metin kutusundaydı; backend yalnız
+                          // `true` dizesini doğru sayar, dolayısıyla "evet"/"1"/"True"
+                          // sessizce `false` olup listeyi yanlış/boş üretiyordu.
+                          <select
+                            className={`${SELECT_CLS} w-36`}
+                            value={String(f.value) === 'true' ? 'true' : 'false'}
+                            onChange={(e) => setFilter(i, { value: e.target.value })}
+                          >
+                            <option value="true">evet (true)</option>
+                            <option value="false">hayır (false)</option>
+                          </select>
                         ) : (
                           <Input
                             className="w-44"
-                            placeholder={f.rel ? 'N (gün önce)' : 'değer'}
+                            placeholder={
+                              f.rel === 'hours' ? 'N (saat önce)'
+                                : f.rel === 'days' ? 'N (gün önce)'
+                                : fieldType(f.field) === 'date' ? 'YYYY-AA-GG (örn. 2026-08-18)'
+                                : 'değer'
+                            }
                             value={f.value}
                             onChange={(e) => setFilter(i, { value: e.target.value })}
                           />
                         )}
                         {fieldType(f.field) === 'date' && f.op !== 'exists' && (
-                          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <input type="checkbox" checked={!!f.rel} onChange={(e) => setFilter(i, { rel: e.target.checked })} />
-                            son N gün
-                          </label>
+                          <select
+                            className={`${SELECT_CLS} w-36`}
+                            value={f.rel || ''}
+                            onChange={(e) => setFilter(i, { rel: e.target.value })}
+                            title="Göreli pencere birimi"
+                          >
+                            {REL_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                          </select>
                         )}
                         <Button variant="ghost" size="sm" onClick={() => rmFilter(i)}><Trash2 className="size-3.5" /></Button>
                       </div>
@@ -358,14 +616,22 @@ export function CronListsManager({ authorized }) {
               <Button variant="outline" onClick={doPreview} disabled={previewing}>
                 {previewing ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />} Önizleme
               </Button>
+              <Button variant="outline" onClick={doDryRunForm} disabled={dryRunFor === 'form'} title="Liste oluşturmadan kimlerin geleceğini gösterir">
+                {dryRunFor === 'form' ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />} Test Et
+              </Button>
               {preview && (
                 <span className="text-sm text-muted-foreground">
-                  Eşleşen (tahmini): <b>{preview.count}{preview.capped ? '+' : ''}</b>
+                  Eşleşen{preview.exact === false ? ' (alt sınır)' : ''}:{' '}
+                  <b>{formatCount(preview.count)}{preview.capped ? '+' : ''}</b>
                 </span>
               )}
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {dryRun && !dryRun.rowId && (
+        <DryRunResult title={dryRun.title} data={dryRun.data} onClose={() => setDryRun(null)} />
       )}
 
       <Card>
@@ -402,8 +668,10 @@ export function CronListsManager({ authorized }) {
                       || (row.buildMode === 'new'
                         ? (row.lastBuiltChannelKey || row.channelKey)
                         : row.channelKey);
+                    const isRunning = Boolean(runningRows[row._id]);
                     return (
-                    <tr key={row._id} className="border-b last:border-0 hover:bg-muted/30">
+                    <Fragment key={row._id}>
+                    <tr className="border-b last:border-0 hover:bg-muted/30">
                       <td className="p-3">
                         {detailKey ? (
                           <Link href={`/cms/email/lists/${detailKey}`} className="text-primary hover:underline">
@@ -419,7 +687,13 @@ export function CronListsManager({ authorized }) {
                       </td>
                       <td className="p-3">{sources[row.source]?.label || row.source}</td>
                       <td className="p-3 text-right">
-                        {detailKey ? (
+                        {isRunning ? (
+                          <span className="inline-flex items-center justify-end gap-1.5 text-xs font-medium text-primary">
+                            <Loader2 className="size-3.5 animate-spin" />
+                            Güncelleniyor
+                            <span className="text-muted-foreground">({formatCount(row.memberCount)})</span>
+                          </span>
+                        ) : detailKey ? (
                           <Link
                             href={`/cms/email/lists/${detailKey}`}
                             className="inline-flex items-center gap-1.5 font-medium hover:underline"
@@ -437,14 +711,29 @@ export function CronListsManager({ authorized }) {
                         <span className="text-muted-foreground">({row.schedule?.timezone})</span>
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
-                        {/* lastBuiltCount = son koşuda YENİ eklenen; listenin toplamı Üye sütununda. */}
-                        {row.lastBuiltAt
-                          ? `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(row.lastBuiltCount)} yeni`
-                          : '—'}
+                        {isRunning ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-primary">
+                            <Loader2 className="size-3.5 animate-spin" /> Liste oluşturuluyor…
+                          </span>
+                        ) : row.lastBuiltAt ? (
+                          `${new Date(row.lastBuiltAt).toLocaleString('tr-TR')} · +${formatCount(row.lastBuiltCount)} yeni`
+                        ) : '—'}
+                        {/* Elenenler artık koşuda kaydediliyor — Keycloak arızası
+                            yüzünden küçülen liste burada fark edilir. */}
+                        {row.lastBuiltStats?.noEmail > 0 && (
+                          <div>{formatCount(row.lastBuiltStats.noEmail)} kişi e-postasız elendi</div>
+                        )}
+                        {row.lastBuiltStats?.keycloakErrors > 0 && (
+                          <div className="font-medium text-amber-600">
+                            {formatCount(row.lastBuiltStats.keycloakErrors)} Keycloak hatası
+                          </div>
+                        )}
                         {row.lastError && <div className="text-destructive">{row.lastError}</div>}
                       </td>
                       <td className="p-3">
-                        <Badge variant={row.status === 'active' ? 'secondary' : 'outline'}>{row.status}</Badge>
+                        <Badge variant={isRunning || row.status === 'active' ? 'secondary' : 'outline'}>
+                          {isRunning ? 'çalışıyor' : row.status}
+                        </Badge>
                       </td>
                       <td className="p-3">
                         <div className="flex justify-end gap-1">
@@ -455,18 +744,57 @@ export function CronListsManager({ authorized }) {
                               </Button>
                             </Link>
                           )}
-                          <Button variant="ghost" size="sm" title="Şimdi çalıştır" onClick={() => onRun(row)}>
-                            <Play className="size-3.5" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Test et — liste oluşturmadan kimlerin geleceğini gösterir"
+                            onClick={() => doDryRunRow(row)}
+                            disabled={dryRunFor === row._id || isRunning}
+                          >
+                            {dryRunFor === row._id
+                              ? <Loader2 className="size-3.5 animate-spin" />
+                              : <FlaskConical className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="sm" title="Düzenle" onClick={() => openEdit(row)}>
-                            <RefreshCw className="size-3.5" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title={isRunning
+                              ? 'Liste oluşturuluyor — durdurma desteklenmiyor'
+                              : 'Şimdi çalıştır (GERÇEK liste oluşturur)'}
+                            onClick={() => onRun(row)}
+                            disabled={isRunning}
+                          >
+                            {isRunning
+                              ? <Loader2 className="size-3.5 animate-spin" />
+                              : <Play className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="sm" title="Sil" onClick={() => onDelete(row)}>
+                          <Button variant="ghost" size="sm" title="Düzenle" onClick={() => openEdit(row)} disabled={isRunning}>
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" title="Sil" onClick={() => onDelete(row)} disabled={isRunning}>
                             <Trash2 className="size-3.5" />
                           </Button>
                         </div>
                       </td>
                     </tr>
+                    {dryRun?.rowId === row._id && (
+                      <tr className="border-b bg-muted/10">
+                        <td colSpan={7} className="p-3">
+                          {dryRun.error ? (
+                            <Alert variant="destructive">
+                              <AlertDescription>{dryRun.error}</AlertDescription>
+                            </Alert>
+                          ) : (
+                            <DryRunResult
+                              title={dryRun.title}
+                              data={dryRun.data}
+                              onClose={() => setDryRun(null)}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                     );
                   })}
                 </tbody>
@@ -476,6 +804,183 @@ export function CronListsManager({ authorized }) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Yazmasız test sonucu: hangi listeye, hangi pencereyle, kimlerin gireceği ve
+ * elenenlerin nedeni. Build'de `skipped` yalnız sunucu loguna düştüğü için
+ * (Keycloak hatası → sessiz kayıp) elenenler tablosu bunun tek görünür yeri.
+ */
+export function DryRunResult({ title, data, onClose }) {
+  const skipped = data?.skipped || {};
+  const totalSkipped = Object.values(skipped).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  const filterLines = describeFilter(data?.compiledFilter);
+  const recipients = data?.recipients || [];
+  const skippedSample = data?.skippedSample || [];
+  const identity = data?.identity || null;
+  const plus = data?.capped ? '+' : '';
+
+  return (
+    <Card className="border-primary/40">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2">
+          <FlaskConical className="size-4" /> Test sonucu — {title}
+          <span className="text-xs font-normal text-muted-foreground">
+            hiçbir liste oluşturulmadı
+          </span>
+        </CardTitle>
+        <Button variant="ghost" size="sm" onClick={onClose}><X className="size-4" /></Button>
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Sorguya uyan</div>
+            <div className="text-xl font-semibold">{formatCount(data?.scanned)}{plus}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Listeye girecek</div>
+            <div className="text-xl font-semibold text-emerald-600">{formatCount(data?.willAdd)}{plus}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">Elenen</div>
+            <div className="text-xl font-semibold text-muted-foreground">{formatCount(totalSkipped)}</div>
+          </div>
+        </div>
+
+        <div className="space-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs">
+          <div>
+            <span className="text-muted-foreground">Hedef liste: </span>
+            {data?.targetChannelTitle || data?.targetChannelKey ? (
+              <b>{data.targetChannelTitle || data.targetChannelKey}</b>
+            ) : (
+              <span className="text-muted-foreground">— (taslak henüz kaydedilmedi)</span>
+            )}
+            {data?.targetChannelKey && (
+              <span className="ml-1 font-mono text-muted-foreground">({data.targetChannelKey})</span>
+            )}
+            {data?.buildMode === 'new' && (
+              <span className="ml-1 text-muted-foreground">· her koşuda yeni tarihli liste</span>
+            )}
+          </div>
+          {filterLines.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">Sorgu penceresi: </span>
+              <b className="font-mono">{filterLines.join(' · ')}</b>
+            </div>
+          )}
+          {data?.relations?.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">İlişki koşulu: </span>
+              <b>{data.relations.join(', ')}</b>
+            </div>
+          )}
+          {!data?.targetChannelKey && data?.buildMode !== 'new' && (
+            <div className="text-amber-600">
+              Kanal bilinmediği için “zaten üye / listeden çıkmış” kontrolü yapılamadı;
+              gerçek koşuda bu kişiler elenebilir.
+            </div>
+          )}
+          <div className="text-muted-foreground">Süre: {formatCount(data?.durationMs)} ms</div>
+        </div>
+
+        {identity && (identity.fromMongo || identity.fromKeycloak || identity.fromCompany || identity.keycloakLookups) ? (
+          <div
+            className={`space-y-1 rounded-md px-3 py-2 text-xs ${
+              identity.keycloakErrors > 0 || identity.fromMongo < identity.fromKeycloak
+                ? 'border border-amber-500/40 bg-amber-500/10'
+                : 'bg-muted/50'
+            }`}
+          >
+            <div>
+              <span className="text-muted-foreground">E-posta nereden çözüldü: </span>
+              <b>Mongo {formatCount(identity.fromMongo)}</b>
+              {' · '}Keycloak {formatCount(identity.fromKeycloak)}
+              {' · '}firma e-postası {formatCount(identity.fromCompany)}
+            </div>
+            {identity.keycloakErrors > 0 && (
+              <div className="font-medium text-amber-700 dark:text-amber-400">
+                {formatCount(identity.keycloakErrors)} Keycloak sorgusu HATA verdi —
+                elenenlerin bir kısmı veri eksiği değil, geçici arıza. Tekrar deneyin.
+              </div>
+            )}
+            {identity.fromKeycloak + identity.fromCompany > 0 && (
+              <div className="text-muted-foreground">
+                Mongo dışından çözülen her kişi için build sırasında ek sorgu yapılır.
+                Kalıcı çözüm: <code>backfillUserIdentitySnapshots.js --only-missing</code>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        <div>
+          <div className="mb-1 text-xs font-medium">
+            Listeye girecekler {recipients.length < (data?.willAdd || 0) && (
+              <span className="text-muted-foreground">
+                (ilk {recipients.length} / {formatCount(data.willAdd)})
+              </span>
+            )}
+          </div>
+          {recipients.length === 0 ? (
+            <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              Hiç kimse eşleşmedi. Sorgu penceresini ve ilişki koşulunu kontrol edin.
+            </p>
+          ) : (
+            <div className="max-h-72 overflow-auto rounded-md border">
+              <table className="w-full text-sm">
+                <tbody>
+                  {recipients.map((r, i) => (
+                    <tr key={`${r.email}-${i}`} className="border-b last:border-0">
+                      <td className="p-2 font-mono text-xs">{r.email}</td>
+                      <td className="p-2">{r.name || '—'}</td>
+                      <td className="p-2 text-muted-foreground">{r.label}</td>
+                      <td className="p-2 text-right text-xs text-muted-foreground">
+                        {r.source && r.source !== 'mongo' && (
+                          <Badge variant="outline" className="mr-1 text-[10px]">
+                            {SOURCE_LABELS[r.source] || r.source}
+                          </Badge>
+                        )}
+                        {r.locale || ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {totalSkipped > 0 && (
+          <div>
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs font-medium">
+              <span>Elenenler</span>
+              {Object.entries(skipped)
+                .filter(([, n]) => Number(n) > 0)
+                .map(([k, n]) => (
+                  <Badge key={k} variant="outline">
+                    {SKIP_COUNTER_LABELS[k] || k}: {formatCount(n)}
+                  </Badge>
+                ))}
+            </div>
+            <div className="max-h-56 overflow-auto rounded-md border">
+              <table className="w-full text-sm">
+                <tbody>
+                  {skippedSample.map((r, i) => (
+                    <tr key={`${r.label}-${i}`} className="border-b last:border-0">
+                      <td className="p-2">{r.label}</td>
+                      <td className="p-2 font-mono text-xs text-muted-foreground">{r.email || '—'}</td>
+                      <td className="p-2 text-right text-xs text-muted-foreground">
+                        {SKIP_REASONS[r.reason] || r.reason}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

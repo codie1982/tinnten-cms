@@ -1,0 +1,203 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Eye, Loader2, Monitor, Smartphone, X } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { addDemoRecipients, getDemoRecipients } from '@/lib/mail-demo-recipients';
+import {
+  usePreviewMailCampaignMutation,
+  usePreviewMailTemplateMutation,
+} from '@/redux/services';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Mail önizlemesi — "önizlenen = gönderilen".
+ *
+ * İki kaynağı da render eder:
+ *   - `campaignId` → kampanya önizlemesi (şablon + konu override + genel
+ *     değişkenler, gönderim anındaki header/footer chrome'u ile sarılmış).
+ *     "Alıcı gözüyle" bir e-posta girilirse {{USER_NAME}} gibi token'lar o
+ *     kişinin GERÇEK verisiyle çözülür (backend resolveEmailVars).
+ *   - `templateId` → şablon önizlemesi (şablonun previewData'sı ile). Alıcı
+ *     gözüyle render yoktur; şablon ucu sampleVars alır, kişi çözmez.
+ *
+ * Her iki durumda da HTML izole bir iframe'de (sandbox + srcDoc) gösterilir —
+ * CMS CSS'i maile, mail CSS'i sayfaya SIZMAZ. Şablon sayfasındaki eski
+ * `dangerouslySetInnerHTML`'li gömülü kart tam da bu yüzden yanıltıcıydı.
+ */
+export function MailPreviewPanel({ campaignId, templateId, open, onClose, initialAs }) {
+  const [previewCampaign, { isLoading: campaignLoading }] = usePreviewMailCampaignMutation();
+  const [previewTemplate, { isLoading: templateLoading }] = usePreviewMailTemplateMutation();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [as, setAs] = useState('');
+  const [mode, setMode] = useState('desktop'); // desktop | mobile
+  const [savedRecipients, setSavedRecipients] = useState([]);
+
+  const isTemplate = Boolean(templateId) && !campaignId;
+  const targetId = campaignId || templateId;
+  const isLoading = isTemplate ? templateLoading : campaignLoading;
+
+  const load = async (asEmail) => {
+    setError('');
+    const req = isTemplate
+      ? previewTemplate({ id: templateId, sampleVars: {} })
+      : previewCampaign({ id: campaignId, as: asEmail || undefined });
+    const r = await req
+      .unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Önizleme alınamadı.' }));
+    if (r?.__err) return setError(r.__err);
+    setData(r);
+    if (asEmail) setSavedRecipients(addDemoRecipients(asEmail));
+  };
+
+  useEffect(() => {
+    if (open && targetId) {
+      setData(null);
+      setError('');
+      setAs(initialAs || '');
+      setSavedRecipients(getDemoRecipients());
+      load(initialAs || null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, targetId, initialAs]);
+
+  if (!open) return null;
+
+  const loadAs = () => {
+    const email = as.trim().toLowerCase();
+    if (!email) return load(null);
+    if (!EMAIL_RE.test(email)) return setError('Geçerli bir e-posta adresi girin.');
+    load(email);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <Card className="flex max-h-[92vh] w-full max-w-4xl flex-col" onClick={(e) => e.stopPropagation()}>
+        <CardHeader>
+          <CardTitle>
+            <Eye className="mr-1 inline size-4" />
+            {isTemplate ? 'Önizleme · şablon' : 'Önizleme · gönderilecek mail'}
+          </CardTitle>
+          <CardToolbar className="gap-2">
+            <div className="flex rounded-md border border-border p-0.5">
+              <Button
+                variant={mode === 'desktop' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setMode('desktop')}
+                title="Masaüstü görünümü"
+              >
+                <Monitor className="size-3.5" /> Masaüstü
+              </Button>
+              <Button
+                variant={mode === 'mobile' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setMode('mobile')}
+                title="Mobil görünümü (375px)"
+              >
+                <Smartphone className="size-3.5" /> Mobil
+              </Button>
+            </div>
+            <Button variant="ghost" size="icon" onClick={onClose}>
+              <X className="size-4" />
+            </Button>
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+          {/* Alıcı gözüyle önizleme — yalnız kampanyada; şablon ucu kişi çözmez. */}
+          {!isTemplate && (
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[240px] flex-1">
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Alıcı gözüyle (token'lar bu kişinin gerçek verisiyle çözülür; boş = örnek değerler)
+                </label>
+                <Input
+                  list="mail-preview-demo-recipients"
+                  placeholder="ornek@adres.com"
+                  value={as}
+                  onChange={(e) => setAs(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && loadAs()}
+                />
+                <datalist id="mail-preview-demo-recipients">
+                  {savedRecipients.map((r) => <option key={r} value={r} />)}
+                </datalist>
+              </div>
+              <Button variant="outline" onClick={loadAs} disabled={isLoading}>
+                {isLoading ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
+                Bu gözle önizle
+              </Button>
+            </div>
+          )}
+
+          {error && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+
+          {!data && !error ? (
+            <div className="flex items-center justify-center py-24">
+              <Loader2 className="size-6 animate-spin text-primary" />
+            </div>
+          ) : data ? (
+            <>
+              {/* Mail başlık şeridi — gerçek gönderim değerleri */}
+              {/* Şablon önizlemesinde gönderen/alıcı yoktur — o alanlar kampanya
+                  gönderim anında belirlenir. Olmayan satırı boş göstermek yerine gizle. */}
+              <div className="space-y-1 rounded-md bg-muted/40 px-3 py-2 text-sm">
+                {data.from && (
+                  <div className="flex gap-2">
+                    <span className="w-16 shrink-0 text-muted-foreground">Kimden</span>
+                    <span className="min-w-0 truncate font-medium">{data.from}</span>
+                  </div>
+                )}
+                {data.to && (
+                  <div className="flex gap-2">
+                    <span className="w-16 shrink-0 text-muted-foreground">Kime</span>
+                    <span className="min-w-0 truncate">
+                      {data.to}
+                      {data.sampleRecipient && (
+                        <span className="ml-2 text-xs text-muted-foreground">(örnek alıcı)</span>
+                      )}
+                    </span>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <span className="w-16 shrink-0 text-muted-foreground">Konu</span>
+                  <span className="min-w-0 font-medium">{data.subject}</span>
+                </div>
+              </div>
+
+              {data.unresolved?.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
+                  <AlertTriangle className="size-3.5 text-amber-600" />
+                  <span className="text-amber-700 dark:text-amber-400">Çözülemeyen token'lar:</span>
+                  {data.unresolved.map((t) => (
+                    <Badge key={t} variant="warning" className="font-mono">{`{{${t}}}`}</Badge>
+                  ))}
+                </div>
+              )}
+
+              {/* İzole önizleme — sayfa CSS'i sızmaz */}
+              <div className={mode === 'mobile' ? 'mx-auto w-[375px] max-w-full' : 'w-full'}>
+                <iframe
+                  title="kampanya-mail-onizleme"
+                  srcDoc={data.html}
+                  className="h-[62vh] w-full rounded-lg border border-border bg-white"
+                  sandbox=""
+                />
+              </div>
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

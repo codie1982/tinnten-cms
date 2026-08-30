@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Plus, Loader2, Archive, ArchiveRestore, Trash2 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
@@ -26,10 +26,15 @@ import {
 const statusVariant = (s) => (s === 'active' ? 'success' : s === 'archived' ? 'muted' : 'secondary');
 const statusLabel = (s) => (s === 'active' ? 'Aktif' : s === 'archived' ? 'Arşivlendi' : 'Taslak');
 
-export default function CampaignTemplatesPage() {
+const TAB_KEYS = ['active', 'archived'];
+const DEFAULT_TAB = 'active';
+
+function CampaignTemplatesPageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const { data: templates = [], isLoading, error } = useGetMailTemplatesQuery({}, { skip: !authorized });
   const [createTemplate, { isLoading: creating }] = useCreateMailTemplateMutation();
@@ -40,7 +45,12 @@ export default function CampaignTemplatesPage() {
   const [form, setForm] = useState({ name: '', subject: '', editorType: 'tiptap' });
   const [notice, setNotice] = useState('');
   // Arşivlenenler ana listeden çıkar, ayrı sekmede görünür.
-  const [tab, setTab] = useState('active');
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const tab = TAB_KEYS.includes(tabParam) ? tabParam : DEFAULT_TAB;
+  const setTab = (key) => {
+    router.replace(key === DEFAULT_TAB ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
   const [busyId, setBusyId] = useState(null);
 
   const { activeList, archivedList } = useMemo(() => ({
@@ -217,5 +227,14 @@ export default function CampaignTemplatesPage() {
         </CardContent>
       </Card>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function CampaignTemplatesPage() {
+  return (
+    <Suspense fallback={null}>
+      <CampaignTemplatesPageInner />
+    </Suspense>
   );
 }

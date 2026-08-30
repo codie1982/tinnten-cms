@@ -24,10 +24,11 @@ import {
   useGetMailChannelsQuery,
   useGetChannelStatsQuery,
   useGetCronListsQuery,
-  useRunCronListMutation,
+  useDryRunCronListMutation,
   useGetMailCampaignsQuery,
 } from '@/redux/services';
 import { MemberListDialog } from '@/components/email/member-list-dialog';
+import { DryRunResult } from '@/components/email/cron-lists-manager';
 import { toCategorySegments, categoryMeta } from '@/lib/unsubscribeReasons';
 
 const isManualList = (channel) => channel?.type === 'custom' || channel?.type === 'private';
@@ -150,7 +151,7 @@ export default function ListDashboardPage() {
 
   const { data: cronLists = [] } = useGetCronListsQuery({}, { skip: !authorized || !isCron });
   const recipe = isCron ? cronLists.find((r) => r.channelKey === channelKey) : null;
-  const [runCron, { isLoading: running }] = useRunCronListMutation();
+  const [dryRunCron, { isLoading: dryRunning }] = useDryRunCronListMutation();
 
   // Bu listeye (channelKey) gönderilen kampanyalar. Kampanyalar tek bir yaprak
   // kanala gider; backend filtre uçu yok → tüm kampanya listesini çekip (≤200-500,
@@ -160,11 +161,16 @@ export default function ListDashboardPage() {
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [notice, setNotice] = useState('');
+  const [dryRun, setDryRun] = useState(null);
 
   const handleRunCron = async () => {
     if (!recipe?._id) return;
-    const r = await runCron(recipe._id).unwrap().catch((e) => ({ __err: e?.data?.message || 'Tetiklenemedi' }));
-    setNotice(r?.__err || 'Cron listesi tetiklendi — üyeler arka planda güncelleniyor.');
+    setNotice('');
+    setDryRun(null);
+    const r = await dryRunCron({ id: recipe._id, cap: 5000 }).unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Dry-run başarısız' }));
+    if (r?.__err) return setNotice(r.__err);
+    setDryRun({ title: recipe.name, data: r });
   };
 
   const subscribed = Number(stats?.subscribed) || 0;
@@ -233,11 +239,11 @@ export default function ListDashboardPage() {
                 </CardTitle>
                 <CardToolbar className="gap-2">
                   {recipe && (
-                    <Button size="sm" variant="outline" onClick={handleRunCron} disabled={running}>
-                      {running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />} Şimdi çalıştır
+                    <Button size="sm" variant="outline" onClick={handleRunCron} disabled={dryRunning}>
+                      {dryRunning ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />} Dry-run çalıştır
                     </Button>
                   )}
-                  <Link href="/cms/email/lists?tab=cron">
+                  <Link href={`/cms/email/lists?tab=cron&edit=${recipe?._id || ''}`}>
                     <Button size="sm" variant="ghost"><Settings2 className="size-3.5" /> Ayarları düzenle</Button>
                   </Link>
                 </CardToolbar>
@@ -272,6 +278,14 @@ export default function ListDashboardPage() {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {dryRun && (
+            <DryRunResult
+              title={dryRun.title}
+              data={dryRun.data}
+              onClose={() => setDryRun(null)}
+            />
           )}
 
           <div className="grid gap-5 lg:grid-cols-2">

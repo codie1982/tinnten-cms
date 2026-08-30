@@ -44,6 +44,7 @@ import {
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
+  useSetCompanyPocMutation,
   useTransferCompanyOwnerMutation,
   useAssignCompanyPackageMutation,
   useGetUsersQuery,
@@ -145,18 +146,18 @@ function CmsCompanyDetailView({ id }) {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
 
-  // Sekme URL'e bağlı: ?section=urunler ile derin link verilebilsin ve oluşturma
+  // Sekme URL'e bağlı: ?tab=urunler ile derin link verilebilsin ve oluşturma
   // sayfasından geri dönüşte doğru sekme açılsın. Bilinmeyen değer 'genel'e düşer.
   const router = useRouter();
   const searchParams = useSearchParams();
-  const sectionParam = searchParams.get('section');
-  const section = SECTIONS.some((s) => s.key === sectionParam)
-    ? sectionParam
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam)
+    ? tabParam
     : 'genel';
   const setSection = (next) => {
     const query = new URLSearchParams(searchParams.toString());
-    if (next === 'genel') query.delete('section');
-    else query.set('section', next);
+    if (next === 'genel') query.delete('tab');
+    else query.set('tab', next);
     const qs = query.toString();
     router.replace(`/cms/companies/${id}${qs ? `?${qs}` : ''}`, {
       scroll: false,
@@ -168,6 +169,7 @@ function CmsCompanyDetailView({ id }) {
   const [updateUsage, { isLoading: savingUsage }] = useUpdateCompanyUsageMutation();
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
   const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
+  const [setPoc, { isLoading: savingPoc }] = useSetCompanyPocMutation();
   const [transferOwner, { isLoading: transferring }] = useTransferCompanyOwnerMutation();
   const [assignPackage, { isLoading: assigningPackage }] = useAssignCompanyPackageMutation();
 
@@ -296,6 +298,9 @@ function CmsCompanyDetailView({ id }) {
   const [blockOpen, setBlockOpen] = useState(false); // gerekçe formu açık mı
   const [blockReason, setBlockReason] = useState('');
   const [blockNotice, setBlockNotice] = useState(null); // { type, text }
+
+  // POC işareti state'i
+  const [pocNotice, setPocNotice] = useState(null); // { type, text }
 
   // Sahiplik devri state'i
   const [ownerOpen, setOwnerOpen] = useState(false);
@@ -466,6 +471,23 @@ function CmsCompanyDetailView({ id }) {
   };
 
   const isBlocked = company.adminActive === false;
+  const isPoc = company.poc === true;
+
+  // ─── POC (demo/vitrin) işareti ───
+  // Backend bayrağı firmanın asistanlarına da yayar (asistans.poc === company.poc).
+  const handleTogglePoc = async (next) => {
+    try {
+      const res = await setPoc({ id, poc: next }).unwrap();
+      setPocNotice({
+        type: 'success',
+        text: next
+          ? `Firma POC olarak işaretlendi.${res?.assistantsUpdated ? ` ${res.assistantsUpdated} asistan güncellendi.` : ''}`
+          : `POC işareti kaldırıldı.${res?.assistantsUpdated ? ` ${res.assistantsUpdated} asistan güncellendi.` : ''}`,
+      });
+    } catch (e) {
+      setPocNotice({ type: 'error', text: e?.data?.message || 'POC işareti güncellenemedi.' });
+    }
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -485,7 +507,12 @@ function CmsCompanyDetailView({ id }) {
                 <p className="text-sm font-semibold text-foreground">{company.companyName}</p>
                 <p className="font-mono text-[11px] text-muted-foreground">{company.slug}</p>
               </div>
-              {s && <Badge variant={s.variant}>{s.label}</Badge>}
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                {s && <Badge variant={s.variant}>{s.label}</Badge>}
+                {/* Her sekmede görünsün: POC firması müşteri raporlarına
+                    karışmaması gereken demo kaydıdır. */}
+                {isPoc && <Badge variant="warning">POC</Badge>}
+              </div>
             </div>
             {/* Sub-menu */}
             <nav className="space-y-0.5 p-2">
@@ -734,6 +761,35 @@ function CmsCompanyDetailView({ id }) {
                     </div>
                   </div>
                 )}
+
+                {/* POC işareti — demo/vitrin firmasını gerçek müşteriden ayıran
+                    TEK kalıcı alan. Slug öneki ve ad ekleri müşteriye görünür
+                    oldukları için kaldırıldı; bu yüzden buradan okunur/yazılır. */}
+                <div className="sm:col-span-2 mt-2 space-y-2 rounded-lg border border-border p-3">
+                  {pocNotice && (
+                    <Alert variant={pocNotice.type === 'error' ? 'destructive' : 'info'}>
+                      <AlertDescription>{pocNotice.text}</AlertDescription>
+                    </Alert>
+                  )}
+                  <label className="flex items-start gap-2.5 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={isPoc}
+                      disabled={savingPoc}
+                      onChange={(e) => { setPocNotice(null); handleTogglePoc(e.target.checked); }}
+                      className="mt-0.5 size-4 rounded border-input accent-primary disabled:opacity-50"
+                    />
+                    <span>
+                      <span className="flex items-center gap-1.5 font-medium">
+                        POC firması (demo / vitrin)
+                        {savingPoc && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        Gerçek müşteri firması değildir. İşaret, firmanın asistanlarına da yayılır.
+                      </span>
+                    </span>
+                  </label>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -1443,7 +1499,7 @@ function CmsCompanyDetailView({ id }) {
 }
 
 /**
- * Sekme durumu ?section= ile URL'de tutuluyor; useSearchParams bir Suspense
+ * Sekme durumu ?tab= ile URL'de tutuluyor; useSearchParams bir Suspense
  * sınırı gerektirdiği için asıl görünüm ayrı bileşende.
  */
 export default function CmsCompanyDetailPage({ params }) {

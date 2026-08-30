@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Activity, ListChecks, RefreshCw, X, Plus, Play, Pencil, Trash2, Loader2,
@@ -621,10 +622,20 @@ function LogsSection({ authorized }) {
 }
 
 /* ════════════ Sayfa ════════════ */
-export default function CronServicePage() {
+const DEFAULT_SECTION = 'status';
+
+function CronServicePageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
-  const [section, setSection] = useState('status');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -666,5 +677,14 @@ export default function CronServicePage() {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function CronServicePage() {
+  return (
+    <Suspense fallback={null}>
+      <CronServicePageInner />
+    </Suspense>
   );
 }

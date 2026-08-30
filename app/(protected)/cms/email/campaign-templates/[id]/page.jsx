@@ -15,12 +15,12 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { MailTemplateEditor } from '@/components/cms/mail-template-editor';
+import { MailPreviewPanel } from '@/components/email/mail-preview-panel';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { CONTENT_LOCALES } from '@/config/api';
 import {
   useGetMailTemplateQuery,
   useUpdateMailTemplateMutation,
-  usePreviewMailTemplateMutation,
   useGetMergeVariablesQuery,
   useTestSendMailTemplateMutation,
 } from '@/redux/services';
@@ -62,7 +62,6 @@ export default function CampaignTemplateEditPage() {
   const { data: tpl, isLoading } = useGetMailTemplateQuery(id, { skip: !authorized || !id });
   const { data: variables = [] } = useGetMergeVariablesQuery(undefined, { skip: !authorized });
   const [updateTemplate, { isLoading: saving }] = useUpdateMailTemplateMutation();
-  const [previewTemplate, { isLoading: previewing }] = usePreviewMailTemplateMutation();
   const [testSendTemplate] = useTestSendMailTemplateMutation();
 
   const [form, setForm] = useState({
@@ -74,7 +73,7 @@ export default function CampaignTemplateEditPage() {
     editorType: 'tiptap',
     design: null,
   });
-  const [preview, setPreview] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [notice, setNotice] = useState('');
 
   // Demo / test gönderimi
@@ -131,9 +130,14 @@ export default function CampaignTemplateEditPage() {
     setNotice(r?.__err || 'Şablon kaydedildi.');
   };
 
+  // Önizleme artık gömülü kart değil, kampanyadakiyle AYNI modal (izole iframe).
+  // Kaydedilmemiş değişiklikler sunucudaki şablondan render edilmez → önce kaydet.
   const doPreview = async () => {
-    const r = await previewTemplate({ id, sampleVars: {} }).unwrap().catch(() => null);
-    if (r) setPreview(r);
+    setNotice('');
+    const r = await updateTemplate({ id, ...form }).unwrap()
+      .catch((e) => ({ __err: e?.data?.message || 'Kaydedilemedi' }));
+    if (r?.__err) return setNotice(r.__err);
+    setPreviewOpen(true);
   };
 
   // Kayıtlı şablonu, girilen adres(ler)le eşleşen kullanıcının GERÇEK değerleriyle
@@ -178,8 +182,8 @@ export default function CampaignTemplateEditPage() {
         actions={
           <div className="flex gap-2">
             <Link href="/cms/email/campaign-templates"><Button variant="outline"><ArrowLeft className="size-4" /> Liste</Button></Link>
-            <Button variant="outline" onClick={doPreview} disabled={previewing}>
-              {previewing ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />} Önizle
+            <Button variant="outline" onClick={doPreview} disabled={saving} title="Kaydedip gönderilecek hâliyle açar">
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />} Önizle
             </Button>
             <Button onClick={save} disabled={saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Kaydet
@@ -269,14 +273,13 @@ export default function CampaignTemplateEditPage() {
                   {tpl.variables.map((v) => <Badge key={v} variant="secondary" className="font-mono text-[10px]">{`{{${v}}}`}</Badge>)}
                 </div>
               )}
-              {preview ? (
-                <>
-                  <div className="rounded-md bg-muted/40 px-3 py-2 text-sm"><span className="text-muted-foreground">Konu:</span> {preview.subject}</div>
-                  <div className="rounded-md border border-border p-3 text-sm" dangerouslySetInnerHTML={{ __html: preview.html }} />
-                </>
-              ) : (
-                <p className="py-8 text-center text-sm text-muted-foreground">Önizlemek için “Önizle”ye basın (örnek değerlerle render edilir).</p>
-              )}
+              {/* Gömülü render KALDIRILDI: dangerouslySetInnerHTML sayfa CSS'ini
+                  maile sızdırıyor, mail CSS'ini de sayfaya taşıyordu — görünen
+                  şey gönderilenle aynı değildi. Artık kampanyayla aynı modal. */}
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Önizleme, gönderilecek hâliyle ayrı bir pencerede açılır —
+                yukarıdaki <b>Önizle</b> butonunu kullanın.
+              </p>
 
               {/* Demo / Test gönder — kayıtlı şablonu örnek değerlerle kendi adresinize atın */}
               <div className="space-y-2 rounded-md border border-dashed border-border p-3">
@@ -326,6 +329,8 @@ export default function CampaignTemplateEditPage() {
           </Card>
         </div>
       )}
+
+      <MailPreviewPanel templateId={id} open={previewOpen} onClose={() => setPreviewOpen(false)} />
     </RoleGuard>
   );
 }

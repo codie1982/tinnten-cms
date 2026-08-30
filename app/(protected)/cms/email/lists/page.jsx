@@ -7,7 +7,7 @@ import { useSession } from 'next-auth/react';
 import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
   Loader2, Pencil, Save, X, AlertTriangle, ChevronDown, ChevronRight,
-  UserCheck, UserMinus, FolderInput, FolderTree,
+  UserCheck, UserMinus, FolderInput, FolderTree, FolderPlus, ShieldBan, ShieldCheck,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -31,11 +31,15 @@ import {
   useCreateMailChannelMutation,
   useUpdateMailChannelMutation,
   useDeleteMailChannelMutation,
+  useGetCmsSuppressionsQuery,
+  useGetCmsSuppressionStatsQuery,
+  useAddCmsSuppressionMutation,
+  useReleaseCmsSuppressionMutation,
 } from '@/redux/services';
 import { AddMembersPanel } from '@/components/email/add-members-panel';
 import { CronListsManager } from '@/components/email/cron-lists-manager';
 
-const SECTION_KEYS = ['general', 'custom', 'news', 'cron'];
+const SECTION_KEYS = ['general', 'custom', 'news', 'cron', 'blacklist'];
 
 const MEMBER_PAGE = 50;
 
@@ -44,6 +48,7 @@ const SECTIONS = [
   { key: 'custom', label: 'Özel Listeler', icon: ListFilter, desc: 'Oluşturduğunuz kullanıcı listeleri' },
   { key: 'news', label: 'Haber Listesi', icon: Newspaper, desc: 'Haber akışından abone olundu' },
   { key: 'cron', label: 'Cron Listeleri', icon: RefreshCw, desc: 'Zamanlı olarak oluşturulan listeler' },
+  { key: 'blacklist', label: 'Kara Liste', icon: ShieldBan, desc: 'Hiçbir gönderime alınmayacak adresler' },
 ];
 
 const TYPE_META = {
@@ -237,9 +242,21 @@ function annotateSubtree(nodes) {
   return total;
 }
 
+/** Açıkça "grup" olarak oluşturulmuş kanal (üye tutmaz, yalnızca listeleri toplar).
+ *  Backend'de ayrı bir `type` yok — model `metadata`'yı Mixed tuttuğu için işaret
+ *  oraya yazılır (bkz. mail-channel.model.js; create/update `metadata`'yı geçirir).
+ *  `metadata.isGroup` eklenmeden önce açılmış gruplar yalnızca "çocuğu olan liste"
+ *  olarak var; o yüzden satır bazında kontrol her zaman "isGroup VEYA çocuğu var"dır. */
+const isExplicitGroup = (ch) => ch?.metadata?.isGroup === true;
+
+/** "Gruba Al" çubuğundaki "+ Yeni grup oluştur…" seçeneğinin sentinel değeri.
+ *  Gerçek bir kanal key'i olamaz: slugify `_` üretmez. */
+const NEW_GROUP = '__new__';
+
 /* ── Özel Listeler ── */
 function CustomListsSection({ authorized }) {
-  const [showCreate, setShowCreate] = useState(false);
+  // null | 'list' | 'group' — aynı satır içi form iki modda kullanılır.
+  const [createMode, setCreateMode] = useState(null);
   const [form, setForm] = useState({ title: '', description: '', parentKey: '' });
   const [notice, setNotice] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
@@ -253,6 +270,8 @@ function CustomListsSection({ authorized }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [groupTarget, setGroupTarget] = useState('none');
   const [grouping, setGrouping] = useState(false);
+  // "Gruba Al" içinden yeni grup açma (seç → oluştur → taşı tek adımda).
+  const [newGroupName, setNewGroupName] = useState('');
 
   const { data: channels = [], isLoading, error } = useGetMailChannelsQuery({ all: 'true' }, { skip: !authorized });
   const sortByTitle = (a, b) =>
@@ -262,10 +281,18 @@ function CustomListsSection({ authorized }) {
   const archivedChannels = allCustom.filter((ch) => ch.status === 'archived').sort(sortByTitle);
   const customChannels = view === 'archived' ? archivedChannels : activeChannels;
 
+  // Bir kanal grup sayılır: açıkça grup olarak açılmış YA DA altında kanal taşıyor.
+  // İkinci koşul `metadata.isGroup` öncesi verilerle geriye dönük uyum içindir.
+  const activeParentKeys = new Set(activeChannels.map((ch) => ch.parentKey).filter(Boolean));
+  const isGroupRow = (ch) => isExplicitGroup(ch) || activeParentKeys.has(ch.key);
+
   // Üst-liste seçici (create/edit) her zaman AKTİF listelerden kurulur — arşivlenmiş
   // bir listenin altına yeni bağlama yapılmaz, hangi sekmede olunursa olunsun.
   const activeTree = sortTreeNodes(buildChannelTree(activeChannels));
   const parentOptions = flattenTreeRows(activeTree, 0, new Set(), false, []);
+  // Üst seçici yalnızca GRUP satırlarını gösterir: liste altına liste asmak yerine
+  // önce grup açılır. Eski (örtük) gruplar `hasChildren` ile burada kalmaya devam eder.
+  const groupParentOptions = parentOptions.filter((c) => c.hasChildren || isExplicitGroup(c));
 
   // Görüntülenen sekmenin (aktif/arşiv) kendi ağacı — parentKey'e göre iç içe sıralanır.
   // Grup (çocuğu olan) düğümlere alt ağaçtaki toplam üye sayısı iliştirilir.
@@ -284,7 +311,7 @@ function CustomListsSection({ authorized }) {
     const node = findTreeNode(activeTree, ch.key);
     if (node) collectDescendantKeys(node, excludedGroupKeys);
   }
-  const groupOptions = parentOptions.filter((c) => !excludedGroupKeys.has(c.key));
+  const groupOptions = groupParentOptions.filter((c) => !excludedGroupKeys.has(c.key));
   const visibleRowIds = visibleRows.map((r) => r._id);
   const allVisibleSelected =
     visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedSet.has(id));
@@ -305,13 +332,43 @@ function CustomListsSection({ authorized }) {
   const toggleSelected = (id, checked) =>
     setSelectedIds((cur) => (checked ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((x) => x !== id)));
   const toggleAllVisible = (checked) => setSelectedIds(checked ? visibleRowIds : []);
-  const clearSelection = () => { setSelectedIds([]); setGroupTarget('none'); };
+  const clearSelection = () => { setSelectedIds([]); setGroupTarget('none'); setNewGroupName(''); };
 
   // Seçili listeleri tek hedef gruba (parentKey) taşır. Toplu uç yok → tek tek PATCH.
+  // Hedef "+ Yeni grup oluştur…" ise önce grup açılır, sonra taşıma onun key'ine yapılır.
   const handleGroupSelected = async () => {
     if (!selectedChannels.length) return;
-    const target = groupTarget === 'none' ? null : groupTarget;
+    let target = groupTarget === 'none' ? null : groupTarget;
+    // Yeni grup henüz `parentOptions`'ta yok (liste cache'i sonra tazelenir) →
+    // bildirim başlığı için adını burada tutarız.
+    let createdTitle = '';
     setGrouping(true);
+
+    if (groupTarget === NEW_GROUP) {
+      const title = newGroupName.trim();
+      if (!title) { setGrouping(false); return; }
+      const created = await createChannel({
+        title,
+        type: 'custom',
+        parentKey: null,
+        metadata: { isGroup: true },
+      })
+        .unwrap()
+        .catch((e) => ({ __err: e?.data?.message || 'Grup oluşturulamadı' }));
+      // Backend yazma politikası "queue" ise doc yerine {queued:true} döner → key yok.
+      if (created?.__err || !created?.key) {
+        setGrouping(false);
+        setNotice({
+          variant: 'destructive',
+          message: created?.__err
+            || `“${title}” grubu oluşturuldu ama anahtarı alınamadı; listeleri elle taşıyın.`,
+        });
+        return;
+      }
+      target = created.key;
+      createdTitle = created.title || title;
+    }
+
     const results = await Promise.all(
       selectedChannels.map((ch) =>
         updateChannel({ id: ch._id, parentKey: target })
@@ -334,25 +391,39 @@ function CustomListsSection({ authorized }) {
       return;
     }
     const targetTitle = target
-      ? (parentOptions.find((c) => c.key === target)?.title || target)
+      ? (createdTitle || parentOptions.find((c) => c.key === target)?.title || target)
       : 'Ana seviye';
-    setNotice({ variant: 'info', message: `${moved} liste “${targetTitle}” grubuna taşındı.` });
+    setNotice({
+      variant: 'info',
+      message: createdTitle
+        ? `“${targetTitle}” grubu oluşturuldu ve ${moved} liste altına taşındı.`
+        : `${moved} liste “${targetTitle}” grubuna taşındı.`,
+    });
   };
 
+  // Tek form, iki mod: 'list' normal e-posta listesi, 'group' yalnızca listeleri
+  // toplayan kapsayıcı (üye tutmaz, kampanya hedefi olmaz).
   const handleCreate = async () => {
     if (!form.title.trim()) return;
+    const asGroup = createMode === 'group';
     const r = await createChannel({
       title: form.title,
       description: form.description,
       type: 'custom',
       parentKey: form.parentKey || null,
+      ...(asGroup ? { metadata: { isGroup: true } } : {}),
     })
       .unwrap()
       .catch((e) => ({ __err: e?.data?.message || 'Oluşturulamadı' }));
     if (r?.__err) return setNotice({ variant: 'destructive', message: r.__err });
-    setShowCreate(false);
+    setCreateMode(null);
     setForm({ title: '', description: '', parentKey: '' });
-    setNotice({ variant: 'info', message: 'Liste oluşturuldu.' });
+    setNotice({
+      variant: 'info',
+      message: asGroup
+        ? 'Grup oluşturuldu — listeleri seçip “Gruba Al” ile içine taşıyabilirsiniz.'
+        : 'Liste oluşturuldu.',
+    });
   };
 
   const openEdit = (ch) => {
@@ -428,8 +499,11 @@ function CustomListsSection({ authorized }) {
     });
   };
 
-  // Aktif özel listeler üzerinden pano özeti (abone/çıkan/liste sayısı).
-  const summary = activeChannels.reduce(
+  // Aktif özel listeler üzerinden pano özeti. Gruplar üye tutmaz → "Aktif liste"
+  // sayacına girmez, ayrı sayılır (yoksa kapsayıcılar liste gibi görünürdü).
+  const activeGroups = activeChannels.filter(isGroupRow);
+  const activeLists = activeChannels.filter((ch) => !isGroupRow(ch));
+  const summary = activeLists.reduce(
     (acc, ch) => ({
       subscribed: acc.subscribed + (Number(ch.memberCount) || 0),
       unsubscribed: acc.unsubscribed + (Number(ch.unsubscribedCount) || 0),
@@ -446,8 +520,9 @@ function CustomListsSection({ authorized }) {
       )}
 
       {!isLoading && activeChannels.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <SummaryCard icon={ListFilter} label="Aktif liste" value={activeChannels.length} />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <SummaryCard icon={ListFilter} label="Aktif liste" value={activeLists.length} />
+          <SummaryCard icon={FolderTree} label="Grup" value={activeGroups.length} />
           <SummaryCard icon={UserCheck} tone="success" label="Toplam aktif abone" value={summary.subscribed} />
           <SummaryCard icon={UserMinus} tone="warning" label="Toplam çıkan / çıkarılan" value={summary.unsubscribed} />
           <SummaryCard
@@ -469,7 +544,7 @@ function CustomListsSection({ authorized }) {
               ].map((t) => (
                 <button
                   key={t.key}
-                  onClick={() => { setView(t.key); setConfirmId(null); setEditId(null); setSelectedIds([]); setGroupTarget('none'); }}
+                  onClick={() => { setView(t.key); setConfirmId(null); setEditId(null); clearSelection(); }}
                   className={cn(
                     'px-3 py-1.5 text-xs font-medium transition-colors',
                     view === t.key
@@ -482,9 +557,25 @@ function CustomListsSection({ authorized }) {
               ))}
             </div>
             {view === 'active' && (
-              <Button onClick={() => setShowCreate((v) => !v)}>
-                <Plus className="size-4" /> Yeni Liste
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setCreateMode((m) => (m === 'group' ? null : 'group'));
+                    setForm({ title: '', description: '', parentKey: '' });
+                  }}
+                >
+                  <FolderPlus className="size-4" /> Yeni Grup
+                </Button>
+                <Button
+                  onClick={() => {
+                    setCreateMode((m) => (m === 'list' ? null : 'list'));
+                    setForm({ title: '', description: '', parentKey: '' });
+                  }}
+                >
+                  <Plus className="size-4" /> Yeni Liste
+                </Button>
+              </>
             )}
           </CardToolbar>
         </CardHeader>
@@ -494,10 +585,14 @@ function CustomListsSection({ authorized }) {
               <span className="text-sm font-medium">{selectedIds.length} liste seçili</span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted-foreground">Gruba al:</span>
-                <Select value={groupTarget} onValueChange={setGroupTarget}>
+                <Select
+                  value={groupTarget}
+                  onValueChange={(v) => { setGroupTarget(v); if (v !== NEW_GROUP) setNewGroupName(''); }}
+                >
                   <SelectTrigger className="h-8 w-60"><SelectValue placeholder="Hedef grup" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Ana seviye (gruptan çıkar)</SelectItem>
+                    <SelectItem value={NEW_GROUP}>+ Yeni grup oluştur…</SelectItem>
                     {groupOptions.map((c) => (
                       <SelectItem key={c.key} value={c.key}>
                         {'— '.repeat(c.depth)}{c.title}
@@ -505,8 +600,22 @@ function CustomListsSection({ authorized }) {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button size="sm" onClick={handleGroupSelected} disabled={grouping}>
-                  {grouping ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />} Gruba Al
+                {groupTarget === NEW_GROUP && (
+                  <Input
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    placeholder="Yeni grup adı"
+                    className="h-8 w-48"
+                    autoFocus
+                  />
+                )}
+                <Button
+                  size="sm"
+                  onClick={handleGroupSelected}
+                  disabled={grouping || (groupTarget === NEW_GROUP && !newGroupName.trim())}
+                >
+                  {grouping ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />}
+                  {groupTarget === NEW_GROUP ? 'Oluştur ve Taşı' : 'Gruba Al'}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={clearSelection} disabled={grouping}>
                   Seçimi temizle
@@ -514,15 +623,25 @@ function CustomListsSection({ authorized }) {
               </div>
             </div>
           )}
-          {showCreate && view === 'active' && (
-            <div className="border-b border-border p-4">
+          {createMode && view === 'active' && (
+            <div className={cn('border-b border-border p-4', createMode === 'group' && 'bg-muted/30')}>
+              {createMode === 'group' && (
+                <p className="mb-3 flex items-start gap-2 text-xs text-muted-foreground">
+                  <FolderTree className="mt-0.5 size-3.5 shrink-0 text-primary" />
+                  Grup yalnızca listeleri toplar: üyesi olmaz ve kampanya kitlesi olarak
+                  seçilemez. Oluşturduktan sonra listeleri seçip “Gruba Al” ile içine taşıyın.
+                </p>
+              )}
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[200px] flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">Liste adı</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    {createMode === 'group' ? 'Grup adı' : 'Liste adı'}
+                  </label>
                   <Input
                     value={form.title}
                     onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                    placeholder="Örn. VIP kullanıcılar"
+                    placeholder={createMode === 'group' ? 'Örn. Kurumsal müşteriler' : 'Örn. VIP kullanıcılar'}
+                    autoFocus
                   />
                 </div>
                 <div className="min-w-[200px] flex-1">
@@ -533,7 +652,7 @@ function CustomListsSection({ authorized }) {
                   />
                 </div>
                 <div className="min-w-[200px] flex-1">
-                  <label className="mb-1 block text-xs text-muted-foreground">Üst liste</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">Üst grup</label>
                   <Select
                     value={form.parentKey || 'none'}
                     onValueChange={(v) => setForm((f) => ({ ...f, parentKey: v === 'none' ? '' : v }))}
@@ -541,7 +660,7 @@ function CustomListsSection({ authorized }) {
                     <SelectTrigger><SelectValue placeholder="Ana seviye (opsiyonel)" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Ana seviye</SelectItem>
-                      {parentOptions.map((c) => (
+                      {groupParentOptions.map((c) => (
                         <SelectItem key={c.key} value={c.key}>
                           {'— '.repeat(c.depth)}{c.title}
                         </SelectItem>
@@ -550,9 +669,12 @@ function CustomListsSection({ authorized }) {
                   </Select>
                 </div>
                 <Button onClick={handleCreate} disabled={creating || !form.title.trim()}>
-                  {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Oluştur
+                  {creating
+                    ? <Loader2 className="size-4 animate-spin" />
+                    : createMode === 'group' ? <FolderPlus className="size-4" /> : <Plus className="size-4" />}
+                  Oluştur
                 </Button>
-                <Button variant="outline" onClick={() => setShowCreate(false)}>İptal</Button>
+                <Button variant="outline" onClick={() => setCreateMode(null)}>İptal</Button>
               </div>
             </div>
           )}
@@ -600,7 +722,9 @@ function CustomListsSection({ authorized }) {
                   const editing = editId === ch._id;
                   const archived = ch.status === 'archived';
                   const memberCount = Number(ch.memberCount) || 0;
-                  const isGroup = ch.hasChildren;
+                  // Yeni açılmış boş bir grup da grup gibi görünmeli → yalnızca
+                  // `hasChildren`'a bakmak yetmez, açık işaret de sayılır.
+                  const isGroup = ch.hasChildren || isExplicitGroup(ch);
                   const selected = selectedSet.has(ch._id);
                   const selfNode = editing ? findTreeNode(activeTree, ch.key) : null;
                   const excludedKeys = editing
@@ -656,7 +780,7 @@ function CustomListsSection({ authorized }) {
                                   <SelectTrigger className="h-8"><SelectValue placeholder="Ana seviye" /></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="none">Ana seviye</SelectItem>
-                                    {parentOptions
+                                    {groupParentOptions
                                       .filter((c) => !excludedKeys?.has(c.key))
                                       .map((c) => (
                                         <SelectItem key={c.key} value={c.key}>
@@ -671,8 +795,10 @@ function CustomListsSection({ authorized }) {
                                 <span className="inline-flex flex-wrap items-center gap-1.5">
                                   {isGroup && <FolderTree className="size-4 shrink-0 text-primary" />}
                                   <span className={cn(isGroup && 'font-semibold')}>{ch.title}</span>
-                                  {ch.hasChildren && (
+                                  {ch.hasChildren ? (
                                     <Badge variant="muted" className="font-normal">{ch.childCount} alt liste</Badge>
+                                  ) : isGroup && (
+                                    <Badge variant="muted" className="font-normal">boş grup</Badge>
                                   )}
                                   {ch.metadata?.generatedFromCron && (
                                     <Badge variant="muted" className="gap-1 font-normal">
@@ -790,6 +916,8 @@ function CustomListsSection({ authorized }) {
                                     abone kayıtlarında kalmaya devam eder.
                                     {!archived && ' Silmek yerine arşivleyerek üyelikleri koruyabilirsiniz.'}
                                   </>
+                                ) : isGroup ? (
+                                  ' Grup yalnızca bir kapsayıcı; üyesi yok.'
                                 ) : (
                                   ' Listede üye yok.'
                                 )}
@@ -912,6 +1040,160 @@ function NewsSection({ authorized }) {
   );
 }
 
+const REASON_LABELS = {
+  ses_bounce: 'Kalıcı bounce',
+  ses_complaint: 'Spam şikâyeti',
+  user_unsubscribed: 'Kullanıcı çıkışı',
+  user_unsubscribed_via_email: 'E-postadan çıkış',
+  one_click: 'Tek tıkla çıkış',
+  cms_removed: 'CMS ile çıkarıldı',
+  wrong_recipient_risk: 'Yanlış alıcı riski',
+  moved_to_language_channel: 'Dil listesine taşındı',
+  mail_list_removed: 'Listeden çıkarıldı',
+  manual: 'Elle eklendi',
+};
+
+const formatDateTime = (value) => value
+  ? new Intl.DateTimeFormat('tr-TR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+  : '—';
+
+/* ── Global Kara Liste ── */
+function BlacklistSection({ authorized }) {
+  const [skip, setSkip] = useState(0);
+  const [q, setQ] = useState('');
+  const [active, setActive] = useState('true');
+  const [email, setEmail] = useState('');
+  const [notice, setNotice] = useState(null);
+  const { data, isLoading, isFetching, error } = useGetCmsSuppressionsQuery(
+    { q, active, limit: MEMBER_PAGE, skip },
+    { skip: !authorized },
+  );
+  const { data: stats } = useGetCmsSuppressionStatsQuery(undefined, { skip: !authorized });
+  const [addSuppression, { isLoading: adding }] = useAddCmsSuppressionMutation();
+  const [releaseSuppression, { isLoading: releasing }] = useReleaseCmsSuppressionMutation();
+  const items = data?.items ?? [];
+
+  const add = async () => {
+    const target = email.trim().toLowerCase();
+    if (!target) return;
+    const result = await addSuppression({ email: target, reason: 'manual' })
+      .unwrap().catch((e) => ({ __err: e?.data?.message || 'Adres eklenemedi.' }));
+    if (result?.__err) {
+      setNotice({ variant: 'destructive', message: result.__err });
+      return;
+    }
+    setEmail('');
+    setSkip(0);
+    setNotice({ variant: 'info', message: `${target} kara listeye eklendi.` });
+  };
+
+  const release = async (target) => {
+    const result = await releaseSuppression({
+      email: target,
+      generalOptIn: false,
+      newsOptIn: false,
+    }).unwrap().catch((e) => ({
+      __err: e?.data?.message || 'Kara liste kaydı kaldırılamadı.',
+    }));
+    setNotice(result?.__err
+      ? { variant: 'destructive', message: result.__err }
+      : { variant: 'info', message: `${target} serbest bırakıldı; hiçbir listeye otomatik eklenmedi.` });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <SummaryCard icon={ShieldBan} tone="warning" label="Aktif kara liste" value={stats?.active} />
+        <SummaryCard icon={ShieldCheck} tone="success" label="Serbest bırakılan" value={stats?.released} />
+        <SummaryCard icon={Users} label="Tarihsel toplam" value={stats?.total} />
+      </div>
+      {notice?.message && (
+        <Alert variant={notice.variant}><AlertDescription>{notice.message}</AlertDescription></Alert>
+      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Kara Liste</CardTitle>
+          <CardToolbar className="gap-2">
+            <Input
+              value={q}
+              onChange={(e) => { setQ(e.target.value); setSkip(0); }}
+              placeholder="E-posta ara…"
+              className="h-8 w-52"
+            />
+            <Select value={active} onValueChange={(v) => { setActive(v); setSkip(0); }}>
+              <SelectTrigger className="h-8 w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="true">Aktif</SelectItem>
+                <SelectItem value="false">Serbest bırakılan</SelectItem>
+                <SelectItem value="all">Tümü</SelectItem>
+              </SelectContent>
+            </Select>
+            {isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="flex gap-2 border-b border-border p-4">
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && add()}
+              placeholder="Kara listeye e-posta ekle"
+            />
+            <Button onClick={add} disabled={adding || !email.trim()}>
+              {adding ? <Loader2 className="size-4 animate-spin" /> : <ShieldBan className="size-4" />}
+              Ekle
+            </Button>
+          </div>
+          {error ? (
+            <div className="p-4">
+              <Alert variant="destructive"><AlertDescription>{error?.data?.message || 'Sunucuya ulaşılamadı.'}</AlertDescription></Alert>
+            </div>
+          ) : isLoading ? (
+            <div className="space-y-1 p-4">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+            </div>
+          ) : items.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Kayıt bulunamadı.</p>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>E-posta</TableHead><TableHead>Sebep</TableHead>
+                    <TableHead>Kaynak</TableHead><TableHead>Tarih</TableHead>
+                    <TableHead>Durum</TableHead><TableHead className="text-right">İşlem</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-mono text-xs">{item.email}</TableCell>
+                      <TableCell><Badge variant="muted">{REASON_LABELS[item.reason] || item.reason || 'Bilinmiyor'}</Badge></TableCell>
+                      <TableCell>{item.source || '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.suppressedAt)}</TableCell>
+                      <TableCell><Badge variant={item.active ? 'destructive' : 'success'}>{item.active ? 'Engelli' : 'Serbest'}</Badge></TableCell>
+                      <TableCell className="text-right">
+                        {item.active && <Button size="sm" variant="outline" disabled={releasing} onClick={() => release(item.email)}>Serbest bırak</Button>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
+                <span className="text-muted-foreground">{skip + 1}–{skip + items.length} / {formatCount(data?.total)}</span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - MEMBER_PAGE))}>Önceki</Button>
+                  <Button size="sm" variant="outline" disabled={skip + items.length >= (data?.total || 0)} onClick={() => setSkip(skip + MEMBER_PAGE)}>Sonraki</Button>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /* ── Cron Listeleri (tam kurulum: oluştur/düzenle/üyeler) ── */
 function CronSection({ authorized }) {
   return <CronListsManager authorized={authorized} />;
@@ -939,7 +1221,7 @@ function MailListsPageInner() {
       <PageHeader
         section="Email"
         title="Mail Listeleri"
-        description="Genel, özel, haber ve cron tabanlı e-posta listeleri"
+        description="E-posta listeleri, abonelikler ve global kara liste"
       />
 
       <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
@@ -981,6 +1263,7 @@ function MailListsPageInner() {
           {section === 'custom' && <CustomListsSection authorized={authorized} />}
           {section === 'news' && <NewsSection authorized={authorized} />}
           {section === 'cron' && <CronSection authorized={authorized} />}
+          {section === 'blacklist' && <BlacklistSection authorized={authorized} />}
         </div>
       </div>
     </RoleGuard>

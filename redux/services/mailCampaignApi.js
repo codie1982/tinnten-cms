@@ -18,12 +18,11 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data?.items ?? res?.data ?? [],
       providesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
+    // Zarfı aç: "grup oluştur ve seçili listeleri altına taşı" akışı oluşan
+    // kanalın `key`'ini hemen kullanır (CMS Özel Listeler > Gruba Al).
     createMailChannel: build.mutation({
-      query: (body) => ({
-        url: ENDPOINTS.email.channels,
-        method: 'POST',
-        body,
-      }),
+      query: (body) => ({ url: ENDPOINTS.email.channels, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
       invalidatesTags: [{ type: 'MailChannel', id: 'LIST' }],
     }),
     updateMailChannel: build.mutation({
@@ -67,11 +66,10 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       providesTags: (r, e, { key }) => [{ type: 'MailChannelMember', id: key }],
     }),
     addChannelMembers: build.mutation({
-      query: ({ key, ...body }) => ({
-        url: ENDPOINTS.email.channelMembers(key),
-        method: 'POST',
-        body,
-      }),
+      query: ({ key, ...body }) => ({ url: ENDPOINTS.email.channelMembers(key), method: 'POST', body }),
+      // Zarfı aç: panel `added`/`suppressed`/`failed` sayaçlarını doğrudan okur.
+      // (Önceden zarf açılmadığı için `r.added` hep undefined → "0 üye eklendi." idi.)
+      transformResponse: (res) => ({ ...(res?.data ?? {}), message: res?.message }),
       invalidatesTags: (r, e, { key }) => [
         { type: 'MailChannelMember', id: key },
         { type: 'MailChannel', id: 'LIST' },
@@ -102,7 +100,7 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'MailChannel', id: 'LIST' },
       ],
     }),
-    // Adresi GLOBAL bastırma listesine ekle (engelle) — tüm kanallardan çıkar.
+    // Adresi GLOBAL kara listeye ekle — tüm kanallardan çıkar.
     // Listeden çıkarmadan (removeChannelMember) farkı: kişi hiçbir listede
     // yeniden mail alamaz; reason "manual" (operatör aksiyonu) yazılır.
     blockSubscriber: build.mutation({
@@ -229,16 +227,170 @@ export const mailCampaignApi = baseApi.injectEndpoints({
       query: (id) => ({ url: ENDPOINTS.email.campaign(id), method: 'DELETE' }),
       invalidatesTags: [{ type: 'EmailCampaign', id: 'LIST' }],
     }),
+    /**
+     * Hemen yayınla. `percent` verilirse (1-99) kitlenin yalnız RASTGELE o
+     * yüzdesine gider — test yayını; kalanı `continueMailCampaign` gönderir.
+     */
     sendMailCampaign: build.mutation({
-      query: (id) => ({
+      query: ({ id, percent = null }) => ({
         url: ENDPOINTS.email.campaignSend(id),
         method: 'POST',
+        body: percent ? { percent } : {},
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    /**
+     * Tamamlanmış kampanyayı, onu HENÜZ ALMAMIŞ alıcılara sürdür. `percent`
+     * KALANIN yüzdesidir (100 = kalan herkes). Daha önce mail gitmiş adres
+     * sunucuda aday havuzuna girmez — kimse ikinci kez mail almaz.
+     */
+    continueMailCampaign: build.mutation({
+      query: ({ id, percent = 100 }) => ({
+        url: ENDPOINTS.email.campaignContinue(id),
+        method: 'POST',
+        body: { percent },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    // Zamanlanmış yayın: draft → scheduled (startAt geldiğinde cron başlatır,
+    // durationMinutes verilirse kitle o süreye eşit yayılır).
+    scheduleMailCampaign: build.mutation({
+      query: ({ id, startAt, durationMinutes }) => ({
+        url: ENDPOINTS.email.campaignSchedule(id),
+        method: 'POST',
+        body: { startAt, durationMinutes },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      // stats de invalidate edilir: getById 300 sn Redis cache'inden zamanlama
+      // öncesi hâli göstermesin.
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    unscheduleMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignUnschedule(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    /**
+     * Tekrar ayarı. `{ id, enabled:false }` seriyi durdurur; diğer alanlar tekrarı
+     * kurar. Yalnız draft/scheduled kampanyada değiştirilebilir — koşu başladığı
+     * anda zincirin sonraki halkası zaten üretilmiş olur.
+     */
+    setMailCampaignRecurrence: build.mutation({
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.email.campaignRecurrence(id),
+        method: 'PATCH',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:series` },
+      ],
+    }),
+    /** Tekrarlı kampanyanın tüm koşuları (en yeniden eskiye). */
+    getMailCampaignSeries: build.query({
+      query: (id) => ENDPOINTS.email.campaignSeries(id),
+      transformResponse: (res) => res?.data ?? [],
+      providesTags: (r, e, id) => [{ type: 'EmailCampaign', id: `${id}:series` }],
+    }),
+    pauseMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignPause(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    resumeMailCampaign: build.mutation({
+      query: (arg) => {
+        const { id, ...body } = typeof arg === 'object' ? arg : { id: arg };
+        return { url: ENDPOINTS.email.campaignResume(id), method: 'POST', body };
+      },
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, arg) => {
+        const id = typeof arg === 'object' ? arg.id : arg;
+        return [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+        ];
+      },
+    }),
+    previewMailCampaignMerge: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.campaignMergePreview, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    mergeMailCampaigns: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.email.campaignMerge, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'EmailCampaign', id: 'LIST' }, { type: 'MailChannel', id: 'LIST' }],
+    }),
+    /**
+     * "Bitir" — kampanyayı bilerek kapatır, kalan kitleye GÖNDERMEZ.
+     *
+     * Kampanya kitle tükenmeden kendiliğinden "Gönderildi"ye geçmediği için
+     * (bir parti bitince "Kısmi"de bekler), yarım bırakılan yayını arşivlemenin
+     * tek yolu bu. Yanıt `remaining` ile kaç kişiye hiç gitmediğini söyler.
+     */
+    finishMailCampaign: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.email.campaignFinish(id), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, id) => [
+        { type: 'EmailCampaign', id },
+        { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    /**
+     * "Baştan Başlat" — kampanyayı taslağa döndürür.
+     *
+     * ⚠️ Gönderim izlerini SİLER: açılma/tıklama geçmişi gider ve aynı kişilere
+     * yeniden mail gidebilir. Sunucu `confirm: true` olmadan 400 döner; çağıran
+     * kullanıcıya sormadan bu bayrağı GÖNDERMEMELİ.
+     */
+    restartMailCampaign: build.mutation({
+      query: (id) => ({
+        url: ENDPOINTS.email.campaignRestart(id),
+        method: 'POST',
+        body: { confirm: true },
       }),
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, id) => [
         { type: 'EmailCampaign', id },
         { type: 'EmailCampaign', id: 'LIST' },
+        { type: 'EmailCampaign', id: `${id}:stats` },
       ],
+    }),
+    // Kampanya önizlemesi — "önizlenen = gönderilen": şablon + konu override +
+    // globalVars + gönderim anındaki header/footer chrome'u. `as` verilirse
+    // token'lar o alıcının GERÇEK profil verisiyle çözülür (resolveEmailVars).
+    previewMailCampaign: build.mutation({
+      query: ({ id, as }) => ({
+        url: ENDPOINTS.email.campaignPreview(id),
+        method: 'POST',
+        body: { ...(as ? { as } : {}) },
+      }),
+      transformResponse: (res) => res?.data ?? res,
     }),
     getMailCampaignStats: build.query({
       query: (id) => ENDPOINTS.email.campaignStats(id),
@@ -247,15 +399,29 @@ export const mailCampaignApi = baseApi.injectEndpoints({
         { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
-    // Dashboard: alıcı bazında açılma/tıklama listesi (sayfalı, engagement filtreli).
+    // Dashboard: gönderilen/gönderilmeyen alıcılar (sayfalı, engagement filtreli).
     getMailCampaignRecipients: build.query({
-      query: ({ id, page = 1, limit = 25, engagement = 'all' }) => ({
+      query: ({ id, page = 1, limit = 25, engagement = 'all', deliveryState = 'all' }) => ({
         url: ENDPOINTS.email.campaignRecipients(id),
-        params: { page, limit, engagement },
+        params: { page, limit, engagement, deliveryState },
       }),
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, { id }) => [
         { type: 'EmailCampaign', id: `${id}:recipients` },
+      ],
+    }),
+    skipMailCampaignRecipient: build.mutation({
+      query: ({ id, email }) => ({ url: ENDPOINTS.email.campaignSkipRecipient(id), method: 'POST', body: { email } }),
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id: `${id}:recipients` },
+        { type: 'EmailCampaign', id: `${id}:stats` },
+      ],
+    }),
+    suppressMailCampaignRecipient: build.mutation({
+      query: ({ id, email }) => ({ url: ENDPOINTS.email.campaignSuppressRecipient(id), method: 'POST', body: { email } }),
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'EmailCampaign', id: `${id}:recipients` },
+        { type: 'EmailCampaign', id: `${id}:stats` },
       ],
     }),
     // Dashboard: saatlik açılma/tıklama zaman serisi (grafik).
@@ -348,8 +514,22 @@ export const {
   useUpdateMailCampaignMutation,
   useDeleteMailCampaignMutation,
   useSendMailCampaignMutation,
+  useContinueMailCampaignMutation,
+  useScheduleMailCampaignMutation,
+  useUnscheduleMailCampaignMutation,
+  useSetMailCampaignRecurrenceMutation,
+  useGetMailCampaignSeriesQuery,
+  usePauseMailCampaignMutation,
+  useResumeMailCampaignMutation,
+  usePreviewMailCampaignMergeMutation,
+  useMergeMailCampaignsMutation,
+  useFinishMailCampaignMutation,
+  useRestartMailCampaignMutation,
+  usePreviewMailCampaignMutation,
   useGetMailCampaignStatsQuery,
   useGetMailCampaignRecipientsQuery,
+  useSkipMailCampaignRecipientMutation,
+  useSuppressMailCampaignRecipientMutation,
   useGetMailCampaignTimeSeriesQuery,
   useGetMergeVariablesQuery,
   useGetRecipientCountQuery,

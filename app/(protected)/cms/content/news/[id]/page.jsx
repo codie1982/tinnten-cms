@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Save,
@@ -12,13 +12,10 @@ import {
   Plus,
   X,
   Image as ImageIcon,
-  Sparkles,
   GripVertical,
   ChevronDown,
   ChevronUp,
   Loader2,
-  Star,
-  Crosshair,
   Bold,
   Italic,
   List,
@@ -32,6 +29,8 @@ import {
   RefreshCw,
   ExternalLink,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -52,13 +51,13 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import {
   useGetNewsQuery,
+  useGetNewsListQuery,
   useCreateNewsMutation,
   useUpdateNewsMutation,
   usePublishNewsMutation,
   useUnpublishNewsMutation,
   useDeleteNewsMutation,
   useGetCategoryTreeQuery,
-  useGenerateNewsAiImageMutation,
   useGetSocialPostsQuery,
   useCreateSocialPostMutation,
   useDeleteSocialPostMutation,
@@ -66,6 +65,8 @@ import {
 } from '@/redux/services';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
 import { statusMeta, contentTypeMeta } from '../_data';
+import { SectionImageArea } from './_components/section-image-area';
+import { ImageSourcePicker } from './_components/image-source-picker';
 import { marked } from 'marked';
 
 const DEFAULT_COUNTRY = DEFAULT_NEWS_COUNTRY;
@@ -164,10 +165,6 @@ function moveItem(arr, idx, dir) {
   return next.map((s, i) => ({ ...s, order: i + 1 }));
 }
 
-const ASPECTS = [['16/9', '16:9'], ['4/3', '4:3'], ['1/1', '1:1'], ['3/2', '3:2']];
-const FITS = [['cover', 'Kırp'], ['contain', 'Sığdır'], ['fill', 'Ger']];
-const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
-
 function insertAtCursor(textareaRef, currentValue, insert) {
   const el = textareaRef?.current;
   if (!el) return currentValue + insert;
@@ -192,178 +189,55 @@ const PREVIEW_CLASSES =
   '[&_a]:text-primary [&_a]:underline ' +
   '[&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground';
 
-/* ─── Bölüm görsel alanı (her bölümün üstünde) — odak + en-boy ayarı ─── */
-function SectionImageArea({ section, articleId, isCover, onUpdate, onSetCover, coverToggle = false, emptyText = 'Bu bölümde görsel yok' }) {
-  const [genAiImage, { isLoading: genImaging }] = useGenerateNewsAiImageMutation();
-  const [editUrl, setEditUrl] = useState(false);
-  const [urlVal, setUrlVal] = useState(section.imageUrl || '');
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [focalMode, setFocalMode] = useState(false);
-  const [err, setErr] = useState('');
-  const img = section.imageUrl;
-  const fx = section.imageFocalX ?? 50;
-  const fy = section.imageFocalY ?? 50;
-  const aspect = section.imageAspect || '16/9';
-  const fit = section.imageFit || 'cover';
-
-  async function genAi() {
-    if (!aiPrompt.trim() || !articleId) return;
-    setErr('');
-    try {
-      const r = await genAiImage({ id: articleId, prompt: aiPrompt.trim() }).unwrap();
-      const url = r?.url;
-      if (url) { onUpdate({ imageUrl: url }); setAiOpen(false); setAiPrompt(''); }
-      else setErr('Görsel üretildi ama URL alınamadı.');
-    } catch (e) {
-      setErr(e?.data?.message || 'Görsel üretilemedi.');
-    }
-  }
-
-  function onFocalClick(e) {
-    if (!focalMode) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    onUpdate({
-      imageFocalX: clampPct(((e.clientX - r.left) / r.width) * 100),
-      imageFocalY: clampPct(((e.clientY - r.top) / r.height) * 100),
-    });
-  }
-
+/* ─── Gövdeye görsel ekleme çubuğu (HTML / Markdown / zengin bölüm metni) ───
+ * Bölüm görselinden farkı: görsel doğrudan metnin içine etiket olarak girer,
+ * yani odak/en-boy ayarı yoktur. Üç kaynak da (yükle / URL / AI) burada da açık. */
+function MediaInsertBar({ articleId, aiPromptSeed, format, onInsert, label = 'İçeriğe görsel ekle:', className }) {
+  const toTag = (url) =>
+    format === 'markdown'
+      ? `\n![](${url})\n`
+      : `\n<img src="${url}" alt="" style="max-width:100%" />\n`;
   return (
-    <div className="space-y-2 border-b border-border bg-muted/20 p-3">
-      {img ? (
-        <>
-          <div
-            className={cn('relative overflow-hidden rounded-lg border border-border', focalMode && 'cursor-crosshair ring-2 ring-primary')}
-            style={{ aspectRatio: aspect.replace('/', ' / ') }}
-            onClick={onFocalClick}
-          >
-            <img src={img} alt={section.imageAlt || ''} className="h-full w-full" style={{ objectFit: fit, objectPosition: `${fx}% ${fy}%` }} />
-            {isCover && (
-              <span className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">
-                <Star className="size-3" />Kapak
-              </span>
-            )}
-            {/* Odak işaretçisi */}
-            {focalMode && (
-              <div
-                className="pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_2px_rgba(0,0,0,0.4)]"
-                style={{ left: `${fx}%`, top: `${fy}%` }}
-              />
-            )}
-            {!focalMode && (
-              <div className="absolute bottom-2 right-2 flex gap-1.5">
-                {coverToggle && (
-                  isCover ? (
-                    <Button size="sm" variant="default" className="h-7" onClick={() => onSetCover(null)} title="Bu görseli kapaktan kaldır">
-                      <Star className="size-3.5 fill-current" />Kapağı kaldır
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => onSetCover(section)} title="Bu görseli kapak yap">
-                      <Star className="size-3.5" />Kapak yap
-                    </Button>
-                  )
-                )}
-                <Button size="sm" variant="outline" className="h-7 bg-background/90" onClick={() => { setUrlVal(img); setEditUrl((v) => !v); }}>Değiştir</Button>
-                <Button size="sm" variant="outline" className="h-7 bg-background/90 text-destructive" onClick={() => onUpdate({ imageUrl: '' })}>
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            )}
-          </div>
+    <div className={cn('flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-2 py-1.5', className)}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <ImageSourcePicker
+        articleId={articleId}
+        multiple
+        aiPromptSeed={aiPromptSeed}
+        className="min-w-[240px] flex-1"
+        onPicked={(urls) => onInsert(urls.map(toTag).join(''))}
+      />
+    </div>
+  );
+}
 
-          {/* En-boy + odak araç çubuğu */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">En-boy:</span>
-            {ASPECTS.map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                onClick={() => onUpdate({ imageAspect: val })}
-                className={cn('rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
-                  aspect === val ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent')}
-              >
-                {label}
-              </button>
-            ))}
-            <span className="mx-1 h-4 w-px bg-border" />
-            <span className="text-xs text-muted-foreground">Sığdır:</span>
-            {FITS.map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                onClick={() => onUpdate({ imageFit: val })}
-                className={cn('rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
-                  fit === val ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent')}
-              >
-                {label}
-              </button>
-            ))}
-            <span className="mx-1 h-4 w-px bg-border" />
-            <Button size="sm" variant={focalMode ? 'default' : 'outline'} className="h-7" onClick={() => setFocalMode((v) => !v)}>
-              <Crosshair className="size-3.5" />
-              {focalMode ? `Odak: %${fx},%${fy} — Bitir` : 'Odak Ayarla'}
-            </Button>
-            {(fx !== 50 || fy !== 50) && (
-              <Button size="sm" variant="ghost" className="h-7" onClick={() => onUpdate({ imageFocalX: 50, imageFocalY: 50 })}>Sıfırla</Button>
-            )}
-          </div>
-          {focalMode && (
-            <p className="text-xs text-muted-foreground">Görsele tıklayarak odak noktasını (kırpmada merkez) belirleyin.</p>
-          )}
-        </>
-      ) : (
-        <div className="flex items-center justify-between gap-2 rounded-lg border-2 border-dashed border-border px-3 py-3 text-muted-foreground">
-          <span className="flex items-center gap-2 text-sm"><ImageIcon className="size-4" />{emptyText}</span>
-          <div className="flex gap-1.5">
-            <Button size="sm" variant="outline" className="h-7" onClick={() => { setUrlVal(''); setEditUrl((v) => !v); }}>URL ekle</Button>
-            <Button size="sm" variant="outline" className="h-7" onClick={() => setAiOpen((v) => !v)} disabled={!articleId} title={!articleId ? 'Önce kaydedin' : ''}>
-              <Sparkles className="size-3.5" />AI
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* URL ile değiştir/ekle */}
-      {editUrl && (
-        <div className="flex gap-2">
-          <input
-            value={urlVal}
-            onChange={(e) => setUrlVal(e.target.value)}
-            placeholder="https://… görsel URL'i"
-            className="h-8 flex-1 rounded-lg border border-input bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring/30"
-          />
-          <Button size="sm" className="h-8" onClick={() => { onUpdate({ imageUrl: urlVal.trim() }); setEditUrl(false); }}>Uygula</Button>
-          <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditUrl(false)}>İptal</Button>
-        </div>
-      )}
-
-      {/* AI üret */}
-      {aiOpen && (
-        <div className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-2">
-          <textarea
-            value={aiPrompt}
-            onChange={(e) => setAiPrompt(e.target.value)}
-            rows={2}
-            placeholder="AI görsel istemi — örn. yapay zeka temalı modern haber görseli"
-            className="w-full resize-none rounded-lg border border-input bg-background px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/30"
-          />
-          <div className="flex gap-2">
-            <Button size="sm" className="h-7" onClick={genAi} disabled={genImaging || !aiPrompt.trim()}>
-              {genImaging ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-              {genImaging ? 'Üretiliyor…' : 'Üret'}
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7" onClick={() => setAiOpen(false)} disabled={genImaging}>Vazgeç</Button>
-          </div>
-        </div>
-      )}
-      {err && <p className="text-xs text-destructive">{err}</p>}
+/* Zengin bölüm gövdesi — kendi textarea ref'ini tutar ki görsel etiketi imlecin
+ * bulunduğu yere girsin (tek ortak ref ile bölümler birbirine karışırdı). */
+function RichSectionBody({ value, onChange, articleId, aiPromptSeed }) {
+  const ref = useRef(null);
+  return (
+    <div className="space-y-2">
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={4}
+        placeholder="Bölüm içeriği (HTML destekli)…"
+        className="w-full rounded-lg border border-input bg-muted/20 px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
+      />
+      <MediaInsertBar
+        format="html"
+        articleId={articleId}
+        aiPromptSeed={aiPromptSeed}
+        label="Bölüm metnine görsel ekle:"
+        onInsert={(txt) => onChange(insertAtCursor(ref, value, txt))}
+      />
     </div>
   );
 }
 
 /* ─── Rich Section Editor ─── */
-function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover }) {
+function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover, aiPromptSeed }) {
   function updateSection(idx, key, val) {
     const next = sections.map((s, i) => (i === idx ? { ...s, [key]: val } : s));
     onChange(next);
@@ -389,6 +263,7 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
             articleId={articleId}
             isCover={idx === coverIdx}
             coverToggle
+            aiPromptSeed={aiPromptSeed}
             onUpdate={(patch) => onChange(sections.map((s, i) => (i === idx ? { ...s, ...patch } : s)))}
             onSetCover={onSetCover}
           />
@@ -415,12 +290,11 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
             </button>
           </div>
           <div className="px-3 pb-3 pt-2">
-            <textarea
+            <RichSectionBody
               value={sec.body}
-              onChange={(e) => updateSection(idx, 'body', e.target.value)}
-              rows={4}
-              placeholder="Bölüm içeriği (HTML destekli)…"
-              className="w-full rounded-lg border border-input bg-muted/20 px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
+              onChange={(val) => updateSection(idx, 'body', val)}
+              articleId={articleId}
+              aiPromptSeed={aiPromptSeed}
             />
           </div>
         </div>
@@ -434,14 +308,40 @@ function RichSectionEditor({ sections, onChange, articleId, coverUrl, onSetCover
 }
 
 /* ─── page ─── */
-export default function NewsDetailPage({ params }) {
+const TAB_KEYS = ['content', 'social'];
+const DEFAULT_TAB = 'content';
+
+function NewsDetailPageInner({ params }) {
   const { id } = use(params);
   const isNew = id === 'new';
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
   const { data: doc, isLoading, error } = useGetNewsQuery(id, { skip: isNew || !authorized });
+  const { data: newsList } = useGetNewsListQuery(
+    {
+      countryCode: doc?.countryCode || DEFAULT_COUNTRY,
+      sort: 'updatedAt',
+      order: 'desc',
+      limit: 1000,
+      skip: 0,
+    },
+    { skip: isNew || !authorized || !doc },
+  );
+  const newsNavigation = useMemo(() => {
+    const items = newsList?.items ?? [];
+    const currentIndex = items.findIndex((item) => String(item._id ?? item.id) === String(id));
+
+    if (currentIndex < 0) return { previous: null, next: null };
+
+    return {
+      previous: items[currentIndex - 1] ?? null,
+      next: items[currentIndex + 1] ?? null,
+    };
+  }, [id, newsList]);
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
   const { data: tree = [] } = useGetCategoryTreeQuery({ countryCode: country }, { skip: !authorized });
   const categories = useMemo(() => flattenTree(tree), [tree]);
@@ -470,7 +370,12 @@ export default function NewsDetailPage({ params }) {
   const [coverAspect, setCoverAspect] = useState('16/9');
   const [coverFit, setCoverFit] = useState('cover');
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [activeTab, setActiveTab] = useState('content'); // content | social
+  // Aktif sekme URL'de tutulur: ?tab=<key> (content | social). Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const activeTab = TAB_KEYS.includes(tabParam) ? tabParam : DEFAULT_TAB;
+  const setActiveTab = (key) => {
+    router.replace(key === DEFAULT_TAB ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
   const [saveError, setSaveError] = useState('');
 
   const htmlTextareaRef = useRef(null);
@@ -728,6 +633,7 @@ export default function NewsDetailPage({ params }) {
             articleId={isNew ? null : id}
             coverUrl={coverImageUrl}
             onSetCover={handleSetCover}
+            aiPromptSeed={meta.title}
           />
         );
       case 'sections': {
@@ -742,6 +648,7 @@ export default function NewsDetailPage({ params }) {
                   articleId={isNew ? null : id}
                   isCover={idx === sectionsCoverIdx}
                   coverToggle
+                  aiPromptSeed={meta.title}
                   onUpdate={(patch) =>
                     setSections((s) => s.map((x, i) => i === idx ? { ...x, ...patch } : x))
                   }
@@ -798,6 +705,13 @@ export default function NewsDetailPage({ params }) {
                 placeholder="<h2>Başlık</h2><p>İçerik buraya...</p>"
                 className="w-full rounded-b-lg rounded-t-none border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
               />
+              <MediaInsertBar
+                format="html"
+                articleId={isNew ? null : id}
+                aiPromptSeed={meta.title}
+                className="mt-2"
+                onInsert={(txt) => setHtmlContent((c) => insertAtCursor(htmlTextareaRef, c, txt))}
+              />
             </div>
             <div>
               <div className="mb-1 text-2sm font-medium text-muted-foreground">Önizleme</div>
@@ -821,6 +735,13 @@ export default function NewsDetailPage({ params }) {
                 rows={16}
                 placeholder="## Başlık&#10;&#10;İçerik buraya..."
                 className="w-full rounded-b-lg rounded-t-none border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y placeholder:text-muted-foreground"
+              />
+              <MediaInsertBar
+                format="markdown"
+                articleId={isNew ? null : id}
+                aiPromptSeed={meta.title}
+                className="mt-2"
+                onInsert={(txt) => setMdContent((c) => insertAtCursor(mdTextareaRef, c, txt))}
               />
             </div>
             <div>
@@ -851,6 +772,36 @@ export default function NewsDetailPage({ params }) {
         title={isNew ? 'Yeni Haber Oluştur' : 'Haberi Düzenle'}
         actions={
           <div className="flex items-center gap-2">
+            {!isNew && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Önceki haber"
+                  title="Önceki haber"
+                  disabled={!newsNavigation.previous}
+                  onClick={() => {
+                    const target = newsNavigation.previous;
+                    if (target) router.push(`/cms/content/news/${target._id ?? target.id}`);
+                  }}
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Sonraki haber"
+                  title="Sonraki haber"
+                  disabled={!newsNavigation.next}
+                  onClick={() => {
+                    const target = newsNavigation.next;
+                    if (target) router.push(`/cms/content/news/${target._id ?? target.id}`);
+                  }}
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            )}
             <Badge variant={statusMeta[status]?.variant}>{statusMeta[status]?.label}</Badge>
             {publicUrl && (
               <a href={publicUrl} target="_blank" rel="noreferrer">
@@ -1013,9 +964,10 @@ export default function NewsDetailPage({ params }) {
                     section={coverSection}
                     articleId={isNew ? null : id}
                     isCover
+                    aiPromptSeed={meta.title}
                     onUpdate={updateCover}
                     onSetCover={() => {}}
-                    emptyText="Henüz kapak görseli eklenmedi — URL ekleyin veya AI ile üretin"
+                    emptyText="Henüz kapak görseli yok — sürükleyip bırakın, cihazdan yükleyin, URL verin veya AI ile üretin"
                   />
                 </CardContent>
               </Card>
@@ -1024,7 +976,12 @@ export default function NewsDetailPage({ params }) {
                   <CardTitle>{contentTypeMeta[meta.contentType]?.label ?? 'İçerik'} Editörü</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ContentEditor />
+                  {/* Bileşen olarak DEĞİL, fonksiyon çağrısı olarak render edilir:
+                      ContentEditor her render'da yeniden tanımlandığı için
+                      <ContentEditor /> React'e her seferinde YENİ bir tip gösterir
+                      ve alt ağacı unmount/remount eder — yazarken textarea odağı
+                      ve görsel seçicinin açık paneli kaybolurdu. */}
+                  {ContentEditor()}
                 </CardContent>
               </Card>
             </div>
@@ -1148,5 +1105,14 @@ export default function NewsDetailPage({ params }) {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function NewsDetailPage({ params }) {
+  return (
+    <Suspense fallback={null}>
+      <NewsDetailPageInner params={params} />
+    </Suspense>
   );
 }

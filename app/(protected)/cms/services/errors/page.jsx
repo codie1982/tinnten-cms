@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import {
   RefreshCw, X, Inbox, AlertTriangle, CheckCircle2, EyeOff, RotateCcw, User as UserIcon,
+  ShieldOff, History,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -37,6 +38,7 @@ const STATUS_META = {
   unresolved: { label: 'Açık', variant: 'warning' },
   resolved: { label: 'Çözüldü', variant: 'success' },
   ignored: { label: 'Yoksayıldı', variant: 'muted' },
+  false_positive: { label: 'Hatalı Pozitif', variant: 'outline' },
 };
 const PAGE_SIZE = 25;
 
@@ -45,6 +47,19 @@ function formatTr(input) {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return '—';
   return `${d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+/** "3 gün 4 saat" — kapanış ile nüks arası sessizlik süresi. */
+function formatQuiet(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const min = Math.floor(n / 60000);
+  if (min < 60) return `${min} dakika`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `${hours} saat`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return restHours ? `${days} gün ${restHours} saat` : `${days} gün`;
 }
 
 function userLabel(u) {
@@ -60,21 +75,33 @@ function StatCards({ authorized }) {
   });
   const issues = data?.issues || {};
   const events = data?.events || {};
+  const regressions = data?.regressions || {};
 
-  const stat = (label, value, tone) => (
+  const stat = (label, value, tone, hint) => (
     <Card><CardContent className="p-4">
       <p className="text-2sm text-muted-foreground">{label}</p>
       <p className={cn('mt-1 text-2xl font-bold tabular-nums', tone)}>
         {isFetching && data == null ? '…' : value ?? 0}
       </p>
+      {hint && <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p>}
     </CardContent></Card>
   );
 
   return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
       {stat('Açık Issue', issues.unresolved, (issues.unresolved ?? 0) > 0 ? 'text-amber-600' : undefined)}
       {stat('Çözüldü', issues.resolved, 'text-green-600')}
       {stat('Yoksayıldı', issues.ignored, 'text-muted-foreground')}
+      {stat('Hatalı Pozitif', issues.false_positive, 'text-muted-foreground')}
+      {/* Kapatıp geri gelen issue'lar — düzeltmenin tutmadığının tek göstergesi. */}
+      {stat(
+        'Nükseden',
+        regressions.issues,
+        (regressions.issues ?? 0) > 0 ? 'text-destructive' : undefined,
+        (regressions.issues ?? 0) > 0
+          ? `${regressions.occurrences ?? 0} nüks · son ${formatTr(regressions.lastRegressedAt)}`
+          : null,
+      )}
       {stat('Son 24s Olay', events.last24h, (events.last24h ?? 0) > 0 ? 'text-destructive' : undefined)}
     </div>
   );
@@ -84,6 +111,7 @@ function StatCards({ authorized }) {
 function IssuesSection({ authorized }) {
   const [status, setStatus] = useState('unresolved');
   const [level, setLevel] = useState('all');
+  const [regressed, setRegressed] = useState('all');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [detailFp, setDetailFp] = useState(null);
@@ -93,6 +121,10 @@ function IssuesSection({ authorized }) {
     limit: PAGE_SIZE,
     status: status === 'all' ? undefined : status,
     level: level === 'all' ? undefined : level,
+    // Nüks, durumdan bağımsız bir eksen: nükseden issue yeniden "açık" olur,
+    // ama onu yeni gelen bir hatadan ayıran şey geçmişte kapatılmış olmasıdır.
+    regressed: regressed === 'only' ? 1 : undefined,
+    sort: regressed === 'only' ? 'lastRegressedAt' : undefined,
     q: q.trim() || undefined,
   };
   const { data, isFetching, isError, refetch } = useGetErrorIssuesQuery(params, { skip: !authorized });
@@ -114,6 +146,7 @@ function IssuesSection({ authorized }) {
               <SelectItem value="unresolved">Açık</SelectItem>
               <SelectItem value="resolved">Çözüldü</SelectItem>
               <SelectItem value="ignored">Yoksayıldı</SelectItem>
+              <SelectItem value="false_positive">Hatalı Pozitif</SelectItem>
             </SelectContent>
           </Select>
           <Select value={level} onValueChange={resetPageAnd(setLevel)}>
@@ -124,6 +157,13 @@ function IssuesSection({ authorized }) {
               <SelectItem value="error">Error</SelectItem>
               <SelectItem value="warning">Warning</SelectItem>
               <SelectItem value="info">Info</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={regressed} onValueChange={resetPageAnd(setRegressed)}>
+            <SelectTrigger className="w-[170px]"><SelectValue placeholder="Nüks" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Nüks: Hepsi</SelectItem>
+              <SelectItem value="only">Yalnız Nüksedenler</SelectItem>
             </SelectContent>
           </Select>
           <Input
@@ -171,7 +211,16 @@ function IssuesSection({ authorized }) {
                     return (
                       <TableRow key={it.fingerprint} className="cursor-pointer" onClick={() => setDetailFp(it.fingerprint)}>
                         <TableCell className="max-w-[360px]">
-                          <div className="truncate font-medium text-foreground">{it.title || '—'}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="truncate font-medium text-foreground">{it.title || '—'}</span>
+                            {/* Kapatılıp geri gelmiş: listede yeni hatadan ayırt edilebilsin. */}
+                            {(it.regressionCount ?? 0) > 0 && (
+                              <Badge variant="destructive" className="shrink-0 gap-1">
+                                <History className="size-3" />
+                                {it.regressionCount}× nüks
+                              </Badge>
+                            )}
+                          </div>
                           {it.culprit && <div className="truncate font-mono text-xs text-muted-foreground">{it.culprit}</div>}
                         </TableCell>
                         <TableCell><Badge variant={lm.variant}>{lm.label}</Badge></TableCell>
@@ -204,11 +253,53 @@ function IssuesSection({ authorized }) {
   );
 }
 
+/* ════════════ Nüks geçmişi ════════════
+ * "Bu hata daha önce kapatılmıştı ve geri geldi" — düzeltmenin tutmadığını
+ * gösteren tek kanıt. Her kayıt kapanışın ne zaman/hangi durumla/kim tarafından
+ * yapıldığını ve arada ne kadar sessizlik olduğunu taşır.
+ */
+function RegressionHistory({ issue }) {
+  const records = issue?.regressions || [];
+  if (!records.length) return null;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+      <p className="flex items-center gap-1.5 text-2sm font-medium text-foreground">
+        <History className="size-3.5 text-destructive" />
+        Nüks geçmişi ({issue.regressionCount ?? records.length}×)
+      </p>
+      <ul className="space-y-1.5 text-xs text-muted-foreground">
+        {/* En yeni nüks başta — son durum önce okunsun. */}
+        {[...records].reverse().map((r, i) => {
+          const quiet = formatQuiet(r.quietMs);
+          const closedLabel = STATUS_META[r.closedStatus]?.label || r.closedStatus || 'kapalı';
+          return (
+            <li key={`${r.regressedAt}-${i}`} className="leading-relaxed">
+              <span className="font-medium text-foreground">{formatTr(r.regressedAt)}</span>
+              {' tarihinde yeniden ortaya çıktı — '}
+              {r.closedAt
+                ? <>{formatTr(r.closedAt)} tarihinde <span className="font-medium">“{closedLabel}”</span> olarak kapatılmıştı</>
+                : <>daha önce <span className="font-medium">“{closedLabel}”</span> olarak kapatılmıştı</>}
+              {quiet && ` (${quiet} sessiz kaldı)`}
+              {r.closedBy && ` · kapatan: ${r.closedBy}`}
+              {r.eventCountAtClose > 0 && ` · kapanışta ${r.eventCountAtClose} olay`}
+              {r.closedNote && (
+                <div className="mt-0.5 italic text-foreground/80">Gerekçe: {r.closedNote}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /* ════════════ Issue detayı (modal) ════════════ */
 function IssueDetail({ fingerprint, onClose }) {
   const { data, isFetching } = useGetErrorIssueDetailQuery(fingerprint);
   const [updateIssue, { isLoading: updating }] = useUpdateErrorIssueMutation();
   const [notice, setNotice] = useState(null);
+  const [note, setNote] = useState('');
   const issue = data?.issue;
   const events = data?.events || [];
 
@@ -216,7 +307,13 @@ function IssueDetail({ fingerprint, onClose }) {
     setNotice(null);
 
     try {
-      const result = await updateIssue({ fingerprint, status }).unwrap();
+      // Boş bırakılırsa `note` hiç gönderilmez → backend eski gerekçeyi korur.
+      const trimmed = note.trim();
+      const result = await updateIssue({
+        fingerprint,
+        status,
+        ...(trimmed ? { note: trimmed } : {}),
+      }).unwrap();
       const notification = result?.data?.notification;
 
       if (status !== 'resolved') {
@@ -288,6 +385,9 @@ function IssueDetail({ fingerprint, onClose }) {
                   <Button size="sm" variant="outline" disabled={updating || issue.status === 'ignored'} onClick={() => setStatus('ignored')}>
                     <EyeOff className="size-3.5" /> Yoksay
                   </Button>
+                  <Button size="sm" variant="outline" disabled={updating || issue.status === 'false_positive'} onClick={() => setStatus('false_positive')}>
+                    <ShieldOff className="size-3.5" /> Hatalı Pozitif
+                  </Button>
                   <Button size="sm" variant="outline" disabled={updating || issue.status === 'unresolved'} onClick={() => setStatus('unresolved')}>
                     <RotateCcw className="size-3.5" /> Yeniden Aç
                   </Button>
@@ -306,6 +406,23 @@ function IssueDetail({ fingerprint, onClose }) {
                 <div className="flex items-center gap-1"><UserIcon className="size-3" /> {userLabel(issue.lastUser)}</div>
                 <div className="truncate font-mono">{fingerprint}</div>
               </div>
+
+              {/* Kapatma gerekçesi — durumun kendisi "neden"i taşımaz. */}
+              <div className="space-y-1.5">
+                <Input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  maxLength={500}
+                  placeholder={issue.triageNote || 'Kapatma gerekçesi (opsiyonel) — nüks ettiğinde bu not geçmişte görünür'}
+                />
+                {issue.triageNote && (
+                  <p className="text-xs text-muted-foreground">
+                    Mevcut gerekçe: <span className="text-foreground">{issue.triageNote}</span>
+                  </p>
+                )}
+              </div>
+
+              <RegressionHistory issue={issue} />
 
               {/* Son olaylar */}
               <div className="space-y-2">

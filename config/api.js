@@ -190,6 +190,15 @@ export const ENDPOINTS = {
     update: (id) => `/faq/cms/${id}`,
     remove: (id) => `/faq/cms/${id}`,
   },
+  tutorialVideos: {
+    cmsList: '/tutorial-videos/cms',
+    cmsDetail: (id) => `/tutorial-videos/cms/${id}`,
+    create: '/tutorial-videos/cms',
+    update: (id) => `/tutorial-videos/cms/${id}`,
+    remove: (id) => `/tutorial-videos/cms/${id}`,
+    upload: (id) => `/tutorial-videos/cms/${id}/assets`,
+    reconcileAssets: (id) => `/tutorial-videos/cms/${id}/reconcile-assets`,
+  },
   companies: {
     list: '/company/cms/list',
     detail: (id) => `/company/cms/${id}`,
@@ -197,6 +206,7 @@ export const ENDPOINTS = {
     usage: (id) => `/company/cms/${id}/usage`,
     usageReset: (id) => `/company/cms/${id}/usage/reset`,
     adminActive: (id) => `/company/cms/${id}/admin-active`,
+    poc: (id) => `/company/cms/${id}/poc`,
     owner: (id) => `/company/cms/${id}/owner`,
     packages: (id) => `/company/cms/${id}/packages`,
     update: (id) => `/companies/${id}`,
@@ -288,8 +298,28 @@ export const ENDPOINTS = {
     campaigns: '/email/campaigns',
     campaign: (id) => `/email/campaigns/${id}`,
     campaignSend: (id) => `/email/campaigns/${id}/send`,
+    // Kısmi (test) yayının kalanı: kampanyayı henüz almamış alıcılara yeni parti.
+    campaignContinue: (id) => `/email/campaigns/${id}/continue`,
+    // Zamanlanmış yayın + yayılma (drip) + duraklat/sürdür + önizleme
+    campaignSchedule: (id) => `/email/campaigns/${id}/schedule`,
+    campaignUnschedule: (id) => `/email/campaigns/${id}/unschedule`,
+    // Tekrarlı yayın: koşu başlarken zincirin sonraki halkası otomatik üretilir.
+    campaignRecurrence: (id) => `/email/campaigns/${id}/recurrence`,
+    campaignSeries: (id) => `/email/campaigns/${id}/series`,
+    campaignPause: (id) => `/email/campaigns/${id}/pause`,
+    campaignResume: (id) => `/email/campaigns/${id}/resume`,
+    campaignMergePreview: '/email/campaigns/merge-preview',
+    campaignMerge: '/email/campaigns/merge',
+    // Kampanya kitle tükenmeden KENDİLİĞİNDEN kapanmaz; yarım kalan bir yayını
+    // "bitti" saymanın tek yolu budur. Kalan kişi sayısı kayda yazılır.
+    campaignFinish: (id) => `/email/campaigns/${id}/finish`,
+    // Yıkıcı: gönderim izlerini siler → aynı kişilere yeniden gidebilir.
+    campaignRestart: (id) => `/email/campaigns/${id}/restart`,
+    campaignPreview: (id) => `/email/campaigns/${id}/preview`,
     campaignStats: (id) => `/email/campaigns/${id}/stats`,
     campaignRecipients: (id) => `/email/campaigns/${id}/recipients`,
+    campaignSkipRecipient: (id) => `/email/campaigns/${id}/recipients/skip`,
+    campaignSuppressRecipient: (id) => `/email/campaigns/${id}/recipients/suppress`,
     campaignTimeseries: (id) => `/email/campaigns/${id}/timeseries`,
     // Yardımcı
     mergeVariables: '/email/merge-variables',
@@ -304,6 +334,9 @@ export const ENDPOINTS = {
     cronListRun: (id) => `/email/cron-lists/${id}/run-now`,
     cronListPreview: '/email/cron-lists/preview',
     cronListSchema: '/email/cron-lists/schema',
+    // Yazmasız test: kimlerin geleceğini + elenme nedenlerini döndürür.
+    cronListDryRun: '/email/cron-lists/dry-run',
+    cronListDryRunById: (id) => `/email/cron-lists/${id}/dry-run`,
   },
   emailTemplates: {
     cmsList: '/email-templates/cms',
@@ -319,11 +352,13 @@ export const ENDPOINTS = {
     cmsStats: '/mail-list/cms/stats',
     cmsDetail: '/mail-list/cms/detail',
     cmsSuppressions: '/mail-list/cms/suppressions',
+    cmsSuppressionStats: '/mail-list/cms/suppressions/stats',
     cmsSuppressionRelease: '/mail-list/cms/suppressions/release',
   },
   files: {
     cmsStats: '/files/cms/stats',
     cmsList: '/files/cms/list',
+    cmsContent: (id) => `/files/cms/${id}/content`,
   },
   monitoring: {
     cmsHost: '/monitoring/cms/host',

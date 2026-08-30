@@ -47,11 +47,36 @@ export const cronListApi = baseApi.injectEndpoints({
     runCronList: build.mutation({
       query: (id) => ({ url: ENDPOINTS.email.cronListRun(id), method: 'POST' }),
       transformResponse: (res) => res?.data ?? res,
-      invalidatesTags: (r, e, id) => [{ type: 'CronList', id }],
+      // Tabloyu `getCronLists` besler ve o yalnız `id:'LIST'` tag'i sağlar; burada
+      // sadece `{id}` invalidate edildiği için ▶ sonrası satır HİÇ tazelenmiyordu
+      // → "Son üretim"/`lastError` sütunu eski kalıyor, başarısız build sessiz
+      // görünüyordu. Build fire-and-forget olduğundan sonucun görünmesi için
+      // birkaç saniye sonra tabloyu yenilemek gerekebilir.
+      invalidatesTags: (r, e, id) => [
+        { type: 'CronList', id },
+        { type: 'CronList', id: 'LIST' },
+        { type: 'MailChannel', id: 'LIST' },
+      ],
     }),
     previewCronList: build.mutation({
       query: (body) => ({ url: ENDPOINTS.email.cronListPreview, method: 'POST', body }),
       transformResponse: (res) => res?.data ?? res, // { count, capped }
+    }),
+    /**
+     * Yazmasız test. `{ id }` → kayıtlı reçete; onun dışındaki gövde → formdaki
+     * kaydedilmemiş taslak. Liste OLUŞTURMAZ, bu yüzden hiçbir tag invalidate
+     * edilmez (aksi halde tablo boşuna yeniden çekilir).
+     */
+    dryRunCronList: build.mutation({
+      // `cap` (tarama tavanı) QUERY STRING'e gider — backend onu req.query'den
+      // okur, gövdeden değil. Gövdede kalırsa sessizce yok sayılır.
+      query: ({ id, cap, ...body } = {}) => ({
+        url: id ? ENDPOINTS.email.cronListDryRunById(id) : ENDPOINTS.email.cronListDryRun,
+        method: 'POST',
+        body: id ? {} : body,
+        ...(cap ? { params: { cap } } : {}),
+      }),
+      transformResponse: (res) => res?.data ?? res,
     }),
   }),
   overrideExisting: false,
@@ -66,4 +91,5 @@ export const {
   useDeleteCronListMutation,
   useRunCronListMutation,
   usePreviewCronListMutation,
+  useDryRunCronListMutation,
 } = cronListApi;

@@ -109,6 +109,34 @@ export const emailApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // full mail_list doc
       providesTags: (r, e, email) => [{ type: 'MailSubscriber', id: email }],
     }),
+    getCmsSuppressions: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.mailList.cmsSuppressions, params }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: [{ type: 'MailSubscriber', id: 'SUPPRESSIONS' }],
+    }),
+    getCmsSuppressionStats: build.query({
+      query: () => ENDPOINTS.mailList.cmsSuppressionStats,
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: [{ type: 'MailSubscriber', id: 'SUPPRESSION_STATS' }],
+    }),
+    addCmsSuppression: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.mailList.cmsSuppressions, method: 'POST', body }),
+      invalidatesTags: [
+        { type: 'MailSubscriber', id: 'LIST' },
+        { type: 'MailSubscriber', id: 'STATS' },
+        { type: 'MailSubscriber', id: 'SUPPRESSIONS' },
+        { type: 'MailSubscriber', id: 'SUPPRESSION_STATS' },
+      ],
+    }),
+    releaseCmsSuppression: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.mailList.cmsSuppressionRelease, method: 'POST', body }),
+      invalidatesTags: [
+        { type: 'MailSubscriber', id: 'LIST' },
+        { type: 'MailSubscriber', id: 'STATS' },
+        { type: 'MailSubscriber', id: 'SUPPRESSIONS' },
+        { type: 'MailSubscriber', id: 'SUPPRESSION_STATS' },
+      ],
+    }),
   }),
   overrideExisting: false,
 });
@@ -130,4 +158,8 @@ export const {
   useGetCmsSubscribersQuery,
   useGetCmsSubscriptionStatsQuery,
   useGetCmsSubscriberQuery,
+  useGetCmsSuppressionsQuery,
+  useGetCmsSuppressionStatsQuery,
+  useAddCmsSuppressionMutation,
+  useReleaseCmsSuppressionMutation,
 } = emailApi;

@@ -49,6 +49,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import CompanySelect, { shortId } from '@/components/cms/company-select';
+import { AssistantHealthCell } from '@/components/cms/assistant-health';
+import { HEALTH_LEVEL_OPTIONS } from '@/lib/assistant-health';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetAssistantsQuery,
@@ -83,6 +85,7 @@ export default function AssistantsPage() {
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
   const [assigned, setAssigned] = useState(''); // '' | 'assigned' | 'unassigned'
+  const [health, setHealth] = useState(''); // '' | 'critical' | 'weak' | 'fair' | 'good'
   const [page, setPage] = useState(1);
   const [notice, setNotice] = useState(null); // { type: 'success'|'error', text }
 
@@ -90,7 +93,7 @@ export default function AssistantsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [submittedSearch, assigned]);
+  }, [submittedSearch, assigned, health]);
 
   const applySearch = () => setSubmittedSearch(search.trim());
 
@@ -98,6 +101,7 @@ export default function AssistantsPage() {
     {
       query: submittedSearch || undefined,
       assigned: assigned || undefined,
+      health: health || undefined,
       page,
       limit: PAGE_SIZE,
     },
@@ -108,6 +112,10 @@ export default function AssistantsPage() {
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
   const isEmpty = !isLoading && !error && assistants.length === 0;
+  // Sağlık puanı veritabanında tutulmuyor; filtre açıkken backend sınırlı sayıda
+  // asistanı tarayıp bellekte süzüyor. Sınıra takıldıysa bunu SÖYLE — sessiz
+  // kırpma "listede bu kadar var" diye okunur.
+  const healthScanTruncated = data?.healthScanTruncated === true;
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ACCESS]}>
@@ -158,12 +166,34 @@ export default function AssistantsPage() {
               <SelectItem value="assigned">Firmaya atanmış</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={health} onValueChange={setHealth} className="w-[190px]">
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Tüm sağlık durumları</SelectItem>
+              {HEALTH_LEVEL_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  Sağlık: {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" onClick={applySearch} disabled={isFetching}>
             <Search className="size-4" />
             Ara
           </Button>
         </CardContent>
       </Card>
+
+      {healthScanTruncated && (
+        <Alert variant="warning" className="mb-5">
+          <AlertDescription>
+            Sağlık filtresi ilk {data?.healthScanLimit ?? 0} asistan üzerinde
+            uygulandı — daha eski kayıtlar bu sonuçlara dahil değil.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
@@ -197,9 +227,11 @@ export default function AssistantsPage() {
               <Search className="size-6 text-muted-foreground" />
               <p className="font-semibold text-foreground">Asistan bulunamadı</p>
               <p className="text-sm text-muted-foreground">
-                {assigned === 'unassigned'
-                  ? 'Firmaya atanmamış asistan bulunmuyor.'
-                  : 'Kayıtlı asistan bulunmuyor.'}
+                {health
+                  ? 'Bu sağlık durumunda asistan bulunmuyor.'
+                  : assigned === 'unassigned'
+                    ? 'Firmaya atanmamış asistan bulunmuyor.'
+                    : 'Kayıtlı asistan bulunmuyor.'}
               </p>
             </div>
           ) : (
@@ -212,6 +244,7 @@ export default function AssistantsPage() {
                       <TableHead>Slug</TableHead>
                       <TableHead>Firma</TableHead>
                       <TableHead>Durum</TableHead>
+                      <TableHead>Sağlık</TableHead>
                       <TableHead>Güncellenme</TableHead>
                       {canManage && <TableHead className="text-end">İşlem</TableHead>}
                     </TableRow>
@@ -253,6 +286,9 @@ export default function AssistantsPage() {
                           </TableCell>
                           <TableCell>
                             <Badge variant={s.variant}>{s.label}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <AssistantHealthCell health={a.health} />
                           </TableCell>
                           <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                             {formatTrDate(a.updatedAt)}

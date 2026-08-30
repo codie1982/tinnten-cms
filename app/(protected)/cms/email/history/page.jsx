@@ -20,6 +20,17 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { useGetSentMailsQuery, useGetSentMailQuery } from '@/redux/services';
 
 const PAGE_SIZE = 20;
+const MAIL_STATUS_META = {
+  sent: { label: 'Gönderildi', variant: 'success' },
+  failed: { label: 'Başarısız', variant: 'destructive' },
+  queued: { label: 'Kuyrukta', variant: 'warning' },
+  skipped: { label: 'Atlandı', variant: 'secondary' },
+};
+
+function MailStatusBadge({ status }) {
+  const meta = MAIL_STATUS_META[status] || { label: status || 'Bilinmiyor', variant: 'muted' };
+  return <Badge variant={meta.variant}>{meta.label}</Badge>;
+}
 
 function formatTrDateTime(input) {
   if (!input) return '—';
@@ -77,7 +88,9 @@ export default function SentMailsPage() {
               <SelectContent>
                 <SelectItem value="all">Tüm Durumlar</SelectItem>
                 <SelectItem value="sent">Gönderildi</SelectItem>
+                <SelectItem value="queued">Kuyrukta</SelectItem>
                 <SelectItem value="failed">Başarısız</SelectItem>
+                <SelectItem value="skipped">Atlandı</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -127,7 +140,7 @@ export default function SentMailsPage() {
                         <TableCell className="max-w-xs truncate text-sm text-muted-foreground">{m.subject}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{m.emailType || '—'}</TableCell>
                         <TableCell>
-                          {m.status === 'sent' ? <Badge variant="success">Gönderildi</Badge> : <Badge variant="destructive">Başarısız</Badge>}
+                          <MailStatusBadge status={m.status} />
                         </TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTrDateTime(m.createdAt)}</TableCell>
                       </TableRow>
@@ -167,12 +180,24 @@ export default function SentMailsPage() {
                     <div><span className="text-muted-foreground">Alıcı: </span>{detail.to}</div>
                     <div className="sm:col-span-2"><span className="text-muted-foreground">Konu: </span>{detail.subject}</div>
                     <div><span className="text-muted-foreground">Tür: </span>{detail.emailType || '—'}</div>
-                    <div><span className="text-muted-foreground">Durum: </span>{detail.status}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Durum: </span>
+                      <MailStatusBadge status={detail.status} />
+                    </div>
                   </div>
                   {detail.error && <Alert variant="destructive"><AlertDescription>{detail.error}</AlertDescription></Alert>}
-                  <div className="rounded-lg border border-border">
-                    <iframe title="mail" srcDoc={detail.text || ''} className="h-80 w-full rounded-lg bg-white" sandbox="" />
-                  </div>
+                  {detail.status === 'queued' ? (
+                    <Alert variant="info">
+                      <AlertTitle>Henüz gönderilmedi</AlertTitle>
+                      <AlertDescription>
+                        Bu kayıt kampanya kuyruğunda oluşturuldu. Worker işlediğinde gerçek konu ve mail içeriği burada görünecek.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <div className="rounded-lg border border-border">
+                      <iframe title="mail" srcDoc={detail.text || ''} className="h-80 w-full rounded-lg bg-white" sandbox="" />
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">Detay bulunamadı.</p>

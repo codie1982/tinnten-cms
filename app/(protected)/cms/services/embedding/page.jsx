@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Activity, Building2, FileStack, Search } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
@@ -20,10 +21,20 @@ const SECTIONS = [
   { key: 'search', label: 'Arama Testi', icon: Search, desc: 'Semantik vektör arama' },
 ];
 
-export default function EmbeddingServicePage() {
+const DEFAULT_SECTION = 'status';
+
+function EmbeddingServicePageInner() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
-  const [section, setSection] = useState('status');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Aktif sekme URL'de tutulur: ?tab=<key>. Geçersiz/eksik → varsayılan (temiz URL).
+  const tabParam = searchParams.get('tab');
+  const section = SECTIONS.some((s) => s.key === tabParam) ? tabParam : DEFAULT_SECTION;
+  const setSection = (key) => {
+    router.replace(key === DEFAULT_SECTION ? pathname : `${pathname}?tab=${key}`, { scroll: false });
+  };
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -66,5 +77,14 @@ export default function EmbeddingServicePage() {
         </div>
       </div>
     </RoleGuard>
+  );
+}
+
+// useSearchParams (App Router) Suspense sınırı gerektirir.
+export default function EmbeddingServicePage() {
+  return (
+    <Suspense fallback={null}>
+      <EmbeddingServicePageInner />
+    </Suspense>
   );
 }

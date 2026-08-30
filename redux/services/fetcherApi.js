@@ -172,9 +172,28 @@ export const fetcherApi = baseApi.injectEndpoints({
       // Fetcher artık domaini anında REMOVED işaretleyip 202 dönüyor; ağır
       // cascade arka planda koşuyor. Sonuç domain kaydındaki `deletion`
       // alanından izlenir ({ state: 'running'|'failed', error }).
-      query: (domain) => ({ url: ENDPOINTS.fetcher.domain(domain), method: 'DELETE' }),
+      //
+      // cascadeSubscribers: abone firma varsa fetcher normalde 409
+      // `domain_has_subscribers` ile durur (yetim embedding koruması). Bayrak
+      // açıkken abonelikler de bu silmenin parçasıdır: her biri kendi teardown'ı
+      // (embedding index remove → owner detach → removed) ile düşürülür ve
+      // ancak ondan sonra domain kalıcı silinir.
+      //
+      // İmza objeye taşındı; çıplak string çağrı geriye-uyum için korunuyor.
+      query: (arg) => {
+        const { domain, cascadeSubscribers } =
+          typeof arg === 'string' ? { domain: arg } : (arg || {});
+        return {
+          url: ENDPOINTS.fetcher.domain(domain),
+          method: 'DELETE',
+          params: cascadeSubscribers ? { cascadeSubscribers: 1 } : undefined,
+        };
+      },
       transformResponse: (res) => res?.data ?? res, // { status: 'deleting'|'detached', domain, message }
-      invalidatesTags: (r, e, domain) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }],
+      invalidatesTags: (r, e, arg) => {
+        const domain = typeof arg === 'string' ? arg : arg?.domain;
+        return [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }];
+      },
     }),
     verifyFetcherDomain: build.mutation({
       query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainVerification(domain), method: 'PATCH', body }), // { isVerified, verifiedBy?, note? }

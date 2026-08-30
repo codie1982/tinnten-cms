@@ -14,6 +14,8 @@ import {
   X,
   Loader2,
   CheckCircle2,
+  Check,
+  Copy,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -54,6 +56,7 @@ import {
   useGetCategoryTreeQuery,
   useGenerateNewsMutation,
   useGetNewsJobQuery,
+  useDeleteNewsMutation,
 } from '@/redux/services';
 import { cn } from '@/lib/utils';
 import { NEWS_COUNTRIES, DEFAULT_NEWS_COUNTRY } from '@/config/api';
@@ -229,6 +232,23 @@ const AI_CONTENT_TYPES = [
   { value: 'markdown', label: 'Markdown' },
 ];
 
+/* Toplu / JSON modunda gösterilen örnek format */
+const BATCH_EXAMPLE_JSON = `[
+  {
+    "topic": "Yapay zeka destekli e-ticaret arama motorları",
+    "direction": "KOBİ'lere odaklan, maliyet karşılaştırması ve örnek senaryo ver",
+    "category": "Teknoloji",
+    "country": "TR",
+    "targetWordCount": 600,
+    "contentType": "richSections"
+  },
+  {
+    "topic": "Black Friday shipping delays 2026",
+    "category": "Business",
+    "country": "US"
+  }
+]`;
+
 function FormatSelect({ value, onChange }) {
   return (
     <div className="space-y-1.5">
@@ -248,6 +268,8 @@ function AIGenerateModal({ onClose }) {
   const [mode, setMode] = useState('topic'); // topic | general
   const [errorMsg, setErrorMsg] = useState('');
   const [jobId, setJobId] = useState(null);
+  const [showExample, setShowExample] = useState(true);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
     topic: '',
     direction: '',
@@ -281,6 +303,22 @@ function AIGenerateModal({ onClose }) {
   function clearCountries() {
     setForm((f) => ({ ...f, countries: [] }));
   }
+
+  async function copyExample() {
+    try {
+      await navigator.clipboard.writeText(BATCH_EXAMPLE_JSON);
+      setCopied(true);
+    } catch {
+      setErrorMsg('Kopyalanamadı. Örneği elle seçip kopyalayabilirsiniz.');
+    }
+  }
+
+  // "Kopyalandı" geri bildirimini kısa süre sonra sıfırla
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
 
   async function handleGenerate() {
     if (!canSubmit) return;
@@ -497,6 +535,43 @@ function AIGenerateModal({ onClose }) {
                     spellCheck={false}
                     className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/30 resize-y"
                   />
+
+                  {/* Örnek format */}
+                  <div className="rounded-lg border border-border">
+                    <div className="flex items-center justify-between gap-2 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowExample((s) => !s)}
+                        className="flex items-center gap-1.5 text-2sm font-medium text-foreground"
+                      >
+                        <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', !showExample && '-rotate-90')} />
+                        Örnek format
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={copyExample}
+                          className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                        >
+                          {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+                          {copied ? 'Kopyalandı' : 'Kopyala'}
+                        </button>
+                        <span className="text-muted-foreground/40">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setForm((f) => ({ ...f, jobsJson: BATCH_EXAMPLE_JSON }))}
+                          className="text-xs font-medium text-primary hover:underline"
+                        >
+                          Örneği kullan
+                        </button>
+                      </div>
+                    </div>
+                    {showExample && (
+                      <pre className="max-h-56 overflow-auto border-t border-border bg-muted/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                        {BATCH_EXAMPLE_JSON}
+                      </pre>
+                    )}
+                  </div>
                 </>
               )}
               {errorMsg && (
@@ -561,6 +636,9 @@ export default function NewsListPage() {
   const [sortValue, setSortValue] = useState('updatedAt:desc');
   const [page, setPage] = useState(1);
   const [showAI, setShowAI] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [actionError, setActionError] = useState('');
+  const [deleteNews] = useDeleteNewsMutation();
 
   // Ülke değişince kategori filtresini sıfırla (kategoriler ülkeye özgü)
   useEffect(() => {
@@ -616,6 +694,27 @@ export default function NewsListPage() {
     setCategoryFilter('all'); setContentTypeFilter('all'); setSortValue('updatedAt:desc');
   };
 
+  async function handleDelete(news) {
+    if (!window.confirm(`“${news.title}” haberini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) return;
+
+    setActionError('');
+    setDeletingId(news.id);
+    try {
+      await deleteNews(news.id).unwrap();
+      // Son satır silindiyse boş bir sayfada kalma.
+      if (filtered.length === 1 && page > 1) setPage((current) => current - 1);
+    } catch (deleteError) {
+      setActionError(
+        deleteError?.data?.message ||
+          deleteError?.normalizedMessage ||
+          deleteError?.error ||
+          'Haber silinemedi.',
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
       {showAI && <AIGenerateModal onClose={() => setShowAI(false)} />}
@@ -639,6 +738,13 @@ export default function NewsListPage() {
           </div>
         }
       />
+
+      {actionError && (
+        <Alert variant="destructive" className="mb-5">
+          <AlertTitle>Haber silinemedi</AlertTitle>
+          <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Toolbar */}
       <Card className="mb-5">
@@ -823,8 +929,20 @@ export default function NewsListPage() {
                           <Link href={`/cms/content/news/${n.id}`}>
                             <Button variant="ghost" size="icon" className="size-7"><Pencil className="size-3.5" /></Button>
                           </Link>
-                          <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive">
-                            <Trash2 className="size-3.5" />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-muted-foreground hover:text-destructive"
+                            disabled={deletingId !== null}
+                            aria-label={`${n.title} haberini sil`}
+                            onClick={() => handleDelete(n)}
+                          >
+                            {deletingId === n.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-3.5" />
+                            )}
                           </Button>
                         </div>
                       </TableCell>
