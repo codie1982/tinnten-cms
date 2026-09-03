@@ -243,14 +243,7 @@ export const ENDPOINTS = {
       `/products/cms/product/${id}/gallery/image/${imageid}`,
     cmsVariants: (id) => `/products/cms/product/${id}/variants`,
   },
-  /**
-   * Ürün kategorileri & kategori attribute'ları.
-   *
-   * CMS admini için ek backend işi GEREKMEZ: /categories/general* uçları tamamen
-   * public, company uçları yalnız `ensureAuth` (üyelik kapısı yok).
-   * DİKKAT: bunlar ürün kategorileri — news-categories ve connector-categories
-   * ayrı kaynaklar.
-   */
+  /** Ürün ve sistem hizmet kategorileri. */
   categories: {
     general: '/categories/general',
     generalSearch: '/categories/general/search',
@@ -260,6 +253,12 @@ export const ENDPOINTS = {
     companyList: (companyid) => `/categories/company/${companyid}`,
     companyCategoryAttributes: (companyid, categoryId) =>
       `/categories/attributes/company/${companyid}/category/${categoryId}`,
+    cmsServices: '/categories/cms/services',
+    cmsService: (id) => `/categories/cms/services/${id}`,
+    cmsServiceProducts: (id) => `/categories/cms/services/${id}/products`,
+    cmsServiceAttributes: (id) => `/categories/cms/services/${id}/attributes`,
+    cmsServiceAttribute: (id, code) =>
+      `/categories/cms/services/${id}/attributes/${encodeURIComponent(code)}`,
   },
   users: {
     list: '/users',

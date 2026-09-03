@@ -6,10 +6,6 @@ import { baseApi } from './baseApi';
 /**
  * Ürün kategorileri & kategori attribute'ları (CMS).
  *
- * CMS admini bu uçları ek backend yetkisi olmadan kullanabilir:
- * /categories/general* tamamen public, /categories/company/* ve
- * /categories/attributes/company/* yalnız `ensureAuth` (üyelik kapısı yok).
- *
  * NEDEN VAR: ürün `categories` alanı backend'de ID olarak çözülüyor
  * (enrichCategoriesWithDetails ObjectId/UUID regex'i uyguluyor,
  * productsController.js:400). CMS'in eski virgüllü serbest-metin alanı
@@ -68,6 +64,84 @@ export const categoriesApi = baseApi.injectEndpoints({
         { type: 'CategoryAttribute', id: categoryId },
       ],
     }),
+    getCmsServiceCategories: build.query({
+      query: (params = {}) => ({
+        url: ENDPOINTS.categories.cmsServices,
+        params,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (result) => [
+        ...(result?.items || []).map((item) => ({
+          type: 'ProductCategory',
+          id: item.id,
+        })),
+        { type: 'ProductCategory', id: 'CMS-SERVICE-LIST' },
+      ],
+    }),
+    createCmsServiceCategory: build.mutation({
+      query: (body) => ({
+        url: ENDPOINTS.categories.cmsServices,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'ProductCategory', id: 'CMS-SERVICE-LIST' }],
+    }),
+    updateCmsServiceCategory: build.mutation({
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.categories.cmsService(id),
+        method: 'PATCH',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'ProductCategory', id },
+        { type: 'ProductCategory', id: 'CMS-SERVICE-LIST' },
+      ],
+    }),
+    deleteCmsServiceCategory: build.mutation({
+      query: (id) => ({
+        url: ENDPOINTS.categories.cmsService(id),
+        method: 'DELETE',
+      }),
+      invalidatesTags: (result, error, id) => [
+        { type: 'ProductCategory', id },
+        { type: 'ProductCategory', id: 'CMS-SERVICE-LIST' },
+      ],
+    }),
+    getCmsServiceCategoryProducts: build.query({
+      query: ({ id, ...params }) => ({
+        url: ENDPOINTS.categories.cmsServiceProducts(id),
+        params,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (result, error, { id }) => [
+        { type: 'ProductCategory', id: `PRODUCTS-${id}` },
+      ],
+    }),
+    addCmsServiceCategoryAttribute: build.mutation({
+      query: ({ id, ...body }) => ({
+        url: ENDPOINTS.categories.cmsServiceAttributes(id),
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'ProductCategory', id },
+        { type: 'ProductCategory', id: 'CMS-SERVICE-LIST' },
+      ],
+    }),
+    deleteCmsServiceCategoryAttribute: build.mutation({
+      query: ({ id, code }) => ({
+        url: ENDPOINTS.categories.cmsServiceAttribute(id, code),
+        method: 'DELETE',
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'ProductCategory', id },
+        { type: 'ProductCategory', id: 'CMS-SERVICE-LIST' },
+      ],
+    }),
   }),
   overrideExisting: false,
 });
@@ -77,4 +151,11 @@ export const {
   useGetGeneralSubcategoriesQuery,
   useSearchGeneralCategoriesMutation,
   useGetCategoryAttributesQuery,
+  useGetCmsServiceCategoriesQuery,
+  useCreateCmsServiceCategoryMutation,
+  useUpdateCmsServiceCategoryMutation,
+  useDeleteCmsServiceCategoryMutation,
+  useGetCmsServiceCategoryProductsQuery,
+  useAddCmsServiceCategoryAttributeMutation,
+  useDeleteCmsServiceCategoryAttributeMutation,
 } = categoriesApi;

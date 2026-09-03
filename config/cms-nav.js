@@ -18,6 +18,7 @@ import {
   Video,
   LifeBuoy,
   Handshake,
+  Tags,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -129,6 +130,12 @@ export const CMS_NAV = [
     title: 'Ürünler & Hizmetler',
     icon: Package,
     path: '/cms/products',
+    roles: [CMS_ROLES.ADMIN],
+  },
+  {
+    title: 'Kategoriler',
+    icon: Tags,
+    path: '/cms/categories',
     roles: [CMS_ROLES.ADMIN],
   },
 
