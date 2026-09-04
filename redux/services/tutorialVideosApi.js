@@ -6,6 +6,10 @@ import { ENDPOINTS } from '@/config/api';
 /** Ekran kaydı eğitim videoları — yalnız cms:admin yönetebilir. */
 export const tutorialVideosApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
+    getPublicTutorialVideos: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.tutorialVideos.publicList, params }),
+      transformResponse: (res) => (res?.data ?? res)?.items ?? [],
+    }),
     getCmsTutorialVideos: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.tutorialVideos.cmsList, params }),
       transformResponse: (res) => res?.data ?? res ?? { items: [], pagination: null },
@@ -52,6 +56,7 @@ export const tutorialVideosApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetPublicTutorialVideosQuery,
   useGetCmsTutorialVideosQuery,
   useGetCmsTutorialVideoQuery,
   useCreateTutorialVideoMutation,

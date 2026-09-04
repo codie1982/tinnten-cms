@@ -55,6 +55,40 @@ export const docsApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // { translated, failed }
       invalidatesTags: (r, e, { slug }) => [{ type: 'Doc', id: slug }, { type: 'Doc', id: 'LIST' }],
     }),
+    getDocPages: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.docs.pages, params }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: [{ type: 'Doc', id: 'LIST' }],
+    }),
+    createDocPage: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.docs.pages, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'Doc', id: 'LIST' }],
+    }),
+    getDocPage: build.query({
+      query: ({ pageId, locale }) => ({ url: ENDPOINTS.docs.page(pageId), params: { locale } }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, { pageId }) => [{ type: 'Doc', id: pageId }],
+    }),
+    saveDocPageLocale: build.mutation({
+      query: ({ pageId, locale, ...body }) => ({ url: ENDPOINTS.docs.pageLocale(pageId, locale), method: 'PUT', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { pageId }) => [{ type: 'Doc', id: pageId }, { type: 'Doc', id: 'LIST' }],
+    }),
+    publishDocPageLocale: build.mutation({
+      query: ({ pageId, locale }) => ({ url: ENDPOINTS.docs.pagePublish(pageId, locale), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { pageId }) => [{ type: 'Doc', id: pageId }, { type: 'Doc', id: 'LIST' }],
+    }),
+    unpublishDocPageLocale: build.mutation({
+      query: ({ pageId, locale }) => ({ url: ENDPOINTS.docs.pageUnpublish(pageId, locale), method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { pageId }) => [{ type: 'Doc', id: pageId }, { type: 'Doc', id: 'LIST' }],
+    }),
+    deleteDocPage: build.mutation({
+      query: ({ pageId, locale }) => ({ url: ENDPOINTS.docs.page(pageId), method: 'DELETE', params: locale ? { locale } : undefined }),
+      invalidatesTags: [{ type: 'Doc', id: 'LIST' }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -70,4 +104,11 @@ export const {
   useSaveDocMutation,
   useDeleteDocMutation,
   useTranslateDocMutation,
+  useGetDocPagesQuery,
+  useCreateDocPageMutation,
+  useGetDocPageQuery,
+  useSaveDocPageLocaleMutation,
+  usePublishDocPageLocaleMutation,
+  useUnpublishDocPageLocaleMutation,
+  useDeleteDocPageMutation,
 } = docsApi;

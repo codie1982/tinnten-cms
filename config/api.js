@@ -180,6 +180,12 @@ export const ENDPOINTS = {
     save: '/docs/cms',
     detail: (slug) => `/docs/cms/${slug}`,
     translate: (slug) => `/docs/cms/${slug}/translate`,
+    pages: '/docs/cms/pages',
+    page: (pageId) => `/docs/cms/pages/${pageId}`,
+    pageLocale: (pageId, locale) => `/docs/cms/pages/${pageId}/locales/${locale}`,
+    pagePublish: (pageId, locale) => `/docs/cms/pages/${pageId}/locales/${locale}/publish`,
+    pageUnpublish: (pageId, locale) => `/docs/cms/pages/${pageId}/locales/${locale}/unpublish`,
+    assets: '/docs/cms/assets',
   },
   dashboard: {
     stats: '/cms/dashboard/stats',
@@ -191,6 +197,7 @@ export const ENDPOINTS = {
     remove: (id) => `/faq/cms/${id}`,
   },
   tutorialVideos: {
+    publicList: '/tutorial-videos',
     cmsList: '/tutorial-videos/cms',
     cmsDetail: (id) => `/tutorial-videos/cms/${id}`,
     create: '/tutorial-videos/cms',
