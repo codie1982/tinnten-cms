@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import {
   useCreateDocPageMutation, useGetDocCategoriesQuery, useGetDocPageQuery,
   usePublishDocPageLocaleMutation, useSaveDocPageLocaleMutation,
-  useTranslateDocMutation, useUnpublishDocPageLocaleMutation,
+  useUnpublishDocPageLocaleMutation,
 } from '@/redux/services';
 import { PageWysiwygEditor } from './page-wysiwyg-editor';
 
@@ -48,7 +48,6 @@ export function PageEditor({ pageId: initialPageId = null }) {
   const [saveLocale, { isLoading: saving }] = useSaveDocPageLocaleMutation();
   const [publishLocale, { isLoading: publishing }] = usePublishDocPageLocaleMutation();
   const [unpublishLocale, { isLoading: unpublishing }] = useUnpublishDocPageLocaleMutation();
-  const [translateDoc, { isLoading: translating }] = useTranslateDocMutation();
   const busy = creating || saving || publishing || unpublishing;
   const locales = data?.locales ?? [];
 
@@ -63,7 +62,13 @@ export function PageEditor({ pageId: initialPageId = null }) {
       });
       setStatus(doc.status || (doc.published ? 'published' : 'draft'));
     } else {
-      setForm((current) => ({ ...EMPTY, category: current.category }));
+      const source = data?.locales?.find((item) => item.locale === 'tr') || data?.locales?.[0];
+      setForm((current) => ({
+        ...EMPTY,
+        routePath: source?.routePath || '/document',
+        slug: source?.slug || '',
+        category: current.category,
+      }));
       setStatus('draft');
     }
     setDirty(false);
@@ -73,6 +78,20 @@ export function PageEditor({ pageId: initialPageId = null }) {
     const warn = (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  useEffect(() => {
+    const guardInternalNavigation = (event) => {
+      if (!dirty || event.defaultPrevented || event.button !== 0) return;
+      const anchor = event.target.closest?.('a[href]');
+      if (!anchor || anchor.target === '_blank' || anchor.origin !== window.location.origin) return;
+      if (!window.confirm('Kaydedilmemiş değişiklikler silinsin mi?')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener('click', guardInternalNavigation, true);
+    return () => document.removeEventListener('click', guardInternalNavigation, true);
   }, [dirty]);
 
   const update = (key, value) => { setForm((current) => ({ ...current, [key]: value })); setDirty(true); };
@@ -112,15 +131,6 @@ export function PageEditor({ pageId: initialPageId = null }) {
     } catch (error) { setNotice({ type: 'error', text: errorText(error) }); }
   }
 
-  async function translate() {
-    if (!pageId || !effectiveSlug) return;
-    setNotice(null);
-    try {
-      const result = await translateDoc({ slug: effectiveSlug, sourceLocale: locale }).unwrap();
-      setNotice({ type: 'success', text: `${result.translated?.length || 0} dil taslak olarak oluşturuldu${result.failed?.length ? `; ${result.failed.length} dil başarısız` : ''}.` });
-    } catch (error) { setNotice({ type: 'error', text: errorText(error) }); }
-  }
-
   function switchLocale(next) {
     if (dirty && !window.confirm('Kaydedilmemiş değişiklikler silinsin mi?')) return;
     setLocale(next); setNotice(null);
@@ -128,7 +138,7 @@ export function PageEditor({ pageId: initialPageId = null }) {
 
   return <>
     <PageHeader breadcrumb={[{ label: 'Sayfalar', href: '/cms/documents' }, { label: isNew ? 'Yeni' : form.title || 'Düzenle' }]} title={isNew ? 'Yeni Sayfa' : form.title || 'Sayfayı Düzenle'} actions={<div className="flex flex-wrap gap-2">
-      {pageId && <Button variant="outline" onClick={translate} disabled={busy || translating}>{translating ? <Loader2 className="size-4 animate-spin" /> : <Languages className="size-4" />}Dillere Çevir</Button>}
+      {pageId && <Button variant="outline" disabled title="WYSIWYG ve SEO metinlerinin çeviri sağlayıcısına gönderimi için yönetici onayı gerekiyor"><Languages className="size-4" />Dillere Çevir</Button>}
       {pageId && status === 'published' && <a href={publicUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: 'outline' })}><ExternalLink className="size-4" />Sitede Gör</a>}
       <Button variant="outline" onClick={togglePublish} disabled={busy}>{publishing || unpublishing ? <Loader2 className="size-4 animate-spin" /> : <Globe2 className="size-4" />}{status === 'published' ? 'Taslağa Al' : 'Yayınla'}</Button>
       <Button onClick={save} disabled={busy || !form.title.trim()}>{creating || saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}Kaydet</Button>
@@ -157,10 +167,13 @@ export function PageEditor({ pageId: initialPageId = null }) {
 }
 
 function SeoPanel({ form, updateSeo, seoTitle, seoDescription, publicUrl, alternates }) {
-  return <div className="space-y-5"><Card><CardHeader><CardTitle>Arama Motoru Ayarları</CardTitle></CardHeader><CardContent className="space-y-4 p-5"><Field label={`SEO başlığı · ${form.seo.title.length}/60`}><Input value={form.seo.title} onChange={(e) => updateSeo('title', e.target.value)} placeholder={form.title || 'SEO başlığı'} /></Field><Field label={`Meta açıklama · ${form.seo.description.length}/160`}><textarea value={form.seo.description} onChange={(e) => updateSeo('description', e.target.value)} rows={3} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" placeholder={form.description || 'Arama sonucu açıklaması'} /></Field><Field label="Canonical URL"><Input value={form.seo.canonicalUrl} onChange={(e) => updateSeo('canonicalUrl', e.target.value)} placeholder={publicUrl} /></Field><div className="grid gap-3 sm:grid-cols-2"><Toggle label="Arama motorları indekslesin" checked={form.seo.index} onChange={(value) => updateSeo('index', value)} /><Toggle label="Bağlantıları takip etsin" checked={form.seo.follow} onChange={(value) => updateSeo('follow', value)} /></div><Field label="Yapılandırılmış veri"><Select value={form.seo.schemaType} onValueChange={(value) => updateSeo('schemaType', value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="WebPage">WebPage</SelectItem><SelectItem value="Article">Article</SelectItem><SelectItem value="TechArticle">TechArticle</SelectItem></SelectContent></Select></Field></CardContent></Card>
+  const fallback = alternates.find((item) => item.locale === 'tr') || alternates[0];
+  const hreflangRows = fallback ? [...alternates, { locale: 'x-default', fullPath: fallback.fullPath }] : alternates;
+  return <div className="space-y-5"><Card><CardHeader><CardTitle>Arama Motoru Ayarları</CardTitle></CardHeader><CardContent className="space-y-4 p-5"><Field label={`SEO başlığı · ${form.seo.title.length}/60`}><Input value={form.seo.title} onChange={(e) => updateSeo('title', e.target.value)} placeholder={form.title || 'SEO başlığı'} />{form.seo.title.length > 60 && <p className="mt-1 text-xs text-amber-600">Önerilen 60 karakter sınırı aşıldı.</p>}</Field><Field label={`Meta açıklama · ${form.seo.description.length}/160`}><textarea value={form.seo.description} onChange={(e) => updateSeo('description', e.target.value)} rows={3} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" placeholder={form.description || 'Arama sonucu açıklaması'} />{form.seo.description.length > 160 && <p className="mt-1 text-xs text-amber-600">Önerilen 160 karakter sınırı aşıldı.</p>}</Field><Field label="Canonical URL"><Input value={form.seo.canonicalUrl} onChange={(e) => updateSeo('canonicalUrl', e.target.value)} placeholder={publicUrl} />{form.seo.canonicalUrl && !/^https:\/\//i.test(form.seo.canonicalUrl) && <p className="mt-1 text-xs text-destructive">Canonical mutlak bir HTTPS adresi olmalıdır.</p>}</Field><div className="grid gap-3 sm:grid-cols-2"><Toggle label="Arama motorları indekslesin" checked={form.seo.index} onChange={(value) => updateSeo('index', value)} /><Toggle label="Bağlantıları takip etsin" checked={form.seo.follow} onChange={(value) => updateSeo('follow', value)} /></div><Field label="Yapılandırılmış veri"><Select value={form.seo.schemaType} onValueChange={(value) => updateSeo('schemaType', value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="WebPage">WebPage</SelectItem><SelectItem value="Article">Article</SelectItem><SelectItem value="TechArticle">TechArticle</SelectItem></SelectContent></Select></Field></CardContent></Card>
     <Card><CardHeader><CardTitle>Sosyal Paylaşım</CardTitle></CardHeader><CardContent className="space-y-4 p-5"><Field label="OG başlığı"><Input value={form.seo.ogTitle} onChange={(e) => updateSeo('ogTitle', e.target.value)} placeholder={seoTitle} /></Field><Field label="OG açıklaması"><Input value={form.seo.ogDescription} onChange={(e) => updateSeo('ogDescription', e.target.value)} placeholder={seoDescription} /></Field><Field label="OG görseli"><Input value={form.seo.ogImage} onChange={(e) => updateSeo('ogImage', e.target.value)} placeholder="https://…" /></Field></CardContent></Card>
     <Card><CardHeader><CardTitle>Google Önizlemesi</CardTitle></CardHeader><CardContent className="p-5"><p className="break-all text-xs text-green-700">{form.seo.canonicalUrl || publicUrl}</p><p className="mt-1 text-xl text-blue-700">{seoTitle}</p><p className="mt-1 text-sm text-muted-foreground">{seoDescription}</p></CardContent></Card>
-    <Card><CardHeader><CardTitle>Hreflang</CardTitle></CardHeader><CardContent className="space-y-2 p-5">{alternates.length ? alternates.map((item) => <div key={item.locale} className="flex gap-3 text-xs"><Badge variant="outline">{item.locale}</Badge><span className="break-all font-mono text-muted-foreground">{item.fullPath}</span></div>) : <p className="text-sm text-muted-foreground">Yayınlanmış dil alternatifi henüz yok.</p>}</CardContent></Card></div>;
+    <Card><CardHeader><CardTitle>Open Graph Önizlemesi</CardTitle></CardHeader><CardContent className="overflow-hidden p-0">{form.seo.ogImage ? <img src={form.seo.ogImage} alt="" className="aspect-[1.91/1] w-full bg-muted object-cover" /> : <div className="grid aspect-[1.91/1] place-items-center bg-muted text-sm text-muted-foreground">OG görseli eklenmedi</div>}<div className="space-y-1 p-4"><p className="font-semibold">{form.seo.ogTitle || seoTitle}</p><p className="line-clamp-2 text-sm text-muted-foreground">{form.seo.ogDescription || seoDescription}</p></div></CardContent></Card>
+    <Card><CardHeader><CardTitle>Hreflang</CardTitle></CardHeader><CardContent className="space-y-2 p-5">{hreflangRows.length ? hreflangRows.map((item) => <div key={item.locale} className="flex gap-3 text-xs"><Badge variant="outline">{item.locale}</Badge><span className="break-all font-mono text-muted-foreground">{item.fullPath}</span></div>) : <p className="text-sm text-muted-foreground">Yayınlanmış dil alternatifi henüz yok.</p>}</CardContent></Card></div>;
 }
 
 function Field({ label, children }) { return <div><label className="mb-1 block text-xs text-muted-foreground">{label}</label>{children}</div>; }

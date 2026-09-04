@@ -89,9 +89,10 @@ const TutorialEmbed = Node.create({
 const parseVideoUrl = (raw) => {
   try {
     const url = new URL(raw);
-    if (url.hostname.includes('youtu.be')) return { provider: 'youtube', videoId: url.pathname.slice(1) };
-    if (url.hostname.includes('youtube.com')) return { provider: 'youtube', videoId: url.searchParams.get('v') || url.pathname.split('/').pop() };
-    if (url.hostname.includes('vimeo.com')) return { provider: 'vimeo', videoId: url.pathname.split('/').filter(Boolean).pop() };
+    const host = url.hostname.toLowerCase();
+    if (['youtu.be', 'www.youtu.be'].includes(host)) return { provider: 'youtube', videoId: url.pathname.slice(1) };
+    if (['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(host)) return { provider: 'youtube', videoId: url.searchParams.get('v') || url.pathname.split('/').pop() };
+    if (['vimeo.com', 'www.vimeo.com', 'player.vimeo.com'].includes(host)) return { provider: 'vimeo', videoId: url.pathname.split('/').filter(Boolean).pop() };
   } catch {}
   return null;
 };
