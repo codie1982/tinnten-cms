@@ -13,21 +13,21 @@ export const docsApi = baseApi.injectEndpoints({
 
     // ── Kategoriler ──
     getDocCategories: build.query({
-      query: () => ENDPOINTS.docs.categories,
+      query: (locale) => ({ url: ENDPOINTS.docs.categories, params: locale ? { locale } : undefined }),
       transformResponse: (res) => (res?.data ?? res)?.items ?? [],
       providesTags: [{ type: 'DocCategory', id: 'LIST' }],
     }),
     createDocCategory: build.mutation({
       query: (body) => ({ url: ENDPOINTS.docs.categories, method: 'POST', body }),
-      invalidatesTags: [{ type: 'DocCategory', id: 'LIST' }],
+      invalidatesTags: [{ type: 'DocCategory', id: 'LIST' }, { type: 'Doc', id: 'NAVIGATION' }],
     }),
     updateDocCategory: build.mutation({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.docs.category(id), method: 'PUT', body }),
-      invalidatesTags: [{ type: 'DocCategory', id: 'LIST' }],
+      invalidatesTags: [{ type: 'DocCategory', id: 'LIST' }, { type: 'Doc', id: 'NAVIGATION' }],
     }),
     deleteDocCategory: build.mutation({
       query: (id) => ({ url: ENDPOINTS.docs.category(id), method: 'DELETE' }),
-      invalidatesTags: [{ type: 'DocCategory', id: 'LIST' }, { type: 'Doc', id: 'LIST' }],
+      invalidatesTags: [{ type: 'DocCategory', id: 'LIST' }, { type: 'Doc', id: 'LIST' }, { type: 'Doc', id: 'NAVIGATION' }],
     }),
 
     // ── Dökümanlar ──
@@ -89,6 +89,16 @@ export const docsApi = baseApi.injectEndpoints({
       query: ({ pageId, locale }) => ({ url: ENDPOINTS.docs.page(pageId), method: 'DELETE', params: locale ? { locale } : undefined }),
       invalidatesTags: [{ type: 'Doc', id: 'LIST' }],
     }),
+    getDocNavigation: build.query({
+      query: (locale = 'tr') => ({ url: ENDPOINTS.docs.navigation, params: { locale } }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: [{ type: 'Doc', id: 'NAVIGATION' }],
+    }),
+    saveDocNavigation: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.docs.navigation, method: 'PUT', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'Doc', id: 'NAVIGATION' }, { type: 'Doc', id: 'LIST' }, { type: 'DocCategory', id: 'LIST' }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -111,4 +121,6 @@ export const {
   usePublishDocPageLocaleMutation,
   useUnpublishDocPageLocaleMutation,
   useDeleteDocPageMutation,
+  useGetDocNavigationQuery,
+  useSaveDocNavigationMutation,
 } = docsApi;

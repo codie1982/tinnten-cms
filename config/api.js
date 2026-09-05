@@ -186,6 +186,7 @@ export const ENDPOINTS = {
     pagePublish: (pageId, locale) => `/docs/cms/pages/${pageId}/locales/${locale}/publish`,
     pageUnpublish: (pageId, locale) => `/docs/cms/pages/${pageId}/locales/${locale}/unpublish`,
     assets: '/docs/cms/assets',
+    navigation: '/docs/cms/navigation',
   },
   dashboard: {
     stats: '/cms/dashboard/stats',

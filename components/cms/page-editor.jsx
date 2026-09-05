@@ -42,7 +42,7 @@ export function PageEditor({ pageId: initialPageId = null }) {
   const [tab, setTab] = useState('content');
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState(null);
-  const { data: categories = [] } = useGetDocCategoriesQuery();
+  const { data: categories = [] } = useGetDocCategoriesQuery(locale);
   const { data, isFetching } = useGetDocPageQuery({ pageId, locale }, { skip: !pageId });
   const [createPage, { isLoading: creating }] = useCreateDocPageMutation();
   const [saveLocale, { isLoading: saving }] = useSaveDocPageLocaleMutation();

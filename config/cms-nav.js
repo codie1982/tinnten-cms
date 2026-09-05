@@ -79,7 +79,7 @@ export const CMS_NAV = [
     roles: [CMS_ROLES.EDITOR],
     children: [
       { title: 'Tüm Dökümanlar', path: '/cms/documents', roles: [CMS_ROLES.EDITOR] },
-      { title: 'Kategoriler', path: '/cms/documents/categories', roles: [CMS_ROLES.EDITOR] },
+      { title: 'Navigasyon', path: '/cms/documents/navigation', roles: [CMS_ROLES.EDITOR] },
     ],
   },
   {

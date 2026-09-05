@@ -32,7 +32,7 @@ function DocumentsList() {
   const page = Math.max(Number(params.get('page')) || 1, 1);
   const limit = [10, 20, 50].includes(Number(params.get('limit'))) ? Number(params.get('limit')) : 20;
   const [search, setSearch] = useState(query);
-  const { data: categories = [] } = useGetDocCategoriesQuery(undefined, { skip: !authorized });
+  const { data: categories = [] } = useGetDocCategoriesQuery(locale === 'all' ? 'tr' : locale, { skip: !authorized });
   const request = useMemo(() => ({ query: query || undefined, category: category === 'all' ? undefined : category, locale: locale === 'all' ? undefined : locale, status: status === 'all' ? undefined : status, page, limit }), [query, category, locale, status, page, limit]);
   const { data, isLoading, isFetching, error } = useGetDocPagesQuery(request, { skip: !authorized });
   const items = data?.items ?? [];
