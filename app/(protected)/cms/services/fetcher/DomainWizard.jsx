@@ -54,6 +54,9 @@ function upstreamErr(e) {
 function hostFromUrl(u) {
   try { return new URL(u.trim()).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
+function schemaDraftKey(pattern, language = 'mixed') {
+  return `${pattern}::${language || 'mixed'}`;
+}
 
 export default function DomainWizard({ onClose, onDone }) {
   const [step, setStep] = useState(0);
@@ -73,6 +76,7 @@ export default function DomainWizard({ onClose, onDone }) {
 
   // Adım 1-2
   const [selected, setSelected] = useState(() => new Set());
+  const [patternLanguages, setPatternLanguages] = useState({});
   const [knowledge, setKnowledge] = useState({}); // pattern -> 'content'|'product'
   const [treePatterns, setTreePatterns] = useState({}); // URL ağacından eklenen ince pattern'ler
   // ÖRNEK SAYFA yolu — bölüm seçmeden, somut sayfa vererek şema çıkarma.
@@ -120,6 +124,10 @@ export default function DomainWizard({ onClose, onDone }) {
       const state = (data?.analysis?.state || '').toUpperCase();
       if (state === 'DONE' || state === 'READY' || !state) {
         setSelected(new Set((data.patterns || []).filter((p) => p.needsSchema).map((p) => p.pattern)));
+        setPatternLanguages(Object.fromEntries((data.patterns || []).map((p) => [
+          p.pattern,
+          p.languageGroups?.find((group) => group.language !== 'mixed')?.language || p.languageGroups?.[0]?.language || 'mixed',
+        ])));
         setBusy(false);
         return;
       }
@@ -186,25 +194,36 @@ export default function DomainWizard({ onClose, onDone }) {
       setAnalysis(data);
       const state = (data?.analysis?.state || '').toUpperCase();
       if (state === 'DONE' || state === 'READY' || !state) {
-        const selSet = new Set(sel);
+        const selections = sel.map((item) => typeof item === 'string' ? { pattern: item, language: 'mixed' } : item);
+        const selSet = new Set(selections.map((item) => schemaDraftKey(item.pattern, item.language)));
         const next = {};
         for (const p of data.patterns || []) {
-          if (!selSet.has(p.pattern)) continue;
-          next[p.pattern] = {
-            pattern: p.pattern, family: p.family || undefined,
-            cssSchema: p.cssSchema || null,
-            raw: p.cssSchema ? JSON.stringify(p.cssSchema, null, 2) : '',
-            jsonError: null,
-            status: p.cssSchema ? 'generated' : (p.schemaResult === 'failed_validation' ? 'generate_failed' : 'no_samples'),
-          };
+          for (const variant of p.languageGroups || []) {
+            const key = schemaDraftKey(p.pattern, variant.language);
+            if (!selSet.has(key)) continue;
+            next[key] = {
+              pattern: p.pattern, language: variant.language, family: p.family || undefined,
+              cssSchema: variant.cssSchema || null,
+              raw: variant.cssSchema ? JSON.stringify(variant.cssSchema, null, 2) : '',
+              jsonError: null,
+              status: variant.cssSchema ? 'generated' : (p.schemaResult === 'failed_validation' ? 'generate_failed' : 'no_samples'),
+            };
+          }
         }
-        for (const p of sel) if (!next[p]) next[p] = { pattern: p, cssSchema: null, raw: '', status: 'no_samples' };
+        for (const item of selections) {
+          const key = schemaDraftKey(item.pattern, item.language);
+          if (!next[key]) next[key] = { ...item, cssSchema: null, raw: '', status: 'no_samples' };
+        }
         setDrafts(next); setBusy(false);
         return;
       }
       if (attempt >= POLL_MAX) { setBusy(false); setErr({ text: 'Şema üretimi uzun sürdü.' }); return; }
-      const done = (data.patterns || []).filter((p) => sel.includes(p.pattern) && p.hasSchema).length;
-      setBusyLabel(`Şemalar arka planda üretiliyor… (${done}/${sel.length} hazır)`);
+      const selections = sel.map((item) => typeof item === 'string' ? { pattern: item, language: 'mixed' } : item);
+      const done = selections.filter(({ pattern, language }) => {
+        const found = (data.patterns || []).find((p) => p.pattern === pattern);
+        return found?.languageGroups?.some((group) => group.language === language && group.hasSchema);
+      }).length;
+      setBusyLabel(`Şemalar arka planda üretiliyor… (${done}/${selections.length} hazır)`);
       pollRef.current = setTimeout(() => pollSchemaGen(dom, sel, attempt + 1), POLL_MS);
     } catch (e) { setBusy(false); setErr({ text: upstreamErr(e) }); }
   }, [triggerAnalysis]);
@@ -218,7 +237,7 @@ export default function DomainWizard({ onClose, onDone }) {
     if (!domain || (selected.size === 0 && !samplesReady)) return;
     setErr(null);
     const patterns = allPatterns.filter((p) => selected.has(p.pattern))
-      .map((p) => ({ pattern: p.pattern, family: familyFor(p) }));
+      .map((p) => ({ pattern: p.pattern, language: patternLanguages[p.pattern] || 'mixed', family: familyFor(p) }));
     // Örnek sayfa girdisi pattern'SİZ gider — kapsamı backend türetir.
     if (samplesReady) {
       patterns.push({
@@ -229,15 +248,17 @@ export default function DomainWizard({ onClose, onDone }) {
     setBusy(true); setBusyLabel('Şema üretimi başlatılıyor…'); goTo(2);
     setDrafts(Object.fromEntries(patterns
       .filter((p) => p.pattern)
-      .map((p) => [p.pattern, { pattern: p.pattern, cssSchema: null, raw: '', status: 'pending' }])));
+      .map((p) => [p.pattern, { pattern: p.pattern, language: p.language, cssSchema: null, raw: '', status: 'pending' }])));
     try {
       const res = await genSchemas({ domain, patterns }).unwrap();
       // Poll listesi backend'in ÇÖZDÜĞÜ pattern'lerden gelir: örnek yolunda
       // kapsam orada türetildiği için istemci onu önceden bilemez.
-      const sel = (res?.selectedPatterns || []).map((p) => p.pattern).filter(Boolean);
-      const list = sel.length ? sel : patterns.map((p) => p.pattern).filter(Boolean);
-      setDrafts(Object.fromEntries(list.map((p) =>
-        [p, { pattern: p, cssSchema: null, raw: '', status: 'pending' }])));
+      const sel = (res?.selectedPatterns || []).filter((p) => p?.pattern);
+      const list = sel.length ? sel : patterns.filter((p) => p.pattern);
+      setDrafts(Object.fromEntries(list.map((item) => {
+        const language = item.language || patternLanguages[item.pattern] || 'mixed';
+        return [schemaDraftKey(item.pattern, language), { pattern: item.pattern, language, cssSchema: null, raw: '', status: 'pending' }];
+      })));
       // Bilgi kaynağı commit'te pattern'e göre okunuyor; türetilen pattern'i de işaretle.
       if (samplesReady) {
         const derived = (res?.selectedPatterns || []).find((p) => (p.sampleUrls || []).length)?.pattern;
@@ -251,11 +272,11 @@ export default function DomainWizard({ onClose, onDone }) {
     } catch (e) { setBusy(false); setErr({ text: upstreamErr(e) }); }
   };
 
-  const handleTest = async (pattern) => {
-    const d = drafts[pattern]; if (!d?.cssSchema) return;
-    setTesting(pattern); setErr(null);
+  const handleTest = async (key) => {
+    const d = drafts[key]; if (!d?.cssSchema) return;
+    setTesting(key); setErr(null);
     try {
-      const pObj = allPatterns.find((p) => p.pattern === pattern);
+      const pObj = allPatterns.find((p) => p.pattern === d.pattern);
       // Örnek yoluyla üretilmiş şema analiz kümelerinde yoktur → test, şemanın
       // çıkarıldığı sayfalarda koşsun (admin "verdiğim sayfada tuttu mu" görsün).
       const isSampleDraft = pattern === samplePattern && sampleUrls.length > 0;
@@ -263,21 +284,21 @@ export default function DomainWizard({ onClose, onDone }) {
       const family = isSampleDraft
         ? (samples.source === 'product' ? 'product' : 'article')
         : (pObj ? familyFor(pObj) : undefined);
-      const res = await testSchema({ domain, pattern, css_schema: d.cssSchema, urls: testUrls.slice(0, 3), family }).unwrap();
-      setDrafts((prev) => ({ ...prev, [pattern]: { ...prev[pattern], test: res } }));
+      const res = await testSchema({ domain, pattern: d.pattern, language: d.language, css_schema: d.cssSchema, urls: testUrls.slice(0, 3), family }).unwrap();
+      setDrafts((prev) => ({ ...prev, [key]: { ...prev[key], test: res } }));
     } catch (e) { setErr({ text: upstreamErr(e) }); }
     finally { setTesting(null); }
   };
 
-  const editSchema = (pattern, raw) => {
+  const editSchema = (key, raw) => {
     setDrafts((prev) => {
-      const next = { ...prev[pattern], raw, test: undefined };
+      const next = { ...prev[key], raw, test: undefined };
       if (!raw.trim()) { next.cssSchema = null; next.jsonError = null; }
       else {
         try { const p = JSON.parse(raw); if (typeof p !== 'object' || Array.isArray(p)) throw new Error('nesne olmalı'); next.cssSchema = p; next.jsonError = null; }
         catch (e) { next.jsonError = e.message; }
       }
-      return { ...prev, [pattern]: next };
+      return { ...prev, [key]: next };
     });
   };
 
@@ -287,7 +308,7 @@ export default function DomainWizard({ onClose, onDone }) {
     setBusy(true); setBusyLabel('Şemalar kaydediliyor, tarama başlatılıyor…'); setErr(null);
     try {
       const schemas = Object.values(drafts).filter((d) => d.cssSchema).map((d) => ({
-        pattern: d.pattern, css_schema: d.cssSchema,
+        pattern: d.pattern, language: d.language || 'mixed', css_schema: d.cssSchema,
         knowledge_source: knowledge[d.pattern] || (d.family === 'product' ? 'product' : 'content'),
         // Örnek yoluyla üretilmiş şemanın kaynak adresleri kayıtta kalsın
         // (yeniden üretim ve "Test et" aynı sayfalara koşar).
@@ -373,7 +394,9 @@ export default function DomainWizard({ onClose, onDone }) {
                       <PatternRow key={p.pattern} p={p} checked={selected.has(p.pattern)} disabled={!canConfigure}
                         onToggle={() => togglePattern(p.pattern)}
                         source={knowledge[p.pattern] || (p.family === 'product' ? 'product' : 'content')}
-                        onSource={(s) => setKnowledge((k) => ({ ...k, [p.pattern]: s }))} />
+                        onSource={(s) => setKnowledge((k) => ({ ...k, [p.pattern]: s }))}
+                        language={patternLanguages[p.pattern] || p.languageGroups?.[0]?.language || 'mixed'}
+                        onLanguage={(language) => setPatternLanguages((current) => ({ ...current, [p.pattern]: language }))} />
                     ))}
                   </ul>
                 )}
@@ -411,9 +434,9 @@ export default function DomainWizard({ onClose, onDone }) {
                         <p className="text-[11px] text-muted-foreground">Her bölüm hazırlandıkça aşağıda görünecek.</p></div>
                     </div>
                   )}
-                  {Object.values(drafts).map((d) => (
-                    <SchemaCard key={d.pattern} d={d} testing={testing === d.pattern} disabled={!canConfigure || busy}
-                      onTest={() => handleTest(d.pattern)} onEdit={(raw) => editSchema(d.pattern, raw)} />
+                  {Object.entries(drafts).map(([key, d]) => (
+                    <SchemaCard key={key} d={d} testing={testing === key} disabled={!canConfigure || busy}
+                      onTest={() => handleTest(key)} onEdit={(raw) => editSchema(key, raw)} />
                   ))}
                 </>
               )}
@@ -493,7 +516,7 @@ function ProfileBadges({ p }) {
   return <div className="flex flex-wrap gap-1.5">{items.map((x) => <span key={x} className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{x}</span>)}</div>;
 }
 
-function PatternRow({ p, checked, disabled, onToggle, source, onSource }) {
+function PatternRow({ p, checked, disabled, onToggle, source, onSource, language, onLanguage }) {
   return (
     <li className={cn('rounded-lg border p-3', checked ? 'border-primary/50 bg-primary/5' : 'border-border')}>
       <div className="flex items-start gap-3">
@@ -506,6 +529,14 @@ function PatternRow({ p, checked, disabled, onToggle, source, onSource }) {
             {p.schemaResult === 'failed_validation' && <Badge variant="destructive" className="text-[10px]">doğrulanamadı</Badge>}
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">{p.count > 0 ? `${p.count} sayfa` : 'sayfa sayısı bilinmiyor'}</p>
+          {(p.languageGroups || []).length > 0 && (
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+              Dil varyantı
+              <select value={language} disabled={!checked || disabled} onChange={(e) => onLanguage(e.target.value)} className="h-7 rounded border border-input bg-background px-1.5 text-xs text-foreground">
+                {p.languageGroups.map((group) => <option key={group.language} value={group.language}>{group.language === 'mixed' ? 'Karışık / dil bağımsız' : group.language.toUpperCase()}{group.count ? ` · ${group.count}` : ''}</option>)}
+              </select>
+            </label>
+          )}
           {(p.samples || []).slice(0, 3).map((u) => (
             <div key={u} className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground/70">
               <ChevronRight className="size-3 shrink-0" /><span className="truncate font-mono">{u}</span></div>
@@ -645,6 +676,7 @@ function SchemaCard({ d, testing, disabled, onTest, onEdit }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold">{d.pattern}</code>
+            <Badge variant="secondary" className="text-[10px]">{d.language === 'mixed' ? 'Karışık' : (d.language || 'mixed').toUpperCase()}</Badge>
             {d.test && <Badge variant={d.test.verdict === 'pass' ? 'success' : 'destructive'} size="sm">
               {d.test.verdict === 'pass' ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />} {d.test.passed}/{d.test.total}</Badge>}
             {d.status === 'pending' && <span className="text-[11px] text-muted-foreground">üretiliyor…</span>}
@@ -675,7 +707,7 @@ function SchemaCard({ d, testing, disabled, onTest, onEdit }) {
             <div key={s.url} className={cn('rounded border p-2', s.ok ? 'border-success/25 bg-success/5' : 'border-destructive/25 bg-destructive/5')}>
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-mono text-[10px] text-muted-foreground">{s.url}</span>
-                <span className="shrink-0 text-[10px] text-muted-foreground">{s.error ? 'hata' : (d.test.threshold?.criterion === 'product' ? `${s.fields ?? 0} alan · ${s.chars ?? 0} kar` : `${s.chars ?? 0} kar · proza ${s.proseRatio ?? 0}`)}</span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">{s.error ? 'hata' : `${s.detectedLanguage ? `${s.detectedLanguage.toUpperCase()} · ` : ''}${d.test.threshold?.criterion === 'product' ? `${s.fields ?? 0} alan · ${s.chars ?? 0} kar` : `${s.chars ?? 0} kar · proza ${s.proseRatio ?? 0}`}`}</span>
               </div>
               {s.error ? <p className="mt-1 text-[11px] text-destructive">{s.error}</p>
                 : <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[11px] text-foreground/75">{s.preview?.trim() || '(boş — şema bu sayfada eşleşmedi)'}</p>}
