@@ -462,6 +462,8 @@ export const ENDPOINTS = {
       `/fetcher/domains/${encodeURIComponent(d)}/schemas/test`,
     domainSchemasCommit: (d) =>
       `/fetcher/domains/${encodeURIComponent(d)}/schemas/commit`,
+    domainSchemaLanguage: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/schemas/language`,
   },
   inbox: {
     cmsList: '/inbox/cms',

@@ -265,6 +265,11 @@ export const fetcherApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, { domain }) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }, { type: 'FetcherConfig', id: domain }],
     }),
+    changeDomainSchemaLanguage: build.mutation({
+      query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainSchemaLanguage(domain), method: 'PATCH', body }), // { pattern, fromLanguage?, language }
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { domain }) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherConfig', id: domain }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -315,4 +320,5 @@ export const {
   useGenerateDomainSchemasMutation,
   useTestDomainSchemaMutation,
   useCommitDomainSchemasMutation,
+  useChangeDomainSchemaLanguageMutation,
 } = fetcherApi;

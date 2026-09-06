@@ -66,6 +66,7 @@ import {
   useGenerateDomainSchemasMutation,
   useTestDomainSchemaMutation,
   useCommitDomainSchemasMutation,
+  useChangeDomainSchemaLanguageMutation,
   useGetCompanyQuery,
   useGetCompaniesQuery,
 } from '@/redux/services';
@@ -284,7 +285,7 @@ function StatusSection({ authorized }) {
 /* ════════════ Domain modalları ════════════ */
 
 const SCHEMA_FAMILIES = ['article', 'product', 'category', 'static'];
-const EMPTY_SCHEMA_DRAFT = { pattern: '', label: '', knowledge_source: '', css: '' };
+const EMPTY_SCHEMA_DRAFT = { pattern: '', originalPattern: '', language: 'mixed', originalLanguage: 'mixed', label: '', knowledge_source: '', css: '' };
 
 /**
  * URL şema yönetimi — domain düzenlemenin ikinci sekmesi.
@@ -306,11 +307,12 @@ function DomainSchemasPanel({ domain }) {
   const [saveCfg, { isLoading: replacing }] = useSaveScrapingConfigMutation();
   const [testSchema, { isLoading: testing }] = useTestDomainSchemaMutation();
   const [generateSchemas, { isLoading: generating }] = useGenerateDomainSchemasMutation();
+  const [changeSchemaLanguage, { isLoading: changingLanguage }] = useChangeDomainSchemaLanguageMutation();
 
   const [draft, setDraft] = useState(null); // { index|null, ...EMPTY_SCHEMA_DRAFT }
   const [msg, setMsg] = useState(null);     // { tone, text }
   const [testResult, setTestResult] = useState(null);
-  const [genPattern, setGenPattern] = useState({ pattern: '', family: 'article' });
+  const [genPattern, setGenPattern] = useState({ pattern: '', language: 'mixed', family: 'article' });
 
   const openDraft = (entry, index) => {
     setTestResult(null); setMsg(null);
@@ -318,6 +320,9 @@ function DomainSchemasPanel({ domain }) {
       ? {
           index,
           pattern: entry.pattern || '',
+          originalPattern: entry.pattern || '',
+          language: entry.language || 'mixed',
+          originalLanguage: entry.language || 'mixed',
           label: entry.label || '',
           knowledge_source: entry.knowledge_source || '',
           css: entry.css_schema ? JSON.stringify(entry.css_schema, null, 2) : '',
@@ -347,6 +352,7 @@ function DomainSchemasPanel({ domain }) {
       const res = await testSchema({
         domain,
         pattern: draft.pattern.trim() || undefined,
+        language: draft.language || 'mixed',
         css_schema: css.value,
         maxSamples: 2,
       }).unwrap();
@@ -367,10 +373,18 @@ function DomainSchemasPanel({ domain }) {
     const css = parseCss();
     if (!css.ok) { setMsg({ tone: 'destructive', text: css.error }); return; }
     setMsg(null);
-    const entry = { pattern: draft.pattern.trim(), css_schema: css.value };
+    const entry = { pattern: draft.pattern.trim(), language: draft.language || 'mixed', css_schema: css.value };
     if (draft.label.trim()) entry.label = draft.label.trim();
     if (draft.knowledge_source.trim()) entry.knowledge_source = draft.knowledge_source.trim();
     try {
+      if (draft.index !== null && draft.originalLanguage !== entry.language) {
+        await changeSchemaLanguage({
+          domain,
+          pattern: draft.originalPattern || draft.pattern.trim(),
+          fromLanguage: draft.originalLanguage || 'mixed',
+          language: entry.language,
+        }).unwrap();
+      }
       const res = await commitSchemas({ domain, schemas: [entry], startCrawl: false }).unwrap();
       setMsg({ tone: 'success', text: `Kaydedildi · ${res?.schemasWritten ?? 1} şema yazıldı.` });
       setDraft(null); setTestResult(null);
@@ -400,7 +414,7 @@ function DomainSchemasPanel({ domain }) {
     try {
       const res = await generateSchemas({
         domain,
-        patterns: [{ pattern: genPattern.pattern.trim(), family: genPattern.family }],
+        patterns: [{ pattern: genPattern.pattern.trim(), language: genPattern.language || 'mixed', family: genPattern.family }],
       }).unwrap();
       setMsg({
         tone: 'success',
@@ -408,7 +422,7 @@ function DomainSchemasPanel({ domain }) {
           ? 'Zaten kuyrukta — analiz bitince şemalar burada görünür.'
           : 'Üretim kuyruğa alındı. Arka planda çalışır; birkaç dakika sonra yenileyin.',
       });
-      setGenPattern({ pattern: '', family: 'article' });
+      setGenPattern({ pattern: '', language: 'mixed', family: 'article' });
     } catch (e) {
       setMsg({ tone: 'destructive', text: upstreamErr(e).error || 'Şema üretimi başlatılamadı.' });
     }
@@ -441,6 +455,7 @@ function DomainSchemasPanel({ domain }) {
                     <Badge variant="muted">{s.css_schema ? `${fieldCount} alan` : 'şemasız'}</Badge>
                     {s.source ? <Badge variant={s.source === 'user_reviewed' ? 'primary' : 'muted'}>{s.source}</Badge> : null}
                     {s.knowledge_source ? <span>· {s.knowledge_source}</span> : null}
+                    <Badge variant="muted">{s.language ? s.language.toUpperCase() : 'MIXED'}</Badge>
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-1">
@@ -470,6 +485,11 @@ function DomainSchemasPanel({ domain }) {
               <div className="space-y-1">
                 <label className="text-2sm font-medium">URL pattern *</label>
                 <Input value={draft.pattern} onChange={(e) => setDraft((d) => ({ ...d, pattern: e.target.value }))} placeholder="/urun/*" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-2sm font-medium">Şema dili</label>
+                <Input value={draft.language} onChange={(e) => setDraft((d) => ({ ...d, language: e.target.value.toLowerCase() || 'mixed' }))} placeholder="tr, en veya mixed" />
+                <p className="text-[11px] text-muted-foreground">Dili değiştirince mevcut pattern+language kaydı taşınır; yeniden indeksleme yapılmaz.</p>
               </div>
               <div className="space-y-1">
                 <label className="text-2sm font-medium">Etiket</label>
@@ -512,8 +532,8 @@ function DomainSchemasPanel({ domain }) {
               </Button>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => { setDraft(null); setTestResult(null); }}>İptal</Button>
-                <Button size="sm" disabled={committing} onClick={saveDraft}>
-                  {committing ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Kaydet
+                <Button size="sm" disabled={committing || changingLanguage} onClick={saveDraft}>
+                  {committing || changingLanguage ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Kaydet
                 </Button>
               </div>
             </div>
@@ -531,6 +551,10 @@ function DomainSchemasPanel({ domain }) {
           <div className="min-w-[180px] flex-1 space-y-1">
             <label className="text-2sm font-medium">Pattern</label>
             <Input value={genPattern.pattern} onChange={(e) => setGenPattern((g) => ({ ...g, pattern: e.target.value }))} placeholder="/blog/*" />
+          </div>
+          <div className="w-36 space-y-1">
+            <label className="text-2sm font-medium">Dil</label>
+            <Input value={genPattern.language} onChange={(e) => setGenPattern((g) => ({ ...g, language: e.target.value.toLowerCase() || 'mixed' }))} placeholder="mixed" />
           </div>
           <div className="w-36 space-y-1">
             <label className="text-2sm font-medium">Aile</label>
