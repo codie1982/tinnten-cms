@@ -57,6 +57,13 @@ function hostFromUrl(u) {
 function schemaDraftKey(pattern, language = 'mixed') {
   return `${pattern}::${language || 'mixed'}`;
 }
+function defaultPatternLanguages(pattern) {
+  return [
+    pattern.languageGroups?.find((group) => group.language !== 'mixed')?.language ||
+      pattern.languageGroups?.[0]?.language ||
+      'mixed',
+  ];
+}
 
 export default function DomainWizard({ onClose, onDone }) {
   const [step, setStep] = useState(0);
@@ -124,10 +131,7 @@ export default function DomainWizard({ onClose, onDone }) {
       const state = (data?.analysis?.state || '').toUpperCase();
       if (state === 'DONE' || state === 'READY' || !state) {
         setSelected(new Set((data.patterns || []).filter((p) => p.needsSchema).map((p) => p.pattern)));
-        setPatternLanguages(Object.fromEntries((data.patterns || []).map((p) => [
-          p.pattern,
-          p.languageGroups?.find((group) => group.language !== 'mixed')?.language || p.languageGroups?.[0]?.language || 'mixed',
-        ])));
+        setPatternLanguages(Object.fromEntries((data.patterns || []).map((p) => [p.pattern, defaultPatternLanguages(p)])));
         setBusy(false);
         return;
       }
@@ -237,7 +241,8 @@ export default function DomainWizard({ onClose, onDone }) {
     if (!domain || (selected.size === 0 && !samplesReady)) return;
     setErr(null);
     const patterns = allPatterns.filter((p) => selected.has(p.pattern))
-      .map((p) => ({ pattern: p.pattern, language: patternLanguages[p.pattern] || 'mixed', family: familyFor(p) }));
+      .flatMap((p) => (patternLanguages[p.pattern]?.length ? patternLanguages[p.pattern] : defaultPatternLanguages(p))
+        .map((language) => ({ pattern: p.pattern, language, family: familyFor(p) })));
     // Örnek sayfa girdisi pattern'SİZ gider — kapsamı backend türetir.
     if (samplesReady) {
       patterns.push({
@@ -248,7 +253,7 @@ export default function DomainWizard({ onClose, onDone }) {
     setBusy(true); setBusyLabel('Şema üretimi başlatılıyor…'); goTo(2);
     setDrafts(Object.fromEntries(patterns
       .filter((p) => p.pattern)
-      .map((p) => [p.pattern, { pattern: p.pattern, language: p.language, cssSchema: null, raw: '', status: 'pending' }])));
+      .map((p) => [schemaDraftKey(p.pattern, p.language), { pattern: p.pattern, language: p.language, cssSchema: null, raw: '', status: 'pending' }])));
     try {
       const res = await genSchemas({ domain, patterns }).unwrap();
       // Poll listesi backend'in ÇÖZDÜĞÜ pattern'lerden gelir: örnek yolunda
@@ -256,7 +261,7 @@ export default function DomainWizard({ onClose, onDone }) {
       const sel = (res?.selectedPatterns || []).filter((p) => p?.pattern);
       const list = sel.length ? sel : patterns.filter((p) => p.pattern);
       setDrafts(Object.fromEntries(list.map((item) => {
-        const language = item.language || patternLanguages[item.pattern] || 'mixed';
+        const language = item.language || patternLanguages[item.pattern]?.[0] || 'mixed';
         return [schemaDraftKey(item.pattern, language), { pattern: item.pattern, language, cssSchema: null, raw: '', status: 'pending' }];
       })));
       // Bilgi kaynağı commit'te pattern'e göre okunuyor; türetilen pattern'i de işaretle.
@@ -395,8 +400,8 @@ export default function DomainWizard({ onClose, onDone }) {
                         onToggle={() => togglePattern(p.pattern)}
                         source={knowledge[p.pattern] || (p.family === 'product' ? 'product' : 'content')}
                         onSource={(s) => setKnowledge((k) => ({ ...k, [p.pattern]: s }))}
-                        language={patternLanguages[p.pattern] || p.languageGroups?.[0]?.language || 'mixed'}
-                        onLanguage={(language) => setPatternLanguages((current) => ({ ...current, [p.pattern]: language }))} />
+                        languages={patternLanguages[p.pattern] || defaultPatternLanguages(p)}
+                        onLanguage={(languages) => setPatternLanguages((current) => ({ ...current, [p.pattern]: languages }))} />
                     ))}
                   </ul>
                 )}
@@ -516,7 +521,8 @@ function ProfileBadges({ p }) {
   return <div className="flex flex-wrap gap-1.5">{items.map((x) => <span key={x} className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{x}</span>)}</div>;
 }
 
-function PatternRow({ p, checked, disabled, onToggle, source, onSource, language, onLanguage }) {
+function PatternRow({ p, checked, disabled, onToggle, source, onSource, languages, onLanguage }) {
+  const selectedLanguages = languages?.length ? languages : defaultPatternLanguages(p);
   return (
     <li className={cn('rounded-lg border p-3', checked ? 'border-primary/50 bg-primary/5' : 'border-border')}>
       <div className="flex items-start gap-3">
@@ -530,12 +536,24 @@ function PatternRow({ p, checked, disabled, onToggle, source, onSource, language
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">{p.count > 0 ? `${p.count} sayfa` : 'sayfa sayısı bilinmiyor'}</p>
           {(p.languageGroups || []).length > 0 && (
-            <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              Dil varyantı
-              <select value={language} disabled={!checked || disabled} onChange={(e) => onLanguage(e.target.value)} className="h-7 rounded border border-input bg-background px-1.5 text-xs text-foreground">
-                {p.languageGroups.map((group) => <option key={group.language} value={group.language}>{group.language === 'mixed' ? 'Karışık / dil bağımsız' : group.language.toUpperCase()}{group.count ? ` · ${group.count}` : ''}</option>)}
-              </select>
-            </label>
+            <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+              <span>Şema üretilecek dil varyantları</span>
+              <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                {p.languageGroups.map((group) => {
+                  const isChecked = selectedLanguages.includes(group.language);
+                  return <label key={group.language} className="inline-flex items-center gap-1.5">
+                    <input type="checkbox" checked={isChecked} disabled={!checked || disabled} onChange={() => {
+                      const next = isChecked
+                        ? selectedLanguages.filter((language) => language !== group.language)
+                        : [...selectedLanguages, group.language];
+                      if (next.length) onLanguage(next);
+                    }} className="size-3.5" />
+                    <span>{group.language === 'mixed' ? 'Karışık' : group.language.toUpperCase()}{group.count ? ` · ${group.count}` : ''}</span>
+                    {group.signal && <span className="text-muted-foreground/70">{group.signal}</span>}
+                  </label>;
+                })}
+              </div>
+            </div>
           )}
           {(p.samples || []).slice(0, 3).map((u) => (
             <div key={u} className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground/70">
