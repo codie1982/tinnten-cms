@@ -482,7 +482,7 @@ export default function CampaignDashboardPage() {
               <div className="rounded-md border border-border p-3">
                 <div className="text-xs text-muted-foreground">Kalan alıcı</div>
                 <div className="mt-1 font-medium">
-                  {formatCount((Number(statsData?.delivery?.remaining) || 0) + (Number(stats?.queued) || 0))}
+                  {formatCount(Number(stats?.queued) || 0)}
                 </div>
               </div>
             </CardContent>
