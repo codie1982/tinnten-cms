@@ -32,6 +32,14 @@ function MailStatusBadge({ status }) {
   return <Badge variant={meta.variant}>{meta.label}</Badge>;
 }
 
+function MailTrackingBadge({ mail }) {
+  if (!mail?.trackingEnabled) return <Badge variant="muted">Takipsiz</Badge>;
+  if ((mail.openCount || 0) > 0) {
+    return <Badge variant="success">Açıldı · {mail.openCount}×</Badge>;
+  }
+  return <Badge variant="outline">Bekleniyor</Badge>;
+}
+
 function formatTrDateTime(input) {
   if (!input) return '—';
   const d = new Date(input);
@@ -127,6 +135,7 @@ export default function SentMailsPage() {
                       <TableHead>Konu</TableHead>
                       <TableHead>Tür</TableHead>
                       <TableHead>Durum</TableHead>
+                      <TableHead>Açılma</TableHead>
                       <TableHead>Tarih</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -142,6 +151,7 @@ export default function SentMailsPage() {
                         <TableCell>
                           <MailStatusBadge status={m.status} />
                         </TableCell>
+                        <TableCell><MailTrackingBadge mail={m} /></TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTrDateTime(m.createdAt)}</TableCell>
                       </TableRow>
                     ))}
@@ -183,6 +193,14 @@ export default function SentMailsPage() {
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Durum: </span>
                       <MailStatusBadge status={detail.status} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Açılma takibi: </span>
+                      <MailTrackingBadge mail={detail} />
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">İlk açılma: </span>
+                      {formatTrDateTime(detail.openedAt)}
                     </div>
                   </div>
                   {detail.error && <Alert variant="destructive"><AlertDescription>{detail.error}</AlertDescription></Alert>}

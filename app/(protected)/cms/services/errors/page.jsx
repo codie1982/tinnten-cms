@@ -34,6 +34,12 @@ const LEVEL_META = {
   warning: { label: 'Warning', variant: 'warning' },
   info: { label: 'Info', variant: 'muted' },
 };
+const KIND_META = {
+  exception: { label: 'Exception', variant: 'destructive' },
+  flow_failure: { label: 'Akış Başarısız', variant: 'destructive' },
+  flow_blocked: { label: 'Akış Engellendi', variant: 'warning' },
+  partial_failure: { label: 'Kısmi Başarı', variant: 'outline' },
+};
 const STATUS_META = {
   unresolved: { label: 'Açık', variant: 'warning' },
   resolved: { label: 'Çözüldü', variant: 'success' },
@@ -111,6 +117,7 @@ function StatCards({ authorized }) {
 function IssuesSection({ authorized }) {
   const [status, setStatus] = useState('unresolved');
   const [level, setLevel] = useState('all');
+  const [kind, setKind] = useState('all');
   const [regressed, setRegressed] = useState('all');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -121,6 +128,7 @@ function IssuesSection({ authorized }) {
     limit: PAGE_SIZE,
     status: status === 'all' ? undefined : status,
     level: level === 'all' ? undefined : level,
+    kind: kind === 'all' ? undefined : kind,
     // Nüks, durumdan bağımsız bir eksen: nükseden issue yeniden "açık" olur,
     // ama onu yeni gelen bir hatadan ayıran şey geçmişte kapatılmış olmasıdır.
     regressed: regressed === 'only' ? 1 : undefined,
@@ -157,6 +165,16 @@ function IssuesSection({ authorized }) {
               <SelectItem value="error">Error</SelectItem>
               <SelectItem value="warning">Warning</SelectItem>
               <SelectItem value="info">Info</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={kind} onValueChange={resetPageAnd(setKind)}>
+            <SelectTrigger className="w-[175px]"><SelectValue placeholder="Olay Türü" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tüm Olay Türleri</SelectItem>
+              <SelectItem value="exception">Exception</SelectItem>
+              <SelectItem value="flow_failure">Akış Başarısız</SelectItem>
+              <SelectItem value="flow_blocked">Akış Engellendi</SelectItem>
+              <SelectItem value="partial_failure">Kısmi Başarı</SelectItem>
             </SelectContent>
           </Select>
           <Select value={regressed} onValueChange={resetPageAnd(setRegressed)}>
@@ -197,6 +215,7 @@ function IssuesSection({ authorized }) {
                   <TableRow>
                     <TableHead>Başlık</TableHead>
                     <TableHead>Seviye</TableHead>
+                    <TableHead>Olay Türü</TableHead>
                     <TableHead>Ortam</TableHead>
                     <TableHead>Adet</TableHead>
                     <TableHead>Kullanıcı</TableHead>
@@ -207,6 +226,7 @@ function IssuesSection({ authorized }) {
                 <TableBody>
                   {items.map((it) => {
                     const lm = LEVEL_META[it.level] || { label: it.level, variant: 'muted' };
+                    const km = KIND_META[it.kind || 'exception'] || { label: it.kind, variant: 'muted' };
                     const sm = STATUS_META[it.status] || { label: it.status, variant: 'muted' };
                     return (
                       <TableRow key={it.fingerprint} className="cursor-pointer" onClick={() => setDetailFp(it.fingerprint)}>
@@ -224,6 +244,7 @@ function IssuesSection({ authorized }) {
                           {it.culprit && <div className="truncate font-mono text-xs text-muted-foreground">{it.culprit}</div>}
                         </TableCell>
                         <TableCell><Badge variant={lm.variant}>{lm.label}</Badge></TableCell>
+                        <TableCell><Badge variant={km.variant}>{km.label}</Badge></TableCell>
                         <TableCell className="text-xs text-muted-foreground">{(it.environments || []).join(', ') || '—'}</TableCell>
                         <TableCell className="text-sm tabular-nums text-muted-foreground">{it.eventCount ?? 0}</TableCell>
                         <TableCell className="max-w-[160px] truncate text-xs text-muted-foreground">{userLabel(it.lastUser)}</TableCell>
@@ -353,6 +374,7 @@ function IssueDetail({ fingerprint, onClose }) {
 
   const sm = issue ? (STATUS_META[issue.status] || { label: issue.status, variant: 'muted' }) : null;
   const lm = issue ? (LEVEL_META[issue.level] || { label: issue.level, variant: 'muted' }) : null;
+  const km = issue ? (KIND_META[issue.kind || 'exception'] || { label: issue.kind, variant: 'muted' }) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -374,6 +396,7 @@ function IssueDetail({ fingerprint, onClose }) {
               {/* Özet + aksiyonlar */}
               <div className="flex flex-wrap items-center gap-2">
                 {lm && <Badge variant={lm.variant}>{lm.label}</Badge>}
+                {km && <Badge variant={km.variant}>{km.label}</Badge>}
                 {sm && <Badge variant={sm.variant}>{sm.label}</Badge>}
                 <span className="text-xs text-muted-foreground">{issue.eventCount} olay</span>
                 <span className="text-xs text-muted-foreground">·</span>
@@ -441,11 +464,15 @@ function IssueDetail({ fingerprint, onClose }) {
                         {ev.method && <span>{ev.method} {ev.url}</span>}
                         {ev.transaction && !ev.url && <span>{ev.transaction}</span>}
                         {ev.statusCode != null && <span>HTTP {ev.statusCode}</span>}
+                        {ev.code && <span>kod: {ev.code}</span>}
                         {ev.user?.email && <span>👤 {ev.user.email}</span>}
                         {ev.requestId && <span>req: {ev.requestId}</span>}
                       </div>
                       {ev.stack && (
                         <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] text-muted-foreground">{ev.stack}</pre>
+                      )}
+                      {ev.context && Object.keys(ev.context).length > 0 && (
+                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] text-muted-foreground">{JSON.stringify(ev.context, null, 2)}</pre>
                       )}
                     </div>
                   ))
@@ -467,8 +494,8 @@ export default function ErrorMonitoringPage() {
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
       <PageHeader
         section="Servisler"
-        title="Hata İzleme"
-        description="Uygulama hataları, gruplu issue'lar ve etkilenen kullanıcılar"
+        title="Hata ve Akış Olayları"
+        description="Exception'lar, olumsuz kullanıcı akışları, gruplu issue'lar ve etkilenen kullanıcılar"
       />
       <div className="space-y-5">
         <StatCards authorized={authorized} />

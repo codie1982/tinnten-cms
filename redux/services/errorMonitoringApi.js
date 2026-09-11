@@ -16,9 +16,9 @@ export const errorMonitoringApi = baseApi.injectEndpoints({
     }),
     getErrorIssues: build.query({
       // `regressed: 1` → yalnız kapatıldıktan sonra geri gelen issue'lar.
-      query: ({ page = 1, limit = 25, status, level, environment, q, sort, regressed } = {}) => ({
+      query: ({ page = 1, limit = 25, status, level, kind, environment, q, sort, regressed } = {}) => ({
         url: ENDPOINTS.errorMonitoring.cmsIssues,
-        params: { page, limit, status, level, environment, q, sort, regressed },
+        params: { page, limit, status, level, kind, environment, q, sort, regressed },
       }),
       transformResponse: (res) => res?.data ?? res, // { items, total, page, limit, totalPages }
       providesTags: [{ type: 'ErrorIssue', id: 'LIST' }],
