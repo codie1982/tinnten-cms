@@ -247,7 +247,7 @@
   "productPolicy": {
     "brand": "Tinten",
     "providerPlans": "all",
-    "privateConnector": "disabled",
+    "privateConnector": "enabled",
     "assistantPoliciesLocation": "assistant_designer",
     "managedPricing": {
       "currency": "CREDIT",
