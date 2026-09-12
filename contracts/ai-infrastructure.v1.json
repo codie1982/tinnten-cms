@@ -173,7 +173,7 @@
       "scope": "company",
       "permission": "team:analytics:read",
       "feature": "usage",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "GET",
@@ -181,7 +181,7 @@
       "scope": "company",
       "permission": "team:analytics:read",
       "feature": "usage",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "GET",
@@ -243,5 +243,18 @@
       "feature": "policies",
       "implementation": "managed_rollout"
     }
-  ]
+  ],
+  "productPolicy": {
+    "brand": "Tinten",
+    "providerPlans": "all",
+    "privateConnector": "disabled",
+    "assistantPoliciesLocation": "assistant_designer",
+    "managedPricing": {
+      "currency": "CREDIT",
+      "unit": "million_tokens",
+      "tariffDecimalPlaces": 6,
+      "chargeDecimalPlaces": 12,
+      "legacyRecords": "not_repriced"
+    }
+  }
 }
