@@ -19,6 +19,7 @@ import {
   LifeBuoy,
   Handshake,
   Tags,
+  Database,
 } from 'lucide-react';
 import { CMS_ROLES } from '@/lib/roles';
 
@@ -38,6 +39,12 @@ export const CMS_NAV = [
   },
 
   { heading: 'YAPAY ZEKA' },
+  {
+    title: 'AI Model Kataloğu',
+    icon: Database,
+    path: '/cms/ai-models',
+    roles: [CMS_ROLES.ADMIN],
+  },
   {
     title: 'Asistanlar',
     icon: Bot,

@@ -1,0 +1,238 @@
+{
+  "version": "ai-infrastructure.v1",
+  "roles": [
+    "response",
+    "reasoning",
+    "planner",
+    "fast",
+    "extract",
+    "summary",
+    "vision",
+    "image"
+  ],
+  "presets": [
+    "economical",
+    "balanced",
+    "high_quality"
+  ],
+  "providers": [
+    "tinnten",
+    "openai",
+    "google",
+    "openai_compatible",
+    "private_connector"
+  ],
+  "features": [
+    "connections",
+    "catalog",
+    "policies",
+    "connectors",
+    "usage"
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/ai/policy-models",
+      "scope": "company",
+      "permission": "assistants:assistant:read",
+      "feature": "policies",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/context",
+      "scope": "company",
+      "permission": null,
+      "feature": null,
+      "implementation": "context"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/connections",
+      "scope": "company",
+      "permission": "ai:infrastructure:read",
+      "feature": "connections",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/connections",
+      "scope": "company",
+      "permission": "ai:infrastructure:update",
+      "feature": "connections",
+      "request": "connectionCreate",
+      "implementation": "planned"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/connections/:id/test",
+      "scope": "company",
+      "permission": "ai:infrastructure:update",
+      "feature": "connections",
+      "implementation": "planned"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/connections/:id/rotate",
+      "scope": "company",
+      "permission": "ai:infrastructure:update",
+      "feature": "connections",
+      "request": "secretRotate",
+      "implementation": "planned"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/connections/:id/revoke",
+      "scope": "company",
+      "permission": "ai:infrastructure:update",
+      "feature": "connections",
+      "request": "revoke",
+      "implementation": "planned"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/catalog",
+      "scope": "company",
+      "permission": "ai:infrastructure:read",
+      "feature": "catalog",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/models",
+      "scope": "company",
+      "permission": "ai:infrastructure:read",
+      "feature": "catalog",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/models",
+      "scope": "company",
+      "permission": "ai:infrastructure:update",
+      "feature": "catalog",
+      "request": "modelEnable",
+      "implementation": "planned"
+    },
+    {
+      "method": "PATCH",
+      "path": "/ai/models/:id",
+      "scope": "company",
+      "permission": "ai:infrastructure:update",
+      "feature": "catalog",
+      "request": "modelUpdate",
+      "implementation": "planned"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/assistant-policies",
+      "scope": "company",
+      "permission": "assistants:assistant:read",
+      "feature": "policies",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "PUT",
+      "path": "/ai/assistant-policies/:id",
+      "scope": "company",
+      "permission": "assistants:assistant:update",
+      "feature": "policies",
+      "request": "policyUpdate",
+      "implementation": "planned"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/connectors",
+      "scope": "company",
+      "permission": "ai:privateRuntime:read",
+      "feature": "connectors",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/connectors",
+      "scope": "company",
+      "permission": "ai:privateRuntime:update",
+      "feature": "connectors",
+      "request": "connectorRegister",
+      "implementation": "planned"
+    },
+    {
+      "method": "POST",
+      "path": "/ai/connectors/:id/revoke",
+      "scope": "company",
+      "permission": "ai:privateRuntime:update",
+      "feature": "connectors",
+      "request": "revoke",
+      "implementation": "planned"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/usage",
+      "scope": "company",
+      "permission": "team:analytics:read",
+      "feature": "usage",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/usage/summary",
+      "scope": "company",
+      "permission": "team:analytics:read",
+      "feature": "usage",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "GET",
+      "path": "/cms/ai/context",
+      "scope": "platform",
+      "permission": "cms:admin",
+      "feature": null,
+      "implementation": "context"
+    },
+    {
+      "method": "GET",
+      "path": "/cms/ai/models",
+      "scope": "platform",
+      "permission": "cms:admin",
+      "feature": "catalog",
+      "implementation": "unavailable"
+    },
+    {
+      "method": "POST",
+      "path": "/cms/ai/models",
+      "scope": "platform",
+      "permission": "cms:admin",
+      "feature": "catalog",
+      "request": "catalogCreate",
+      "implementation": "planned"
+    },
+    {
+      "method": "PATCH",
+      "path": "/cms/ai/models/:id",
+      "scope": "platform",
+      "permission": "cms:admin",
+      "feature": "catalog",
+      "request": "catalogUpdate",
+      "implementation": "planned"
+    },
+    {
+      "method": "POST",
+      "path": "/cms/ai/models/:id/prices",
+      "scope": "platform",
+      "permission": "cms:admin",
+      "feature": "catalog",
+      "request": "priceCreate",
+      "implementation": "planned"
+    },
+    {
+      "method": "POST",
+      "path": "/cms/ai/models/:id/publish",
+      "scope": "platform",
+      "permission": "cms:admin",
+      "feature": "catalog",
+      "request": "versionMatch",
+      "implementation": "planned"
+    }
+  ]
+}
