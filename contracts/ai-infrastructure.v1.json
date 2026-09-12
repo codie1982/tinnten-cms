@@ -18,6 +18,7 @@
   "providers": [
     "tinnten",
     "openai",
+    "digitalocean",
     "google",
     "openai_compatible",
     "private_connector"
@@ -36,7 +37,7 @@
       "scope": "company",
       "permission": "assistants:assistant:read",
       "feature": "policies",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "GET",
@@ -95,7 +96,7 @@
       "scope": "company",
       "permission": "ai:infrastructure:read",
       "feature": "catalog",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "GET",
@@ -103,7 +104,7 @@
       "scope": "company",
       "permission": "ai:infrastructure:read",
       "feature": "catalog",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "POST",
@@ -112,7 +113,7 @@
       "permission": "ai:infrastructure:update",
       "feature": "catalog",
       "request": "modelEnable",
-      "implementation": "planned"
+      "implementation": "managed_rollout"
     },
     {
       "method": "PATCH",
@@ -129,7 +130,7 @@
       "scope": "company",
       "permission": "assistants:assistant:read",
       "feature": "policies",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "PUT",
@@ -138,7 +139,7 @@
       "permission": "assistants:assistant:update",
       "feature": "policies",
       "request": "policyUpdate",
-      "implementation": "planned"
+      "implementation": "managed_rollout"
     },
     {
       "method": "GET",
@@ -196,7 +197,7 @@
       "scope": "platform",
       "permission": "cms:admin",
       "feature": "catalog",
-      "implementation": "unavailable"
+      "implementation": "managed_rollout"
     },
     {
       "method": "POST",
@@ -233,6 +234,14 @@
       "feature": "catalog",
       "request": "versionMatch",
       "implementation": "planned"
+    },
+    {
+      "method": "GET",
+      "path": "/ai/assistant-policies/:id",
+      "scope": "company",
+      "permission": "assistants:assistant:read",
+      "feature": "policies",
+      "implementation": "managed_rollout"
     }
   ]
 }
