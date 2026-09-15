@@ -358,6 +358,7 @@ export const ENDPOINTS = {
     cmsList: '/mail-list/cms',
     cmsStats: '/mail-list/cms/stats',
     cmsDetail: '/mail-list/cms/detail',
+    cmsInspect: '/mail-list/cms/inspect',
     cmsSuppressions: '/mail-list/cms/suppressions',
     cmsSuppressionStats: '/mail-list/cms/suppressions/stats',
     cmsSuppressionRelease: '/mail-list/cms/suppressions/release',

@@ -109,6 +109,14 @@ export const emailApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res, // full mail_list doc
       providesTags: (r, e, email) => [{ type: 'MailSubscriber', id: email }],
     }),
+    getCmsEmailInsight: build.query({
+      query: ({ email, limit = 100 }) => ({
+        url: ENDPOINTS.mailList.cmsInspect,
+        params: { email, limit },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, { email }) => [{ type: 'MailSubscriber', id: `INSPECT:${email}` }],
+    }),
     getCmsSuppressions: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.mailList.cmsSuppressions, params }),
       transformResponse: (res) => res?.data ?? res,
@@ -158,6 +166,7 @@ export const {
   useGetCmsSubscribersQuery,
   useGetCmsSubscriptionStatsQuery,
   useGetCmsSubscriberQuery,
+  useGetCmsEmailInsightQuery,
   useGetCmsSuppressionsQuery,
   useGetCmsSuppressionStatsQuery,
   useAddCmsSuppressionMutation,

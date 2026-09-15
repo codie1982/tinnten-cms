@@ -8,6 +8,7 @@ import {
   Users, ListFilter, Newspaper, RefreshCw, Plus, Trash2, Archive, ArchiveRestore,
   Loader2, Pencil, Save, X, AlertTriangle, ChevronDown, ChevronRight,
   UserCheck, UserMinus, FolderInput, FolderTree, FolderPlus, ShieldBan, ShieldCheck,
+  Search,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -36,15 +37,15 @@ import {
   useAddCmsSuppressionMutation,
   useReleaseCmsSuppressionMutation,
 } from '@/redux/services';
-import { AddMembersPanel } from '@/components/email/add-members-panel';
 import { CronListsManager } from '@/components/email/cron-lists-manager';
+import { EmailInspector } from '@/components/email/email-inspector';
 
 const SECTION_KEYS = ['general', 'custom', 'news', 'cron', 'blacklist'];
 
 const MEMBER_PAGE = 50;
 
 const SECTIONS = [
-  { key: 'general', label: 'Genel Liste', icon: Users, desc: 'Tüm kayıtlı ve dışarıdan eklenen alıcılar' },
+  { key: 'general', label: 'E-posta Arama', icon: Search, desc: 'Adresin liste, kampanya ve gönderim geçmişi' },
   { key: 'custom', label: 'Özel Listeler', icon: ListFilter, desc: 'Oluşturduğunuz kullanıcı listeleri' },
   { key: 'news', label: 'Haber Listesi', icon: Newspaper, desc: 'Haber akışından abone olundu' },
   { key: 'cron', label: 'Cron Listeleri', icon: RefreshCw, desc: 'Zamanlı olarak oluşturulan listeler' },
@@ -83,90 +84,6 @@ function SummaryCard({ icon: Icon, label, value, tone = 'primary' }) {
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-/* ── Genel Liste ── */
-function GeneralSection({ authorized }) {
-  const [skip, setSkip] = useState(0);
-  const [q, setQ] = useState('');
-
-  const { data, isLoading, isFetching, error } = useGetChannelMembersQuery(
-    { key: 'general', limit: MEMBER_PAGE, skip, q },
-    { skip: !authorized },
-  );
-  const members = data?.items ?? [];
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
-        <AddMembersPanel
-          channelKey="general"
-          authorized={authorized}
-          note="Kayıtlı kullanıcılar otomatik eklenir. Buradan kayıt olmadan dışarıdan e-posta ekleyebilirsiniz."
-        />
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Üyeler</CardTitle>
-            <CardToolbar className="gap-2">
-              <Input
-                value={q}
-                onChange={(e) => { setQ(e.target.value); setSkip(0); }}
-                placeholder="E-posta ara…"
-                className="h-8 w-48"
-              />
-              {isFetching && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-            </CardToolbar>
-          </CardHeader>
-          <CardContent className="p-0">
-            {error ? (
-              <div className="p-4">
-                <Alert variant="destructive">
-                  <AlertDescription>{error?.data?.message || 'Sunucuya ulaşılamadı.'}</AlertDescription>
-                </Alert>
-              </div>
-            ) : isLoading ? (
-              <div className="space-y-1 p-4">
-                {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
-              </div>
-            ) : members.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">Genel listede üye yok.</p>
-            ) : (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>E-posta</TableHead>
-                      <TableHead>Ad</TableHead>
-                      <TableHead>Durum</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {members.map((m) => (
-                      <TableRow key={m._id || m.email}>
-                        <TableCell className="font-mono text-xs">{m.email}</TableCell>
-                        <TableCell>{m.profile?.name || '—'}</TableCell>
-                        <TableCell>
-                          <Badge variant={m.status === 'active' ? 'success' : 'destructive'}>{m.status}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
-                  <span className="text-muted-foreground">{skip + 1}–{skip + members.length}</span>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - MEMBER_PAGE))}>Önceki</Button>
-                    <Button size="sm" variant="outline" disabled={members.length < MEMBER_PAGE} onClick={() => setSkip(skip + MEMBER_PAGE)}>Sonraki</Button>
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
   );
 }
 
@@ -262,8 +179,10 @@ function CustomListsSection({ authorized }) {
   const [confirmId, setConfirmId] = useState(null);
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({ title: '', description: '', parentKey: '' });
-  // Genişletilmiş varsayılan: gruplama ilk bakışta görünsün. Daraltılan grup key'leri.
-  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
+  // Gruplar varsayılan olarak kapalıdır; yalnız kullanıcının açtığı grup key'leri tutulur.
+  // Veri asenkron geldiği için "kapalıları" ilk render'da hesaplamak mümkün değil;
+  // açıkları tutmak sonradan gelen/yeni oluşturulan grupları da doğal olarak kapalı başlatır.
+  const [expandedKeys, setExpandedKeys] = useState(() => new Set());
   // Arşivlenen listeler aktif listeden kalkar, bu sekmede görünür.
   const [view, setView] = useState('active');
   // Toplu seçim → "Gruba Al". Seçim _id ile tutulur; satır kaybolsa da güvenli.
@@ -298,6 +217,10 @@ function CustomListsSection({ authorized }) {
   // Grup (çocuğu olan) düğümlere alt ağaçtaki toplam üye sayısı iliştirilir.
   const displayTree = sortTreeNodes(buildChannelTree(customChannels));
   annotateSubtree(displayTree);
+  const allTreeRows = flattenTreeRows(displayTree, 0, new Set(), false, []);
+  const collapsedKeys = new Set(
+    allTreeRows.filter((row) => row.hasChildren && !expandedKeys.has(row.key)).map((row) => row.key),
+  );
   const treeRows = flattenTreeRows(displayTree, 0, collapsedKeys, false, []);
   const visibleRows = treeRows.filter((r) => !r.hidden);
 
@@ -317,7 +240,7 @@ function CustomListsSection({ authorized }) {
     visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedSet.has(id));
 
   const toggleCollapse = (key) => {
-    setCollapsedKeys((prev) => {
+    setExpandedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -1221,7 +1144,7 @@ function MailListsPageInner() {
       <PageHeader
         section="Email"
         title="Mail Listeleri"
-        description="E-posta listeleri, abonelikler ve global kara liste"
+        description="E-posta inceleme, listeler, abonelikler ve global kara liste"
       />
 
       <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
@@ -1259,7 +1182,7 @@ function MailListsPageInner() {
         </aside>
 
         <div>
-          {section === 'general' && <GeneralSection authorized={authorized} />}
+          {section === 'general' && <EmailInspector authorized={authorized} />}
           {section === 'custom' && <CustomListsSection authorized={authorized} />}
           {section === 'news' && <NewsSection authorized={authorized} />}
           {section === 'cron' && <CronSection authorized={authorized} />}
