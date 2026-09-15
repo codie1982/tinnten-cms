@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   CheckCircle2,
+  ChevronRight,
   CircleAlert,
   Eye,
   History,
@@ -33,7 +34,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useGetCmsEmailInsightQuery, useGetSentMailQuery } from '@/redux/services';
+import {
+  useGetCmsEmailInsightQuery,
+  useGetCmsEmailSuggestionsQuery,
+  useGetSentMailQuery,
+} from '@/redux/services';
 
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
@@ -63,6 +68,14 @@ const IDENTITY_LABELS = {
   suppression_only: 'Yalnız kara liste kaydı',
   history_only: 'Yalnız gönderim geçmişi',
   unknown: 'Kayıt bulunamadı',
+};
+
+const SOURCE_LABELS = {
+  subscriber: 'Abone kaydı',
+  user: 'Kullanıcı',
+  suppression: 'Kara liste',
+  legacy_suppression: 'Eski suppression',
+  history: 'Gönderim geçmişi',
 };
 
 const MAIL_STATUS_META = {
@@ -186,28 +199,45 @@ export function EmailInspector({ authorized }) {
   const urlEmail = searchParams.get('email') || '';
   const [draft, setDraft] = useState(urlEmail);
   const [submitted, setSubmitted] = useState(urlEmail.toLowerCase());
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [localError, setLocalError] = useState('');
   const [detailId, setDetailId] = useState(null);
 
   useEffect(() => {
     setDraft(urlEmail);
     setSubmitted(urlEmail.toLowerCase());
+    setSuggestionsOpen(false);
   }, [urlEmail]);
+
+  useEffect(() => {
+    const query = draft.trim().toLowerCase();
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 280);
+    return () => window.clearTimeout(timer);
+  }, [draft]);
+
+  const {
+    data: suggestionData,
+    isFetching: suggestionFetching,
+    error: suggestionError,
+  } = useGetCmsEmailSuggestionsQuery(
+    { q: debouncedQuery, limit: 12 },
+    { skip: !authorized || debouncedQuery.length < 2 },
+  );
+  const suggestions = suggestionData?.items || [];
 
   const { data, isLoading, isFetching, error, refetch } = useGetCmsEmailInsightQuery(
     { email: submitted, limit: 100 },
     { skip: !authorized || !submitted },
   );
 
-  const runSearch = (event) => {
-    event?.preventDefault();
-    const email = draft.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setLocalError('Geçerli bir e-posta adresi girin.');
-      return;
-    }
+  const selectEmail = (value) => {
+    const email = String(value || '').trim().toLowerCase();
+    if (!email) return;
+    setDraft(email);
     setLocalError('');
     setSubmitted(email);
+    setSuggestionsOpen(false);
     setDetailId(null);
     const params = new URLSearchParams(searchParams.toString());
     params.delete('tab');
@@ -215,9 +245,21 @@ export function EmailInspector({ authorized }) {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
+  const runSearch = (event) => {
+    event?.preventDefault();
+    const email = draft.trim().toLowerCase();
+    const exactSuggestion = suggestions.find((item) => item.email === email);
+    if (exactSuggestion) return selectEmail(exactSuggestion.email);
+    if (suggestions[0]) return selectEmail(suggestions[0].email);
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return selectEmail(email);
+    setLocalError('Sonuçlardan bir e-posta adresi seçin.');
+  };
+
   const clearSearch = () => {
     setDraft('');
     setSubmitted('');
+    setDebouncedQuery('');
+    setSuggestionsOpen(false);
     setLocalError('');
     setDetailId(null);
     router.replace(pathname, { scroll: false });
@@ -237,7 +279,7 @@ export function EmailInspector({ authorized }) {
 
   return (
     <div className="space-y-5">
-      <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background">
+      <Card className="overflow-visible border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background">
         <CardContent className="p-5 sm:p-6">
           <div className="mb-4 flex items-start gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -254,25 +296,86 @@ export function EmailInspector({ authorized }) {
             <div className="relative flex-1">
               <Mail className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                type="email"
+                type="search"
                 autoComplete="off"
                 value={draft}
-                onChange={(event) => { setDraft(event.target.value); setLocalError(''); }}
-                placeholder="ornek@firma.com"
-                className="h-10 ps-9"
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setLocalError('');
+                  setSuggestionsOpen(true);
+                }}
+                onFocus={() => setSuggestionsOpen(true)}
+                onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 120)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') setSuggestionsOpen(false);
+                }}
+                placeholder="E-posta adresinden en az 2 karakter yazın…"
+                className="h-10 ps-9 pe-9"
               />
+              {suggestionFetching && (
+                <Loader2 className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+              )}
+
+              {suggestionsOpen && debouncedQuery.length >= 2 && (
+                <Card
+                  className="absolute inset-x-0 top-full z-40 mt-2 max-h-80 overflow-y-auto border-border shadow-xl"
+                  onMouseDown={(event) => event.preventDefault()}
+                >
+                  <CardContent className="p-1.5">
+                    {suggestionFetching && suggestions.length === 0 ? (
+                      <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
+                        <Loader2 className="size-4 animate-spin" /> E-posta kayıtları aranıyor…
+                      </div>
+                    ) : suggestionError ? (
+                      <div className="px-3 py-4 text-sm text-destructive">Arama sonuçları alınamadı.</div>
+                    ) : suggestions.length === 0 ? (
+                      <div className="px-3 py-4 text-sm text-muted-foreground">Bu ifadeyle eşleşen e-posta bulunamadı.</div>
+                    ) : (
+                      <div className="space-y-0.5">
+                        {suggestions.map((item) => (
+                          <button
+                            key={item.email}
+                            type="button"
+                            onClick={() => selectEmail(item.email)}
+                            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent focus:bg-accent focus:outline-none"
+                          >
+                            <div className={`flex size-9 shrink-0 items-center justify-center rounded-full ${item.suppressed ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}`}>
+                              {item.suppressed ? <ShieldBan className="size-4" /> : <Mail className="size-4" />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate font-mono text-xs font-semibold">{item.email}</span>
+                                {item.suppressed && <Badge variant="destructive">Engelli</Badge>}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                                {item.name && <span className="font-medium text-foreground/80">{item.name}</span>}
+                                <span>{IDENTITY_LABELS[item.identityKind] || item.identityKind}</span>
+                                {item.activeMembershipCount > 0 && <span>{formatCount(item.activeMembershipCount)} abonelik</span>}
+                                {item.deliveryCount > 0 && <span>{formatCount(item.deliveryCount)} mail · {formatCount(item.sentCount)} gönderildi</span>}
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {(item.sources || []).map((source) => <Badge key={source} variant="muted">{SOURCE_LABELS[source] || source}</Badge>)}
+                              </div>
+                            </div>
+                            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
-            <Button type="submit" disabled={isFetching || !draft.trim()}>
-              {isFetching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-              İncele
-            </Button>
             {submitted && (
               <Button type="button" variant="outline" onClick={clearSearch}>
                 <X className="size-4" /> Temizle
               </Button>
             )}
           </form>
-          {localError && <p className="mt-2 text-xs text-destructive">{localError}</p>}
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>Yazdıkça tüm e-posta kaynaklarında aranır; ayrıntı için bir sonucu seçin. Enter ilk sonucu seçer.</span>
+            {localError && <span className="text-destructive">{localError}</span>}
+          </div>
         </CardContent>
       </Card>
 
