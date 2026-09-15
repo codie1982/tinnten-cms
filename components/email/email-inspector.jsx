@@ -39,6 +39,7 @@ import {
   useGetCmsEmailSuggestionsQuery,
   useGetSentMailQuery,
 } from '@/redux/services';
+import { categoryMeta, reasonMeta } from '@/lib/unsubscribeReasons';
 
 const countFormatter = new Intl.NumberFormat('tr-TR');
 const formatCount = (value) => countFormatter.format(Number(value) || 0);
@@ -96,17 +97,41 @@ const CAMPAIGN_STATUS_LABELS = {
   paused: 'Duraklatıldı',
 };
 
-const REASON_LABELS = {
-  ses_bounce: 'Kalıcı bounce',
-  ses_complaint: 'Spam şikâyeti',
-  user_unsubscribed: 'Kullanıcı çıkışı',
-  user_unsubscribed_via_email: 'E-postadan çıkış',
-  one_click: 'Tek tıkla çıkış',
-  cms_removed: 'CMS ile çıkarıldı',
-  wrong_recipient_risk: 'Yanlış alıcı riski',
-  moved_to_language_channel: 'Dil listesine taşındı',
-  mail_list_removed: 'Listeden çıkarıldı',
-  manual: 'Elle eklendi',
+const REASON_SOURCE_VARIANTS = {
+  recipient: 'warning',
+  operator: 'secondary',
+  system: 'muted',
+  unknown: 'muted',
+};
+
+function ReasonExplanation({ reason, info, className = '', showCode = true }) {
+  const meta = reasonMeta(reason, info);
+  const category = categoryMeta(meta.category);
+  return (
+    <div className={className}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={REASON_SOURCE_VARIANTS[meta.source] || 'muted'}>{meta.sourceLabel}</Badge>
+        <span className="font-medium text-foreground">{meta.label}</span>
+      </div>
+      <p className="mt-1.5 max-w-3xl leading-relaxed text-muted-foreground">{meta.description}</p>
+      {showCode && meta.code && (
+        <div className="mt-1 text-[11px] text-muted-foreground">
+          Kayıt kodu: <code className="rounded bg-muted px-1 py-0.5">{meta.code}</code>
+          <span className="ms-2">· {category.label}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const membershipMeta = (list) => {
+  if (list.membershipStatus === 'subscribed') return { label: 'Abone', variant: 'success' };
+  if (list.membershipStatus !== 'unsubscribed') return { label: 'Yalnız geçmişte', variant: 'muted' };
+  const reason = reasonMeta(list.effectiveReason || list.reason, list.reasonInfo);
+  return {
+    label: reason.sourceLabel || 'Üyelik kapalı',
+    variant: reason.source === 'recipient' ? 'warning' : 'secondary',
+  };
 };
 
 function MailStatusBadge({ status }) {
@@ -355,6 +380,7 @@ export function EmailInspector({ authorized }) {
                               </div>
                               <div className="mt-1 flex flex-wrap gap-1">
                                 {(item.sources || []).map((source) => <Badge key={source} variant="muted">{SOURCE_LABELS[source] || source}</Badge>)}
+                                {item.suppressionReasonInfo?.label && <Badge variant="secondary">{item.suppressionReasonInfo.label}</Badge>}
                               </div>
                             </div>
                             <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -452,7 +478,16 @@ export function EmailInspector({ authorized }) {
           <Alert variant={data.deliverability?.state === 'blocked' ? 'destructive' : 'info'}>
             <AlertTitle>{deliveryMeta.label}</AlertTitle>
             <AlertDescription>
-              {data.deliverability?.message} <span className="opacity-75">{data.deliverability?.note}</span>
+              {data.deliverability?.state === 'blocked' && data.deliverability?.reason ? (
+                <ReasonExplanation
+                  reason={data.deliverability.reason}
+                  info={data.deliverability.reasonInfo}
+                  className="mt-2 text-sm"
+                />
+              ) : (
+                <span>{data.deliverability?.message}</span>
+              )}
+              <p className="mt-2 opacity-75">{data.deliverability?.note}</p>
             </AlertDescription>
           </Alert>
 
@@ -493,7 +528,10 @@ export function EmailInspector({ authorized }) {
                       {data.suppression.storage === 'mail_suppressions' && <Badge variant="warning">Eski kayıt</Badge>}
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <div><div className="text-xs text-muted-foreground">Sebep</div><div className="mt-1 font-medium">{REASON_LABELS[data.suppression.reason] || data.suppression.reason || 'Bilinmiyor'}</div></div>
+                      <div className="sm:col-span-2">
+                        <div className="mb-2 text-xs text-muted-foreground">Neden engellendi?</div>
+                        <ReasonExplanation reason={data.suppression.reason} info={data.suppression.reasonInfo} />
+                      </div>
                       <div><div className="text-xs text-muted-foreground">Kaynak</div><div className="mt-1">{data.suppression.source || '—'}</div></div>
                       <div><div className="text-xs text-muted-foreground">Engellenme tarihi</div><div className="mt-1">{formatDateTime(data.suppression.suppressedAt)}</div></div>
                       <div><div className="text-xs text-muted-foreground">Serbest bırakılma</div><div className="mt-1">{formatDateTime(data.suppression.releasedAt)}</div></div>
@@ -529,24 +567,37 @@ export function EmailInspector({ authorized }) {
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
-                    <TableHeader><TableRow><TableHead>Liste</TableHead><TableHead>Üyelik</TableHead><TableHead>Liste durumu</TableHead><TableHead>Geçmiş kullanım</TableHead><TableHead>Tarih / sebep</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>Liste</TableHead><TableHead>Üyelik</TableHead><TableHead>Liste durumu</TableHead><TableHead>Geçmiş kullanım</TableHead><TableHead>İşlem / açıklama</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {data.lists.map((list) => (
+                      {data.lists.map((list) => {
+                        const membership = membershipMeta(list);
+                        return (
                         <TableRow key={list.key}>
                           <TableCell><div className="font-medium">{list.title}</div><div className="font-mono text-[11px] text-muted-foreground">{list.key}</div></TableCell>
                           <TableCell>
-                            <Badge variant={list.membershipStatus === 'subscribed' ? 'success' : list.membershipStatus === 'unsubscribed' ? 'warning' : 'muted'}>
-                              {list.membershipStatus === 'subscribed' ? 'Abone' : list.membershipStatus === 'unsubscribed' ? 'Çıkmış' : 'Yalnız geçmişte'}
-                            </Badge>
+                            <Badge variant={membership.variant}>{membership.label}</Badge>
                           </TableCell>
                           <TableCell><Badge variant={list.missing ? 'destructive' : list.listStatus === 'active' ? 'outline' : 'muted'}>{list.missing ? 'Liste silinmiş' : list.listStatus === 'active' ? 'Aktif' : 'Arşiv'}</Badge></TableCell>
                           <TableCell className="text-xs">{formatCount(list.campaignCount)} kampanya · {formatCount(list.deliveryCount)} mail</TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             <div>{formatDateTime(list.unsubscribedAt || list.subscribedAt)}</div>
-                            {(list.reason || list.capturedAtSuppression) && <div className="mt-1">{REASON_LABELS[list.reason] || list.reason || 'Engel anında üyeydi'}</div>}
+                            {(list.reasonInfo || list.reason) ? (
+                              <ReasonExplanation
+                                reason={list.effectiveReason || list.reason}
+                                info={list.reasonInfo}
+                                className="mt-2 min-w-64 text-xs"
+                              />
+                            ) : list.capturedAtSuppression ? (
+                              <ReasonExplanation
+                                reason={data.suppression?.reason}
+                                info={data.suppression?.reasonInfo}
+                                className="mt-2 min-w-64 text-xs"
+                              />
+                            ) : null}
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>

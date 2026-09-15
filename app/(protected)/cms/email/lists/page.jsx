@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { cn } from '@/lib/utils';
+import { reasonMeta } from '@/lib/unsubscribeReasons';
 import {
   useGetMailChannelsQuery,
   useGetChannelMembersQuery,
@@ -963,19 +964,6 @@ function NewsSection({ authorized }) {
   );
 }
 
-const REASON_LABELS = {
-  ses_bounce: 'Kalıcı bounce',
-  ses_complaint: 'Spam şikâyeti',
-  user_unsubscribed: 'Kullanıcı çıkışı',
-  user_unsubscribed_via_email: 'E-postadan çıkış',
-  one_click: 'Tek tıkla çıkış',
-  cms_removed: 'CMS ile çıkarıldı',
-  wrong_recipient_risk: 'Yanlış alıcı riski',
-  moved_to_language_channel: 'Dil listesine taşındı',
-  mail_list_removed: 'Listeden çıkarıldı',
-  manual: 'Elle eklendi',
-};
-
 const formatDateTime = (value) => value
   ? new Intl.DateTimeFormat('tr-TR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
   : '—';
@@ -1088,10 +1076,19 @@ function BlacklistSection({ authorized }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((item) => (
+                  {items.map((item) => {
+                    const reason = reasonMeta(item.reason, item.reasonInfo);
+                    return (
                     <TableRow key={item.id}>
                       <TableCell className="font-mono text-xs">{item.email}</TableCell>
-                      <TableCell><Badge variant="muted">{REASON_LABELS[item.reason] || item.reason || 'Bilinmiyor'}</Badge></TableCell>
+                      <TableCell className="max-w-md">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="muted">{reason.sourceLabel}</Badge>
+                          <span className="text-sm font-medium">{reason.label}</span>
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{reason.description}</p>
+                        {reason.code && <code className="mt-1 inline-block text-[10px] text-muted-foreground">{reason.code}</code>}
+                      </TableCell>
                       <TableCell>{item.source || '—'}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.suppressedAt)}</TableCell>
                       <TableCell><Badge variant={item.active ? 'destructive' : 'success'}>{item.active ? 'Engelli' : 'Serbest'}</Badge></TableCell>
@@ -1099,7 +1096,8 @@ function BlacklistSection({ authorized }) {
                         {item.active && <Button size="sm" variant="outline" disabled={releasing} onClick={() => release(item.email)}>Serbest bırak</Button>}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
               <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
