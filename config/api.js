@@ -286,6 +286,7 @@ export const ENDPOINTS = {
   companyPartners: {
     cmsPending: '/company/partners/cms/pending',
     cmsDecision: (id) => `/company/partners/cms/${id}/decision`,
+    cmsCapabilities: (id) => `/company/partners/cms/${id}/capabilities`,
   },
   email: {
     // Eski mock uçlar (kullanılmıyor ama referansta kalsın)

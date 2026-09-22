@@ -15,6 +15,7 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useDecideCompanyPartnerRelationMutation,
   useGetPendingCompanyPartnerRelationsQuery,
+  useUpdateCompanyPartnerCapabilitiesMutation,
 } from '@/redux/services';
 
 const STATUS = {
@@ -39,23 +40,78 @@ function CapabilityBadges({ capabilities }) {
   );
 }
 
+function RevenueChoice({ checked, disabled, onChange }) {
+  return (
+    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs font-medium">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="size-4 accent-primary"
+      />
+      Gelir ortağı
+    </label>
+  );
+}
+
 export default function CompanyPartnerRelationsPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
   const [actionError, setActionError] = useState('');
+  const [revenueSelections, setRevenueSelections] = useState({});
   const { data, isLoading, isFetching, error } = useGetPendingCompanyPartnerRelationsQuery(
     {},
     { skip: !authorized },
   );
+  const {
+    data: activeData,
+    isLoading: activeLoading,
+    isFetching: activeFetching,
+    error: activeError,
+  } = useGetPendingCompanyPartnerRelationsQuery(
+    { status: 'active' },
+    { skip: !authorized },
+  );
   const [decide, { isLoading: deciding }] = useDecideCompanyPartnerRelationMutation();
+  const [updateCapabilities, { isLoading: updatingCapabilities }] = useUpdateCompanyPartnerCapabilitiesMutation();
   const items = data?.items ?? [];
+  const activeItems = activeData?.items ?? [];
+
+  const relationRevenueValue = (relation) => {
+    const id = relation.id || relation._id;
+    return revenueSelections[id] ?? Boolean(
+      (relation.pendingCapabilities || relation.capabilities)?.canEarnRevenue,
+    );
+  };
+
+  const setRelationRevenueValue = (relation, value) => {
+    const id = relation.id || relation._id;
+    setRevenueSelections((current) => ({ ...current, [id]: value }));
+  };
 
   const handleDecision = async (relation, decision) => {
     setActionError('');
     const id = relation.id || relation._id;
     if (decision === 'reject' && !window.confirm('Bu partner ilişkisini reddetmek istiyor musunuz?')) return;
     try {
-      await decide({ id, decision }).unwrap();
+      await decide({
+        id,
+        decision,
+        ...(decision === 'approve'
+          ? {
+              capabilities: {
+                canManageAccount: true,
+                canEarnRevenue: relationRevenueValue(relation),
+              },
+            }
+          : {}),
+      }).unwrap();
+      setRevenueSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
     } catch (requestError) {
       setActionError(
         requestError?.data?.message ||
@@ -65,12 +121,34 @@ export default function CompanyPartnerRelationsPage() {
     }
   };
 
+  const handleRevenueUpdate = async (relation) => {
+    setActionError('');
+    const id = relation.id || relation._id;
+    try {
+      await updateCapabilities({
+        id,
+        canEarnRevenue: relationRevenueValue(relation),
+      }).unwrap();
+      setRevenueSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    } catch (requestError) {
+      setActionError(
+        requestError?.data?.message ||
+          requestError?.normalizedMessage ||
+          'Gelir ortaklığı güncellenemedi.',
+      );
+    }
+  };
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
       <PageHeader
         section="Partnerler"
         title="Firma Partner Onayları"
-        description="Kullanıcı partner uygunluğundan ayrı olarak her firma–partner ilişkisini onaylayın."
+        description="Firma–partner ilişkilerini onaylayın ve gelir ortaklığını yalnızca CMS üzerinden yönetin."
       />
 
       {actionError ? (
@@ -142,7 +220,14 @@ export default function CompanyPartnerRelationsPage() {
                             </p>
                           ) : null}
                         </TableCell>
-                        <TableCell><CapabilityBadges capabilities={capabilities} /></TableCell>
+                        <TableCell>
+                          <CapabilityBadges capabilities={{ ...capabilities, canManageAccount: true }} />
+                          <RevenueChoice
+                            checked={relationRevenueValue(relation)}
+                            disabled={deciding}
+                            onChange={(value) => setRelationRevenueValue(relation, value)}
+                          />
+                        </TableCell>
                         <TableCell><Badge variant={statusVariant}>{statusLabel}</Badge></TableCell>
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                           {formatDate(relation.updatedAt)}
@@ -165,6 +250,78 @@ export default function CompanyPartnerRelationsPage() {
                               <X className="size-4" /> Reddet
                             </Button>
                           </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Aktif Partnerler</CardTitle>
+          <CardToolbar>
+            <Badge variant="muted">{activeFetching ? 'Yükleniyor…' : `${activeItems.length} kayıt`}</Badge>
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="p-0">
+          {activeError ? (
+            <div className="p-4">
+              <Alert variant="destructive">
+                <AlertTitle>Aktif partnerler yüklenemedi</AlertTitle>
+                <AlertDescription>
+                  {activeError?.data?.message || activeError?.normalizedMessage || 'Sunucuya ulaşılamadı.'}
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : activeLoading ? (
+            <SkeletonRows rows={5} cols={5} />
+          ) : activeItems.length === 0 ? (
+            <EmptyState title="Aktif partner yok" description="Onaylanan partnerler burada görünür." />
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Partner</TableHead>
+                    <TableHead>Hedef firma</TableHead>
+                    <TableHead>Hesap erişimi</TableHead>
+                    <TableHead>Gelir ortaklığı</TableHead>
+                    <TableHead className="text-right">İşlem</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activeItems.map((relation) => {
+                    const id = relation.id || relation._id;
+                    return (
+                      <TableRow key={id}>
+                        <TableCell>
+                          <p className="font-medium">{relation.user?.name || relation.emailNormalized}</p>
+                          <p className="text-xs text-muted-foreground">{relation.user?.email || relation.emailNormalized}</p>
+                        </TableCell>
+                        <TableCell>
+                          <p className="font-medium">{relation.company?.name || relation.companyId}</p>
+                        </TableCell>
+                        <TableCell><Badge variant="primary">Hesap yönetimi</Badge></TableCell>
+                        <TableCell>
+                          <RevenueChoice
+                            checked={relationRevenueValue(relation)}
+                            disabled={updatingCapabilities}
+                            onChange={(value) => setRelationRevenueValue(relation, value)}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            disabled={updatingCapabilities}
+                            onClick={() => handleRevenueUpdate(relation)}
+                          >
+                            Kaydet
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );

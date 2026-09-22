@@ -20,10 +20,28 @@ export const companyPartnersApi = baseApi.injectEndpoints({
       ],
     }),
     decideCompanyPartnerRelation: build.mutation({
-      query: ({ id, decision, note = '' }) => ({
+      query: ({ id, decision, note = '', capabilities }) => ({
         url: ENDPOINTS.companyPartners.cmsDecision(id),
         method: 'PATCH',
-        body: { decision, note },
+        body: { decision, note, ...(capabilities ? { capabilities } : {}) },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'PartnerRelation', id },
+        { type: 'PartnerRelation', id: 'LIST' },
+        { type: 'User', id: 'LIST' },
+      ],
+    }),
+    updateCompanyPartnerCapabilities: build.mutation({
+      query: ({ id, canEarnRevenue }) => ({
+        url: ENDPOINTS.companyPartners.cmsCapabilities(id),
+        method: 'PATCH',
+        body: {
+          capabilities: {
+            canManageAccount: true,
+            canEarnRevenue,
+          },
+        },
       }),
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (result, error, { id }) => [
@@ -38,4 +56,5 @@ export const companyPartnersApi = baseApi.injectEndpoints({
 export const {
   useGetPendingCompanyPartnerRelationsQuery,
   useDecideCompanyPartnerRelationMutation,
+  useUpdateCompanyPartnerCapabilitiesMutation,
 } = companyPartnersApi;
