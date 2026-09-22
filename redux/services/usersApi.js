@@ -26,6 +26,24 @@ export const usersApi = baseApi.injectEndpoints({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.users.update(id), method: 'PATCH', body }),
       invalidatesTags: (r, e, { id }) => [{ type: 'User', id }, { type: 'User', id: 'LIST' }],
     }),
+    updateUserPartner: build.mutation({
+      query: ({ id, partner, note = '' }) => ({
+        url: ENDPOINTS.users.partner(id),
+        method: 'PATCH',
+        body: { partner, note },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'User', id },
+        { type: 'User', id: 'LIST' },
+        { type: 'PartnerRelation', id: 'LIST' },
+      ],
+    }),
+    getUserPartnerRelations: build.query({
+      query: (id) => ENDPOINTS.users.partnerRelations(id),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, id) => [{ type: 'PartnerRelation', id: `user-${id}` }],
+    }),
     resetUserPassword: build.mutation({
       query: (id) => ({ url: ENDPOINTS.users.resetPassword(id), method: 'POST' }),
       transformResponse: (res) => res?.data ?? res,
@@ -74,6 +92,8 @@ export const {
   useGetUsersQuery,
   useGetUserQuery,
   useUpdateUserMutation,
+  useUpdateUserPartnerMutation,
+  useGetUserPartnerRelationsQuery,
   useResetUserPasswordMutation,
   useGetUserSessionsQuery,
   useGetUserAccountQuery,

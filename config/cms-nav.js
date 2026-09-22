@@ -134,6 +134,12 @@ export const CMS_NAV = [
     roles: [CMS_ROLES.EDITOR],
   },
   {
+    title: 'Firma Partner Onayları',
+    icon: Handshake,
+    path: '/cms/partners/relations',
+    roles: [CMS_ROLES.ADMIN],
+  },
+  {
     title: 'Ürünler & Hizmetler',
     icon: Package,
     path: '/cms/products',

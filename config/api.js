@@ -280,6 +280,12 @@ export const ENDPOINTS = {
     resetPassword: (id) => `/users/${id}/reset-password`,
     sessions: (id) => `/users/${id}/sessions`,
     sessionsAll: '/users/sessions',
+    partner: (id) => `/users/${id}/partner`,
+    partnerRelations: (id) => `/users/${id}/partner-relations`,
+  },
+  companyPartners: {
+    cmsPending: '/company/partners/cms/pending',
+    cmsDecision: (id) => `/company/partners/cms/${id}/decision`,
   },
   email: {
     // Eski mock uçlar (kullanılmıyor ama referansta kalsın)

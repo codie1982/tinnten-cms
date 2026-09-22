@@ -29,6 +29,7 @@ import {
   ChevronRight,
   SlidersHorizontal,
   Gauge,
+  Handshake,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -63,6 +64,7 @@ import {
   useGetUserConversationsQuery,
   useGetCreditConfigQuery,
   useUpdateUserMutation,
+  useUpdateUserPartnerMutation,
   useResetUserPasswordMutation,
   useUpdateUserAccountLimitsMutation,
   useUpdateUserAccountUsageMutation,
@@ -76,6 +78,7 @@ const SECTIONS = [
   { key: 'genel', label: 'Genel', icon: User },
   { key: 'profil', label: 'Profil Bilgileri', icon: Contact },
   { key: 'firmalar', label: 'Firmalar', icon: Building2 },
+  { key: 'partnerlik', label: 'Partnerlik', icon: Handshake },
   { key: 'konusmalar', label: 'Konuşmalar', icon: MessagesSquare },
   { key: 'oturumlar', label: 'Oturumlar', icon: MonitorSmartphone },
   { key: 'kutuphaneler', label: 'Kütüphaneler', icon: Library },
@@ -133,10 +136,12 @@ function CmsUserDetailPageInner({ params }) {
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetDone, setResetDone] = useState(false);
+  const [partnerError, setPartnerError] = useState('');
 
   // Genel/Profil/Firmalar tek temel çağrıdan beslenir.
   const { data: user, isLoading, error } = useGetUserQuery(id, { skip: !authorized });
   const [updateUser, { isLoading: isUpdating }] = useUpdateUserMutation();
+  const [updateUserPartner, { isLoading: isUpdatingPartner }] = useUpdateUserPartnerMutation();
   const [resetPassword, { isLoading: isResetting }] = useResetUserPasswordMutation();
 
   /* ─── loading ─── */
@@ -200,6 +205,21 @@ function CmsUserDetailPageInner({ params }) {
       setResetDone(true);
     } catch {
       /* onay kutusu açık kalır */
+    }
+  };
+  const handlePartnerChange = async (partner) => {
+    if (!partner && !window.confirm('Partner yetkisi kaldırılacak ve aktif firma ilişkileri askıya alınacak. Devam edilsin mi?')) {
+      return;
+    }
+    setPartnerError('');
+    try {
+      await updateUserPartner({ id, partner }).unwrap();
+    } catch (requestError) {
+      setPartnerError(
+        requestError?.data?.message ||
+          requestError?.normalizedMessage ||
+          'Partner yetkisi güncellenemedi.',
+      );
     }
   };
 
@@ -273,6 +293,14 @@ function CmsUserDetailPageInner({ params }) {
           )}
           {section === 'profil' && <ProfileSection profile={user.profile} />}
           {section === 'firmalar' && <CompaniesSection companies={user.companies} />}
+          {section === 'partnerlik' && (
+            <PartnerSection
+              user={user}
+              error={partnerError}
+              isUpdating={isUpdatingPartner}
+              onChange={handlePartnerChange}
+            />
+          )}
           {section === 'konusmalar' && <ConversationsSection userId={id} authorized={authorized} />}
           {section === 'oturumlar' && <SessionsSection userId={id} />}
           {section === 'kutuphaneler' && (
@@ -634,7 +662,9 @@ function CompaniesSection({ companies }) {
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
                       {c.isActive && <Badge variant="success">Aktif</Badge>}
-                      <Badge variant="muted">{c.role === 'owner' ? 'Sahip' : 'Üye'}</Badge>
+                      <Badge variant={c.role === 'partner' ? 'primary' : 'muted'}>
+                        {c.role === 'owner' ? 'Sahip' : c.role === 'partner' ? 'Partner' : 'Üye'}
+                      </Badge>
                     </div>
                     <p className="truncate font-mono text-xs text-muted-foreground">{c.slug ?? c.id}</p>
                   </div>
@@ -651,6 +681,104 @@ function CompaniesSection({ companies }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/* ─── Partnerlik ─── */
+function PartnerSection({ user, error, isUpdating, onChange }) {
+  const relations = user.partnerRelations ?? [];
+  const companyById = new Map((user.companies ?? []).map((company) => [company.id, company]));
+
+  return (
+    <div className="space-y-5">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Partner yetkisi güncellenemedi</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Platform Partner Onayı</CardTitle>
+          <CardToolbar>
+            <Badge variant={user.partner ? 'success' : 'muted'}>
+              {user.partner ? 'Partner onaylı' : 'Partner değil'}
+            </Badge>
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="space-y-4 p-6">
+          <p className="text-sm text-muted-foreground">
+            Bu onay yalnız kişinin firma partneri olabilme uygunluğunu belirler. Her firma ilişkisi ayrıca onaylanır.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatRow icon={ShieldCheck} label="Durum" value={user.partnerStatus || 'not_approved'} />
+            <StatRow icon={CalendarDays} label="Onay Tarihi" value={formatTrDateTime(user.partnerApprovedAt)} />
+            <StatRow icon={Clock3} label="Askıya Alma" value={formatTrDateTime(user.partnerSuspendedAt)} />
+          </div>
+          <Button
+            variant={user.partner ? 'outline' : 'primary'}
+            disabled={isUpdating}
+            onClick={() => onChange(!user.partner)}
+          >
+            {user.partner ? <ShieldOff className="size-4" /> : <ShieldCheck className="size-4" />}
+            {isUpdating
+              ? 'İşleniyor…'
+              : user.partner
+                ? 'Partner Yetkisini Kaldır'
+                : 'Partner Olarak Onayla'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Firma Partnerlikleri</CardTitle>
+          <CardToolbar><Badge variant="muted">{relations.length} ilişki</Badge></CardToolbar>
+        </CardHeader>
+        <CardContent className="p-0">
+          {relations.length === 0 ? (
+            <p className="p-6 text-sm text-muted-foreground">Bu kullanıcıya bağlı partner ilişkisi yok.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Firma</TableHead>
+                    <TableHead>Yetenekler</TableHead>
+                    <TableHead>Durum</TableHead>
+                    <TableHead>Güncelleme</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {relations.map((relation) => {
+                    const company = companyById.get(relation.companyId);
+                    const capabilities = relation.pendingCapabilities || relation.capabilities;
+                    return (
+                      <TableRow key={relation.id}>
+                        <TableCell>
+                          <p className="font-medium">{company?.name || relation.companyName || relation.companyId}</p>
+                          <p className="text-xs text-muted-foreground">{relation.subjectType === 'company' ? 'Firma daveti' : 'Kişi daveti'}</p>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {capabilities?.canManageAccount ? <Badge variant="primary">Hesap yönetimi</Badge> : null}
+                            {capabilities?.canEarnRevenue ? <Badge variant="success">Gelir ortağı</Badge> : null}
+                            {relation.amendmentStatus === 'pending' ? <Badge variant="warning">Değişiklik bekliyor</Badge> : null}
+                          </div>
+                        </TableCell>
+                        <TableCell><Badge variant={relation.status === 'active' ? 'success' : 'muted'}>{relation.status}</Badge></TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{formatTrDateTime(relation.updatedAt)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

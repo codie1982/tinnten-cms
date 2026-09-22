@@ -128,6 +128,7 @@ export const baseApi = createApi({
     'OAuthProvider',
     'SupportTicket',
     'PartnerApplication',
+    'PartnerRelation',
     'SupportCallback',
     'TutorialVideo',
   ],

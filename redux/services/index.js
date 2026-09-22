@@ -32,4 +32,5 @@ export * from './connectorsApi';
 export * from './errorMonitoringApi';
 export * from './supportApi';
 export * from './partnerApplicationsApi';
+export * from './companyPartnersApi';
 export * from './tutorialVideosApi';
