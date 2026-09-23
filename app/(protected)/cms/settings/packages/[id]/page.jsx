@@ -656,6 +656,20 @@ export default function PackageEditorPage({ params }) {
                     <label className="mb-1 block text-[11px] text-muted-foreground">İndirim %</label>
                     <Input type="number" min="0" max="100" value={p.discount ?? 0} onChange={(e) => setPriceRow(i, 'discount', e.target.value)} placeholder="0" />
                   </div>
+                  <div className="w-32">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Kota yenileme</label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={p.durationTime ?? 1}
+                      onChange={(e) => setPriceRow(i, 'durationTime', e.target.value)}
+                      placeholder="1"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Her {p.durationTime || 1} {p.interval === 'year' ? 'yıl' : p.interval === 'lifetime' ? 'dönem' : 'ay'}
+                    </p>
+                  </div>
                   {p.currency !== 'USD' && (
                     <div className="w-24">
                       <label className="mb-1 block text-[11px] text-muted-foreground">USD karşılığı</label>

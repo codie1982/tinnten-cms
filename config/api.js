@@ -143,6 +143,9 @@ export const ENDPOINTS = {
     cmsDelete: (id) => `/system-packages/cms/${id}`,
     assignToCompany: (id) => `/system-packages/cms/${id}/assign-to-company`,
     creditConfig: '/system-packages/cms/credit-config',
+    cmsCodes: '/system-packages/cms/codes',
+    cmsCode: (id) => `/system-packages/cms/codes/${id}`,
+    cmsCodeRedemptions: (id) => `/system-packages/cms/codes/${id}/redemptions`,
   },
   // MCP connector kataloğu — admin'in yayınladığı, kullanıcıya "Bağla" olarak
   // görünen şablonlar. Secret tutmaz (backend .env'de yaşar).

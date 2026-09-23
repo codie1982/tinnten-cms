@@ -116,6 +116,7 @@ export const baseApi = createApi({
     'Doc',
     'DocCategory',
     'Package',
+    'PackageCode',
     'Dashboard',
     'Faq',
     'ErrorIssue',

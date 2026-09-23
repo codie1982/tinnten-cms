@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { Package, Plus, Pencil, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Package, Plus, Pencil, Trash2, Eye, EyeOff, Ticket } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
@@ -80,9 +80,14 @@ export default function SettingsPackagesPage() {
         title="Paketler"
         description="Sistem paketlerini yönetin: fiyatlandırma, kullanım ve MCP limitleri, çok dilli içerik"
         actions={
-          <Link href="/cms/settings/packages/new" className={buttonVariants()}>
-            <Plus className="size-4" /> Yeni Paket
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link href="/cms/settings/packages/codes" className={buttonVariants({ variant: 'outline' })}>
+              <Ticket className="size-4" /> Kodlar
+            </Link>
+            <Link href="/cms/settings/packages/new" className={buttonVariants()}>
+              <Plus className="size-4" /> Yeni Paket
+            </Link>
+          </div>
         }
       />
 
@@ -116,6 +121,7 @@ export default function SettingsPackagesPage() {
                 <SelectItem value="all">Tüm Görünürlükler</SelectItem>
                 <SelectItem value="public">Genel</SelectItem>
                 <SelectItem value="private">Firmaya Özel</SelectItem>
+                <SelectItem value="unlisted">Link/Kod ile</SelectItem>
               </SelectContent>
             </Select>
           </div>

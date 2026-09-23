@@ -55,6 +55,26 @@ export const settingsApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, { id }) => [{ type: 'Package', id }, { type: 'Package', id: 'LIST' }],
     }),
+    getCmsPackageCodes: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.systemPackages.cmsCodes, params }),
+      transformResponse: (res) => (res?.data ?? res)?.items ?? [],
+      providesTags: [{ type: 'PackageCode', id: 'LIST' }],
+    }),
+    createPackageCode: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.systemPackages.cmsCodes, method: 'POST', body }),
+      transformResponse: (res) => (res?.data ?? res)?.code ?? null,
+      invalidatesTags: [{ type: 'PackageCode', id: 'LIST' }],
+    }),
+    updatePackageCode: build.mutation({
+      query: ({ id, ...body }) => ({ url: ENDPOINTS.systemPackages.cmsCode(id), method: 'PATCH', body }),
+      transformResponse: (res) => (res?.data ?? res)?.code ?? null,
+      invalidatesTags: (r, e, { id }) => [{ type: 'PackageCode', id }, { type: 'PackageCode', id: 'LIST' }],
+    }),
+    getPackageCodeRedemptions: build.query({
+      query: (id) => ENDPOINTS.systemPackages.cmsCodeRedemptions(id),
+      transformResponse: (res) => (res?.data ?? res)?.items ?? [],
+      providesTags: (r, e, id) => [{ type: 'PackageCode', id: `REDEMPTIONS-${id}` }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -69,4 +89,8 @@ export const {
   useUpdatePackageMutation,
   useDeletePackageMutation,
   useAssignPrivatePackageMutation,
+  useGetCmsPackageCodesQuery,
+  useCreatePackageCodeMutation,
+  useUpdatePackageCodeMutation,
+  useGetPackageCodeRedemptionsQuery,
 } = settingsApi;
