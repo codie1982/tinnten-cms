@@ -5,6 +5,27 @@ import { baseApi } from './baseApi';
 
 export const companyPartnersApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
+    getCmsEligiblePartners: build.query({
+      query: (params) => ({
+        url: ENDPOINTS.companyPartners.cmsEligible,
+        params,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    assignCmsCompanyPartner: build.mutation({
+      query: (body) => ({
+        url: ENDPOINTS.companyPartners.cmsAssign,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { companyId, partnerUserId }) => [
+        { type: 'PartnerRelation', id: 'LIST' },
+        { type: 'Company', id: companyId },
+        { type: 'Company', id: 'LIST' },
+        ...(partnerUserId ? [{ type: 'User', id: partnerUserId }] : []),
+      ],
+    }),
     getPendingCompanyPartnerRelations: build.query({
       query: (params = {}) => ({
         url: ENDPOINTS.companyPartners.cmsPending,
@@ -54,6 +75,8 @@ export const companyPartnersApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetCmsEligiblePartnersQuery,
+  useAssignCmsCompanyPartnerMutation,
   useGetPendingCompanyPartnerRelationsQuery,
   useDecideCompanyPartnerRelationMutation,
   useUpdateCompanyPartnerCapabilitiesMutation,

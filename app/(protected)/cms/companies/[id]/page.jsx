@@ -9,6 +9,7 @@ import {
   Globe, Mail, CalendarDays, Hash, BadgeCheck, ExternalLink, Gauge,
   SlidersHorizontal, Loader2, Ban, ShieldCheck, ChevronLeft, ChevronRight,
   Database, RefreshCw, UserCog, User, Search, Check, X, Plus, Pencil, Trash2,
+  Handshake, UserPlus,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -53,6 +54,9 @@ import {
   useDeleteCmsProductMutation,
   useGetFetcherSubscriptionsQuery,
   useGetCmsPackagesQuery,
+  useGetCmsEligiblePartnersQuery,
+  useAssignCmsCompanyPartnerMutation,
+  useGetPendingCompanyPartnerRelationsQuery,
 } from '@/redux/services';
 import { mutationMessage } from '../../products/_form/productFormModel';
 import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
@@ -72,6 +76,7 @@ const SECTIONS = [
   { key: 'telefonlar', label: 'Telefonlar', icon: Phone },
   { key: 'sosyal', label: 'Sosyal Medya', icon: Share2 },
   { key: 'banka', label: 'Banka Hesapları', icon: Landmark },
+  { key: 'partnerler', label: 'Partnerler', icon: Handshake },
   { key: 'calisanlar', label: 'Çalışanlar', icon: Users },
   { key: 'urunler', label: 'Ürünler / Hizmetler', icon: Boxes },
   { key: 'bilgi', label: 'Bilgi Tabanı', icon: Database },
@@ -348,6 +353,96 @@ function CmsCompanyDetailView({ id }) {
     }
   };
 
+  // CMS partner atama — davet/e-posta yoktur; onaylı partner doğrudan aktif
+  // ilişki olarak eklenir ve backend çalışan projeksiyonunu oluşturur.
+  const [partnerPanelOpen, setPartnerPanelOpen] = useState(false);
+  const [partnerSubjectType, setPartnerSubjectType] = useState('person');
+  const [partnerSearch, setPartnerSearch] = useState('');
+  const [partnerSearchDebounced, setPartnerSearchDebounced] = useState('');
+  const [selectedPartnerCandidate, setSelectedPartnerCandidate] = useState(null);
+  const [selectedRepresentativeId, setSelectedRepresentativeId] = useState('');
+  const [partnerCanEarnRevenue, setPartnerCanEarnRevenue] = useState(false);
+  const [partnerNotice, setPartnerNotice] = useState(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setPartnerSearchDebounced(partnerSearch.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [partnerSearch]);
+
+  const {
+    data: partnerRelationsData,
+    isLoading: partnerRelationsLoading,
+    error: partnerRelationsError,
+  } = useGetPendingCompanyPartnerRelationsQuery(
+    { companyId: id },
+    { skip: !authorized },
+  );
+  const partnerRelations = partnerRelationsData?.items ?? [];
+
+  const {
+    data: eligiblePartnerData,
+    isFetching: eligiblePartnersLoading,
+  } = useGetCmsEligiblePartnersQuery(
+    {
+      targetCompanyId: id,
+      subjectType: partnerSubjectType,
+      query: partnerSearchDebounced,
+    },
+    {
+      skip:
+        !authorized ||
+        section !== 'partnerler' ||
+        !partnerPanelOpen ||
+        partnerSearchDebounced.length < 2,
+    },
+  );
+  const eligiblePartners = eligiblePartnerData?.items ?? [];
+  const [assignPartner, { isLoading: assigningPartner }] = useAssignCmsCompanyPartnerMutation();
+
+  const resetPartnerForm = () => {
+    setPartnerPanelOpen(false);
+    setPartnerSubjectType('person');
+    setPartnerSearch('');
+    setPartnerSearchDebounced('');
+    setSelectedPartnerCandidate(null);
+    setSelectedRepresentativeId('');
+    setPartnerCanEarnRevenue(false);
+  };
+
+  const selectPartnerCandidate = (candidate) => {
+    setSelectedPartnerCandidate(candidate);
+    setSelectedRepresentativeId(
+      candidate.subjectType === 'company' ? candidate.representatives?.[0]?.id || '' : candidate.id,
+    );
+  };
+
+  const handleAssignPartner = async () => {
+    const partnerUserId = partnerSubjectType === 'company'
+      ? selectedRepresentativeId
+      : selectedPartnerCandidate?.id;
+    if (!selectedPartnerCandidate || !partnerUserId) {
+      setPartnerNotice({ type: 'error', text: 'Partner ve temsilci kullanıcı seçilmelidir.' });
+      return;
+    }
+    try {
+      await assignPartner({
+        companyId: id,
+        partnerUserId,
+        ...(partnerSubjectType === 'company'
+          ? { partnerCompanyId: selectedPartnerCandidate.id }
+          : {}),
+        canEarnRevenue: partnerCanEarnRevenue,
+      }).unwrap();
+      setPartnerNotice({ type: 'success', text: 'Partner firmaya atandı.' });
+      resetPartnerForm();
+    } catch (e) {
+      setPartnerNotice({
+        type: 'error',
+        text: e?.data?.message || e?.normalizedMessage || 'Partner atanamadı.',
+      });
+    }
+  };
+
   // Paket ekleme paneli — firmaya uygun (public + bu firmaya özel) paketleri listeler.
   const [pkgPanelOpen, setPkgPanelOpen] = useState(false);
   const [selectedPkgId, setSelectedPkgId] = useState(null);
@@ -437,6 +532,7 @@ function CmsCompanyDetailView({ id }) {
     telefonlar: phones.length,
     sosyal: socials.length,
     banka: banks.length,
+    partnerler: partnerRelations.length,
     calisanlar: employees.length,
     urunler: productsTotal,
     bilgi: knowledgeTotal,
@@ -931,6 +1027,225 @@ function CmsCompanyDetailView({ id }) {
             </Card>
           )}
 
+          {section === 'partnerler' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Firma Partnerleri</CardTitle>
+                <CardToolbar>
+                  {!partnerPanelOpen && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setPartnerNotice(null);
+                        setPartnerPanelOpen(true);
+                      }}
+                    >
+                      <UserPlus className="size-4" />
+                      Partner Ata
+                    </Button>
+                  )}
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="space-y-5 p-4">
+                {partnerNotice && (
+                  <Alert variant={partnerNotice.type === 'error' ? 'destructive' : 'info'}>
+                    <AlertDescription>{partnerNotice.text}</AlertDescription>
+                  </Alert>
+                )}
+
+                {partnerPanelOpen && (
+                  <div className="space-y-4 rounded-lg border border-primary/40 bg-primary/5 p-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="space-y-1.5 text-sm">
+                        <span className="font-medium text-foreground">Partner türü</span>
+                        <Select
+                          value={partnerSubjectType}
+                          onValueChange={(value) => {
+                            setPartnerSubjectType(value);
+                            setSelectedPartnerCandidate(null);
+                            setSelectedRepresentativeId('');
+                          }}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="person">Partner kullanıcı</SelectItem>
+                            <SelectItem value="company">Partner firma</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+                      <label className="space-y-1.5 text-sm">
+                        <span className="font-medium text-foreground">
+                          {partnerSubjectType === 'company' ? 'Firma ara' : 'Partner kullanıcı ara'}
+                        </span>
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            value={partnerSearch}
+                            onChange={(event) => {
+                              setPartnerSearch(event.target.value);
+                              setSelectedPartnerCandidate(null);
+                              setSelectedRepresentativeId('');
+                            }}
+                            placeholder="En az 2 karakter…"
+                            className="pl-8"
+                          />
+                        </div>
+                      </label>
+                    </div>
+
+                    {partnerSearchDebounced.length >= 2 && (
+                      <div className="max-h-64 overflow-y-auto rounded-lg border border-border bg-background">
+                        {eligiblePartnersLoading ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="size-5 animate-spin text-primary" />
+                          </div>
+                        ) : eligiblePartners.length === 0 ? (
+                          <p className="px-3 py-5 text-sm text-muted-foreground">
+                            Uygun ve onaylı partner bulunamadı.
+                          </p>
+                        ) : (
+                          <div className="divide-y divide-border">
+                            {eligiblePartners.map((candidate) => {
+                              const selected = selectedPartnerCandidate?.id === candidate.id;
+                              return (
+                                <button
+                                  key={candidate.id}
+                                  type="button"
+                                  onClick={() => selectPartnerCandidate(candidate)}
+                                  className={cn(
+                                    'flex w-full items-center gap-3 px-3 py-2 text-left transition-colors',
+                                    selected ? 'bg-primary/10' : 'hover:bg-accent',
+                                  )}
+                                >
+                                  <Avatar name={candidate.name || candidate.email || '?'} size="sm" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-medium text-foreground">{candidate.name}</p>
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {candidate.subjectType === 'company'
+                                        ? `${candidate.representatives?.length || 0} onaylı temsilci`
+                                        : candidate.email}
+                                    </p>
+                                  </div>
+                                  {selected && <Check className="size-4 text-primary" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {partnerSubjectType === 'company' && selectedPartnerCandidate && (
+                      <label className="block space-y-1.5 text-sm">
+                        <span className="font-medium text-foreground">Firmayı yönetecek temsilci</span>
+                        <Select value={selectedRepresentativeId} onValueChange={setSelectedRepresentativeId}>
+                          <SelectTrigger><SelectValue placeholder="Temsilci seçin" /></SelectTrigger>
+                          <SelectContent>
+                            {(selectedPartnerCandidate.representatives || []).map((representative) => (
+                              <SelectItem key={representative.id} value={representative.id}>
+                                {representative.name} · {representative.membershipType === 'owner' ? 'Yönetici' : 'Çalışan'}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                    )}
+
+                    <div className="rounded-lg border border-border bg-background p-3">
+                      <p className="text-sm font-medium text-foreground">Hesap yönetimi otomatik olarak açılır.</p>
+                      <label className="mt-3 flex items-start gap-2.5 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={partnerCanEarnRevenue}
+                          onChange={(event) => setPartnerCanEarnRevenue(event.target.checked)}
+                          className="mt-0.5 size-4 rounded border-input accent-primary"
+                        />
+                        <span>
+                          <span className="block font-medium">Gelir ortağı</span>
+                          <span className="block text-xs text-muted-foreground">
+                            Faz 1'de yalnız gelir erişimini işaretler; finansal kayıt oluşturmaz.
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleAssignPartner}
+                        disabled={assigningPartner || !selectedPartnerCandidate || !selectedRepresentativeId}
+                      >
+                        {assigningPartner ? <Loader2 className="size-4 animate-spin" /> : <Handshake className="size-4" />}
+                        Firmaya Ata
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={resetPartnerForm} disabled={assigningPartner}>
+                        Vazgeç
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {partnerRelationsError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      {partnerRelationsError?.data?.message || partnerRelationsError?.normalizedMessage || 'Partnerler yüklenemedi.'}
+                    </AlertDescription>
+                  </Alert>
+                ) : partnerRelationsLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="size-5 animate-spin text-primary" />
+                  </div>
+                ) : partnerRelations.length === 0 ? (
+                  <EmptyCard icon={<Handshake className="size-5" />} message="Firmaya atanmış partner yok." />
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Partner</TableHead>
+                          <TableHead>Tür</TableHead>
+                          <TableHead>Yetkiler</TableHead>
+                          <TableHead>Durum</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {partnerRelations.map((relation) => (
+                          <TableRow key={relation.id || relation._id}>
+                            <TableCell>
+                              <p className="font-medium">{relation.user?.name || relation.emailNormalized}</p>
+                              <p className="text-xs text-muted-foreground">{relation.user?.email || relation.emailNormalized}</p>
+                            </TableCell>
+                            <TableCell>
+                              {relation.subjectType === 'company' ? (
+                                <div>
+                                  <Badge variant="secondary">Firma</Badge>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {relation.partnerCompany?.name || relation.externalCompanyName || '—'}
+                                  </p>
+                                </div>
+                              ) : (
+                                <Badge variant="muted">Kullanıcı</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1">
+                                {relation.capabilities?.canManageAccount && <Badge variant="primary">Hesap yönetimi</Badge>}
+                                {relation.capabilities?.canEarnRevenue && <Badge variant="success">Gelir ortağı</Badge>}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={relation.status === 'active' ? 'success' : 'muted'}>{relation.status}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {section === 'calisanlar' && (
             <Card>
               <CardHeader>
@@ -945,7 +1260,10 @@ function CmsCompanyDetailView({ id }) {
                     {employees.map((e, i) => (
                       <div key={i} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
                         <Avatar name={String(e.userid || '?')} size="sm" />
-                        <span className="font-mono text-xs text-muted-foreground">{e.userid}</span>
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{e.userid}</span>
+                        <Badge variant={e.type === 'partner' ? 'warning' : 'muted'}>
+                          {e.type === 'partner' ? 'Partner' : 'Çalışan'}
+                        </Badge>
                       </div>
                     ))}
                   </div>

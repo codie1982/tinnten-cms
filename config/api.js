@@ -285,6 +285,8 @@ export const ENDPOINTS = {
   },
   companyPartners: {
     cmsPending: '/company/partners/cms/pending',
+    cmsEligible: '/company/partners/cms/eligible',
+    cmsAssign: '/company/partners/cms/assign',
     cmsDecision: (id) => `/company/partners/cms/${id}/decision`,
     cmsCapabilities: (id) => `/company/partners/cms/${id}/capabilities`,
   },
