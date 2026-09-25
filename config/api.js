@@ -483,6 +483,15 @@ export const ENDPOINTS = {
     cmsDetail: '/inbox/cms/detail',
     cmsRead: '/inbox/cms/read',
   },
+  sms: {
+    cmsList: '/sms/cms',
+    cmsSender: '/sms/cms/sender',
+    cmsRecipients: '/sms/cms/recipients',
+    cmsDetail: (id) => `/sms/cms/${id}`,
+    cmsSend: '/sms/cms/send',
+    cmsSync: '/sms/cms/sync',
+    cmsRead: (id) => `/sms/cms/${id}/read`,
+  },
   contracts: {
     list: (type) => `/contracts/${type}`,
     version: (type, id) => `/contracts/${type}/${id}`,

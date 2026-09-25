@@ -132,6 +132,7 @@ export const baseApi = createApi({
     'PartnerRelation',
     'SupportCallback',
     'TutorialVideo',
+    'SmsMessage',
   ],
   // Endpoint'ler ayrı servis dosyalarında injectEndpoints ile eklenir
   endpoints: () => ({}),

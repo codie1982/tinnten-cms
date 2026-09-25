@@ -93,6 +93,41 @@ export const emailApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
     }),
 
+    /* ── Twilio SMS ── */
+    getSmsMessages: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.sms.cmsList, params }),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: [{ type: 'SmsMessage', id: 'LIST' }],
+    }),
+    getSmsSender: build.query({
+      query: () => ENDPOINTS.sms.cmsSender,
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    getSmsRecipients: build.query({
+      query: (q) => ({ url: ENDPOINTS.sms.cmsRecipients, params: { q } }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    getSmsMessage: build.query({
+      query: (id) => ENDPOINTS.sms.cmsDetail(id),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (result, error, id) => [{ type: 'SmsMessage', id }],
+    }),
+    sendSms: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.sms.cmsSend, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'SmsMessage', id: 'LIST' }],
+    }),
+    syncSmsMessages: build.mutation({
+      query: () => ({ url: ENDPOINTS.sms.cmsSync, method: 'POST' }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'SmsMessage', id: 'LIST' }],
+    }),
+    setSmsRead: build.mutation({
+      query: ({ id, read }) => ({ url: ENDPOINTS.sms.cmsRead(id), method: 'PATCH', body: { read } }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [{ type: 'SmsMessage', id }, { type: 'SmsMessage', id: 'LIST' }],
+    }),
+
     /* ── Mail Listeleri (mail_lists) ── */
     getCmsSubscribers: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.mailList.cmsList, params }), // { q, status, channel, category, limit, skip }
@@ -170,6 +205,13 @@ export const {
   useLazyGetInboxQuery,
   useGetInboxMailQuery,
   useSetInboxReadMutation,
+  useGetSmsMessagesQuery,
+  useGetSmsSenderQuery,
+  useGetSmsRecipientsQuery,
+  useGetSmsMessageQuery,
+  useSendSmsMutation,
+  useSyncSmsMessagesMutation,
+  useSetSmsReadMutation,
   useGetCmsSubscribersQuery,
   useGetCmsSubscriptionStatsQuery,
   useGetCmsSubscriberQuery,
