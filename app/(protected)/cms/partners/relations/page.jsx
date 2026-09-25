@@ -19,7 +19,7 @@ import {
 } from '@/redux/services';
 
 const STATUS = {
-  pending_partner_approval: ['Kullanıcı partner onayı bekliyor', 'warning'],
+  pending_partner_approval: ['Partner firma onayı bekliyor', 'warning'],
   pending_relationship_approval: ['İlişki onayı bekliyor', 'primary'],
   active: ['Aktif', 'success'],
   rejected: ['Reddedildi', 'destructive'],
@@ -187,7 +187,7 @@ export default function CompanyPartnerRelationsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Partner</TableHead>
+                    <TableHead>Partner Firma</TableHead>
                     <TableHead>Hedef firma</TableHead>
                     <TableHead>Yetenekler</TableHead>
                     <TableHead>Durum</TableHead>
@@ -204,19 +204,23 @@ export default function CompanyPartnerRelationsPage() {
                     return (
                       <TableRow key={id}>
                         <TableCell>
-                          <p className="font-medium">{relation.user?.name || relation.emailNormalized}</p>
-                          <p className="text-xs text-muted-foreground">{relation.user?.email || relation.emailNormalized}</p>
-                          {relation.user?.partner ? (
-                            <Badge variant="success" className="mt-1">Partner onaylı</Badge>
+                          <p className="font-medium">
+                            {relation.partnerCompany?.name || relation.externalCompanyName || 'Firma seçimi bekleniyor'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {(relation.members || []).filter((member) => member.active !== false).length} aktif temsilci
+                          </p>
+                          {relation.partnerCompany?.partner ? (
+                            <Badge variant="success" className="mt-1">Firma partner onaylı</Badge>
                           ) : (
-                            <Badge variant="warning" className="mt-1">Partner onayı gerekli</Badge>
+                            <Badge variant="warning" className="mt-1">Firma partner onayı gerekli</Badge>
                           )}
                         </TableCell>
                         <TableCell>
                           <p className="font-medium">{relation.company?.name || relation.companyId}</p>
                           {relation.partnerCompany?.name || relation.externalCompanyName ? (
                             <p className="text-xs text-muted-foreground">
-                              Temsil edilen: {relation.partnerCompany?.name || relation.externalCompanyName}
+                              Partner firma: {relation.partnerCompany?.name || relation.externalCompanyName}
                             </p>
                           ) : null}
                         </TableCell>
@@ -287,7 +291,7 @@ export default function CompanyPartnerRelationsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Partner</TableHead>
+                    <TableHead>Partner Firma</TableHead>
                     <TableHead>Hedef firma</TableHead>
                     <TableHead>Hesap erişimi</TableHead>
                     <TableHead>Gelir ortaklığı</TableHead>
@@ -300,8 +304,16 @@ export default function CompanyPartnerRelationsPage() {
                     return (
                       <TableRow key={id}>
                         <TableCell>
-                          <p className="font-medium">{relation.user?.name || relation.emailNormalized}</p>
-                          <p className="text-xs text-muted-foreground">{relation.user?.email || relation.emailNormalized}</p>
+                          <p className="font-medium">
+                            {relation.partnerCompany?.name || relation.externalCompanyName || '—'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {(relation.members || [])
+                              .filter((member) => member.active !== false)
+                              .map((member) => member.user?.name || member.user?.email)
+                              .filter(Boolean)
+                              .join(', ') || 'Temsilci yok'}
+                          </p>
                         </TableCell>
                         <TableCell>
                           <p className="font-medium">{relation.company?.name || relation.companyId}</p>

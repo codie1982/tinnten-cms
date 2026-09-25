@@ -19,11 +19,25 @@ export const companyPartnersApi = baseApi.injectEndpoints({
         body,
       }),
       transformResponse: (res) => res?.data ?? res,
-      invalidatesTags: (result, error, { companyId, partnerUserId }) => [
+      invalidatesTags: (result, error, { companyId, partnerCompanyId, partnerUserIds = [] }) => [
         { type: 'PartnerRelation', id: 'LIST' },
         { type: 'Company', id: companyId },
+        ...(partnerCompanyId ? [{ type: 'Company', id: partnerCompanyId }] : []),
         { type: 'Company', id: 'LIST' },
-        ...(partnerUserId ? [{ type: 'User', id: partnerUserId }] : []),
+        ...partnerUserIds.map((id) => ({ type: 'User', id })),
+      ],
+    }),
+    updateCmsCompanyPartnerEligibility: build.mutation({
+      query: ({ id, partner, note = '' }) => ({
+        url: ENDPOINTS.companyPartners.cmsCompanyEligibility(id),
+        method: 'PATCH',
+        body: { partner, note },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'Company', id },
+        { type: 'Company', id: 'LIST' },
+        { type: 'PartnerRelation', id: 'LIST' },
       ],
     }),
     getPendingCompanyPartnerRelations: build.query({
@@ -77,6 +91,7 @@ export const companyPartnersApi = baseApi.injectEndpoints({
 export const {
   useGetCmsEligiblePartnersQuery,
   useAssignCmsCompanyPartnerMutation,
+  useUpdateCmsCompanyPartnerEligibilityMutation,
   useGetPendingCompanyPartnerRelationsQuery,
   useDecideCompanyPartnerRelationMutation,
   useUpdateCompanyPartnerCapabilitiesMutation,
