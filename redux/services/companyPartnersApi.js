@@ -85,6 +85,20 @@ export const companyPartnersApi = baseApi.injectEndpoints({
         { type: 'User', id: 'LIST' },
       ],
     }),
+    removeCompanyPartnerRelation: build.mutation({
+      query: ({ id, note = '' }) => ({
+        url: ENDPOINTS.companyPartners.cmsRemove(id),
+        method: 'DELETE',
+        body: { note },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'PartnerRelation', id },
+        { type: 'PartnerRelation', id: 'LIST' },
+        { type: 'Company', id: 'LIST' },
+        { type: 'User', id: 'LIST' },
+      ],
+    }),
   }),
 });
 
@@ -95,4 +109,5 @@ export const {
   useGetPendingCompanyPartnerRelationsQuery,
   useDecideCompanyPartnerRelationMutation,
   useUpdateCompanyPartnerCapabilitiesMutation,
+  useRemoveCompanyPartnerRelationMutation,
 } = companyPartnersApi;

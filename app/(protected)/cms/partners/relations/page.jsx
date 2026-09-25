@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { Check, X } from 'lucide-react';
+import { Check, Trash2, X } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState, SkeletonRows } from '@/components/layout/page-shell';
@@ -15,6 +15,7 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useDecideCompanyPartnerRelationMutation,
   useGetPendingCompanyPartnerRelationsQuery,
+  useRemoveCompanyPartnerRelationMutation,
   useUpdateCompanyPartnerCapabilitiesMutation,
 } from '@/redux/services';
 
@@ -59,6 +60,7 @@ export default function CompanyPartnerRelationsPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
   const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
   const [revenueSelections, setRevenueSelections] = useState({});
   const { data, isLoading, isFetching, error } = useGetPendingCompanyPartnerRelationsQuery(
     {},
@@ -75,6 +77,7 @@ export default function CompanyPartnerRelationsPage() {
   );
   const [decide, { isLoading: deciding }] = useDecideCompanyPartnerRelationMutation();
   const [updateCapabilities, { isLoading: updatingCapabilities }] = useUpdateCompanyPartnerCapabilitiesMutation();
+  const [removeRelation, { isLoading: removingRelation }] = useRemoveCompanyPartnerRelationMutation();
   const items = data?.items ?? [];
   const activeItems = activeData?.items ?? [];
 
@@ -92,6 +95,7 @@ export default function CompanyPartnerRelationsPage() {
 
   const handleDecision = async (relation, decision) => {
     setActionError('');
+    setActionSuccess('');
     const id = relation.id || relation._id;
     if (decision === 'reject' && !window.confirm('Bu partner ilişkisini reddetmek istiyor musunuz?')) return;
     try {
@@ -123,6 +127,7 @@ export default function CompanyPartnerRelationsPage() {
 
   const handleRevenueUpdate = async (relation) => {
     setActionError('');
+    setActionSuccess('');
     const id = relation.id || relation._id;
     try {
       await updateCapabilities({
@@ -143,6 +148,33 @@ export default function CompanyPartnerRelationsPage() {
     }
   };
 
+  const handleRemove = async (relation) => {
+    setActionError('');
+    setActionSuccess('');
+    const id = relation.id || relation._id;
+    const partnerName = relation.partnerCompany?.name || relation.externalCompanyName || 'Bu partner';
+    const targetName = relation.company?.name || 'hedef firma';
+    if (!window.confirm(
+      `${partnerName} ile ${targetName} arasındaki partnerliği kaldırmak istiyor musunuz? ` +
+      'Partner temsilcilerin hesap erişimi hemen kapatılacak; geçmiş kayıt silinmeyecek.',
+    )) return;
+    try {
+      await removeRelation({ id }).unwrap();
+      setRevenueSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setActionSuccess('Partnerlik kaldırıldı ve partner hesap erişimleri kapatıldı.');
+    } catch (requestError) {
+      setActionError(
+        requestError?.data?.message ||
+          requestError?.normalizedMessage ||
+          'Partnerlik kaldırılamadı.',
+      );
+    }
+  };
+
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
       <PageHeader
@@ -155,6 +187,13 @@ export default function CompanyPartnerRelationsPage() {
         <Alert variant="destructive" className="mb-5">
           <AlertTitle>İşlem tamamlanamadı</AlertTitle>
           <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {actionSuccess ? (
+        <Alert className="mb-5 border-emerald-500/30 bg-emerald-500/10 text-emerald-700">
+          <AlertTitle>İşlem tamamlandı</AlertTitle>
+          <AlertDescription>{actionSuccess}</AlertDescription>
         </Alert>
       ) : null}
 
@@ -322,18 +361,28 @@ export default function CompanyPartnerRelationsPage() {
                         <TableCell>
                           <RevenueChoice
                             checked={relationRevenueValue(relation)}
-                            disabled={updatingCapabilities}
+                            disabled={updatingCapabilities || removingRelation}
                             onChange={(value) => setRelationRevenueValue(relation, value)}
                           />
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            disabled={updatingCapabilities}
-                            onClick={() => handleRevenueUpdate(relation)}
-                          >
-                            Kaydet
-                          </Button>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              disabled={updatingCapabilities || removingRelation}
+                              onClick={() => handleRevenueUpdate(relation)}
+                            >
+                              Kaydet
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={updatingCapabilities || removingRelation}
+                              onClick={() => handleRemove(relation)}
+                            >
+                              <Trash2 className="size-4" /> Partnerliği kaldır
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

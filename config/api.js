@@ -291,6 +291,7 @@ export const ENDPOINTS = {
     cmsCompanyEligibility: (id) => `/company/partners/cms/companies/${id}/eligibility`,
     cmsDecision: (id) => `/company/partners/cms/${id}/decision`,
     cmsCapabilities: (id) => `/company/partners/cms/${id}/capabilities`,
+    cmsRemove: (id) => `/company/partners/cms/${id}`,
   },
   email: {
     // Eski mock uçlar (kullanılmıyor ama referansta kalsın)

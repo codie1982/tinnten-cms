@@ -190,6 +190,7 @@ function SmsDetail({ id, onClose }) {
 export default function SmsPage() {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
+  const [activeTab, setActiveTab] = useState('inbound');
   const [detailId, setDetailId] = useState(null);
   const [syncSms, { isLoading: syncing }] = useSyncSmsMessagesMutation();
   const [syncNotice, setSyncNotice] = useState(null);
@@ -197,14 +198,22 @@ export default function SmsPage() {
     setSyncNotice(null);
     try {
       const result = await syncSms().unwrap();
-      setSyncNotice({ kind: 'success', text: `${result.fetched} kayıt Twilio’dan okundu; ${result.imported} yeni, ${result.updated} güncellendi.${result.hasMore ? ' Daha eski kayıtlar da mevcut.' : ''}` });
+      const directionSummary = result.byDirection
+        ? ` (${result.byDirection.inbound.fetched} gelen, ${result.byDirection.outbound.fetched} giden)`
+        : '';
+      setSyncNotice({ kind: 'success', text: `${result.fetched} kayıt Twilio’dan okundu${directionSummary}; ${result.imported} yeni, ${result.updated} güncellendi.${result.hasMore ? ' Daha eski kayıtlar da mevcut.' : ''}` });
+      if (result.byDirection?.inbound.fetched === 0 && result.byDirection.outbound.fetched > 0) {
+        setActiveTab('outbound');
+      } else if (result.byDirection?.outbound.fetched === 0 && result.byDirection.inbound.fetched > 0) {
+        setActiveTab('inbound');
+      }
     } catch (error) {
       setSyncNotice({ kind: 'error', text: error?.data?.message || error?.normalizedMessage || 'Twilio kayıtları okunamadı.' });
     }
   };
   return <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}><PageHeader section="Email · SMS" title="SMS" description="Twilio numarası üzerinden gelen ve gönderilen mesajlar" actions={<Button variant="outline" disabled={syncing} onClick={sync}><RefreshCw className={syncing ? 'size-4 animate-spin' : 'size-4'} />Twilio’dan eşitle</Button>} />
     {syncNotice && <Alert className="mb-5" variant={syncNotice.kind === 'error' ? 'destructive' : 'default'}><AlertDescription>{syncNotice.text}</AlertDescription></Alert>}
-    {authorized && <Tabs defaultValue="inbound" className="space-y-5"><TabsList><TabsTrigger value="inbound"><Inbox className="me-2 size-4" />Gelen SMS’ler</TabsTrigger><TabsTrigger value="outbound"><MessageSquareMore className="me-2 size-4" />Gönderilen SMS’ler</TabsTrigger><TabsTrigger value="compose"><Send className="me-2 size-4" />Yeni SMS</TabsTrigger></TabsList><TabsContent value="inbound"><SmsList direction="inbound" onDetail={setDetailId} /></TabsContent><TabsContent value="outbound"><SmsList direction="outbound" onDetail={setDetailId} /></TabsContent><TabsContent value="compose"><ComposeSms /></TabsContent></Tabs>}
+    {authorized && <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5"><TabsList><TabsTrigger value="inbound"><Inbox className="me-2 size-4" />Gelen SMS’ler</TabsTrigger><TabsTrigger value="outbound"><MessageSquareMore className="me-2 size-4" />Gönderilen SMS’ler</TabsTrigger><TabsTrigger value="compose"><Send className="me-2 size-4" />Yeni SMS</TabsTrigger></TabsList><TabsContent value="inbound"><SmsList direction="inbound" onDetail={setDetailId} /></TabsContent><TabsContent value="outbound"><SmsList direction="outbound" onDetail={setDetailId} /></TabsContent><TabsContent value="compose"><ComposeSms /></TabsContent></Tabs>}
     <SmsDetail id={detailId} onClose={() => setDetailId(null)} />
   </RoleGuard>;
 }

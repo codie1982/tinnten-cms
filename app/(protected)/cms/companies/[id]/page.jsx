@@ -1236,22 +1236,36 @@ function CmsCompanyDetailView({ id }) {
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <Table>
                       <TableHeader>
-                          <TableRow>
-                          <TableHead>Partner Firma</TableHead>
+                        <TableRow>
+                          <TableHead>İlişki Firması</TableHead>
                           <TableHead>Temsilciler</TableHead>
                           <TableHead>Yetkiler</TableHead>
                           <TableHead>Durum</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {partnerRelations.map((relation) => (
-                          <TableRow key={relation.id || relation._id}>
+                        {partnerRelations.map((relation) => {
+                          const incoming = relation.direction === 'incoming';
+                          const counterparty = relation.counterpartyCompany || (incoming ? relation.company : relation.partnerCompany);
+                          return (
+                            <TableRow key={relation.id || relation._id}>
                             <TableCell>
-                              <p className="font-medium">
-                                {relation.partnerCompany?.name || relation.externalCompanyName || 'Firma bekleniyor'}
-                              </p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium">
+                                  {counterparty?.name || relation.externalCompanyName || relation.emailNormalized || 'Firma bekleniyor'}
+                                </p>
+                                <Badge variant={incoming ? 'warning' : 'muted'}>
+                                  {incoming ? 'Gelen' : 'Atanan'}
+                                </Badge>
+                              </div>
                               <p className="text-xs text-muted-foreground">
-                                {relation.partnerCompany?.partnerStatus === 'approved' ? 'Partner firma onaylı' : 'Partner firma onayı gerekli'}
+                                {incoming
+                                  ? `${counterparty?.name || 'Firma'} bu firmayı partner olarak davet etti veya atadı.`
+                                  : relation.partnerCompany?.partnerStatus === 'approved'
+                                    ? 'Partner firma onaylı'
+                                    : relation.partnerCompanyId
+                                      ? 'Partner firma onayı gerekli'
+                                      : `E-posta daveti · ${relation.emailNormalized}`}
                               </p>
                             </TableCell>
                             <TableCell>
@@ -1276,7 +1290,8 @@ function CmsCompanyDetailView({ id }) {
                               <Badge variant={relation.status === 'active' ? 'success' : 'muted'}>{relation.status}</Badge>
                             </TableCell>
                           </TableRow>
-                        ))}
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
