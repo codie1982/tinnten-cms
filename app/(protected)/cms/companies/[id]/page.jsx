@@ -1173,6 +1173,11 @@ function CmsCompanyDetailView({ id }) {
                                 <span className="block truncate text-xs text-muted-foreground">
                                   {representative.membershipType === 'owner' ? 'Firma sahibi' : 'Çalışan'} · {representative.email}
                                 </span>
+                                {representative.alreadyTargetMember && (
+                                  <span className="mt-0.5 block text-xs text-primary">
+                                    Hedef firmada zaten {representative.targetMembershipType === 'owner' ? 'firma sahibi' : 'çalışan'}; mevcut üyeliği korunur.
+                                  </span>
+                                )}
                               </span>
                             </label>
                           ))}
