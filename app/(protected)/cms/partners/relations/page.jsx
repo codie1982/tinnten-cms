@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useDecideCompanyPartnerRelationMutation,
+  useGetCompanyPartnerRevenueSharePreviewQuery,
   useGetPendingCompanyPartnerRelationsQuery,
   useRemoveCompanyPartnerRelationMutation,
   useUpdateCompanyPartnerCapabilitiesMutation,
@@ -41,18 +42,103 @@ function CapabilityBadges({ capabilities }) {
   );
 }
 
-function RevenueChoice({ checked, disabled, onChange }) {
+const formatMoney = (value, currency = 'USD') => new Intl.NumberFormat('tr-TR', {
+  style: 'currency',
+  currency,
+  maximumFractionDigits: 2,
+}).format(Number(value || 0));
+
+function RevenueChoice({
+  checked,
+  percent,
+  costPercent,
+  commissionSummary = [],
+  disabled,
+  onChange,
+  onPercentChange,
+  onCostPercentChange,
+}) {
+  const parsedPercent = Number(percent);
+  const parsedCostPercent = Number(costPercent);
+  const validPercent = Number.isFinite(parsedPercent) && parsedPercent > 0 && parsedPercent <= 100;
+  const validCostPercent = Number.isFinite(parsedCostPercent) && parsedCostPercent >= 0 && parsedCostPercent <= 100;
+  const { data: previewData } = useGetCompanyPartnerRevenueSharePreviewQuery(
+    {
+      commissionPercent: parsedPercent,
+      costPercent: parsedCostPercent,
+      grossAmount: 1000,
+      currency: 'USD',
+    },
+    { skip: !checked || !validPercent || !validCostPercent },
+  );
+  const preview = previewData?.preview;
+
   return (
-    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs font-medium">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="size-4 accent-primary"
-      />
-      Gelir ortağı
-    </label>
+    <div className="mt-2 min-w-56 space-y-2">
+      <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          className="size-4 accent-primary"
+        />
+        Gelir ortağı
+      </label>
+      {checked ? (
+        <>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Maliyet oranı
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={costPercent}
+              disabled={disabled}
+              onChange={(event) => onCostPercentChange(event.target.value)}
+              className="h-8 w-20 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              aria-label="Net gelir maliyet oranı"
+            />
+            <span>%</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Kâr komisyonu
+            <input
+              type="number"
+              min="0.01"
+              max="100"
+              step="0.01"
+              value={percent}
+              disabled={disabled}
+              onChange={(event) => onPercentChange(event.target.value)}
+              className="h-8 w-20 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              aria-label="Net kâr komisyon oranı"
+            />
+            <span>%</span>
+          </label>
+          {!validPercent ? (
+            <p className="text-xs text-destructive">Komisyon oranı 0 ile 100 arasında olmalıdır.</p>
+          ) : !validCostPercent ? (
+            <p className="text-xs text-destructive">Maliyet oranı 0 ile 100 arasında olmalıdır.</p>
+          ) : preview ? (
+            <p className="max-w-xs text-xs leading-5 text-muted-foreground">
+              1.000 USD örneği: dağıtılabilir net kâr {formatMoney(preview.distributableProfit, preview.currency)};
+              partner payı {formatMoney(preview.partnerCommission, preview.currency)}. Hakediş yalnız başarılı Stripe faturasında oluşur.
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {commissionSummary.length ? (
+        <div className="flex flex-wrap gap-1">
+          {commissionSummary.map((summary) => (
+            <Badge key={summary.currency} variant="success">
+              Hakediş: {formatMoney(summary.payable, summary.currency)}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -62,6 +148,8 @@ export default function CompanyPartnerRelationsPage() {
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
   const [revenueSelections, setRevenueSelections] = useState({});
+  const [revenueRateSelections, setRevenueRateSelections] = useState({});
+  const [revenueCostSelections, setRevenueCostSelections] = useState({});
   const { data, isLoading, isFetching, error } = useGetPendingCompanyPartnerRelationsQuery(
     {},
     { skip: !authorized },
@@ -93,12 +181,54 @@ export default function CompanyPartnerRelationsPage() {
     setRevenueSelections((current) => ({ ...current, [id]: value }));
   };
 
+  const relationRevenueRate = (relation) => {
+    const id = relation.id || relation._id;
+    return revenueRateSelections[id] ?? String(relation.revenueShare?.percent || 20);
+  };
+
+  const setRelationRevenueRate = (relation, value) => {
+    const id = relation.id || relation._id;
+    setRevenueRateSelections((current) => ({ ...current, [id]: value }));
+  };
+
+  const relationRevenueCost = (relation) => {
+    const id = relation.id || relation._id;
+    return revenueCostSelections[id] ?? String(relation.revenueShare?.costPercent ?? 20);
+  };
+
+  const setRelationRevenueCost = (relation, value) => {
+    const id = relation.id || relation._id;
+    setRevenueCostSelections((current) => ({ ...current, [id]: value }));
+  };
+
+  const revenueSharePercentFor = (relation) => {
+    if (!relationRevenueValue(relation)) return 0;
+    const percent = Number(relationRevenueRate(relation));
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      setActionError('Gelir ortaklığı için komisyon oranı 0 ile 100 arasında olmalıdır.');
+      return null;
+    }
+    return percent;
+  };
+
+  const revenueShareCostPercentFor = (relation) => {
+    const percent = Number(relationRevenueCost(relation));
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      setActionError('Maliyet oranı 0 ile 100 arasında olmalıdır.');
+      return null;
+    }
+    return percent;
+  };
+
   const handleDecision = async (relation, decision) => {
     setActionError('');
     setActionSuccess('');
     const id = relation.id || relation._id;
     if (decision === 'reject' && !window.confirm('Bu partner ilişkisini reddetmek istiyor musunuz?')) return;
     try {
+      const revenueSharePercent = decision === 'approve' ? revenueSharePercentFor(relation) : undefined;
+      const revenueShareCostPercent = decision === 'approve' ? revenueShareCostPercentFor(relation) : undefined;
+      if (decision === 'approve' && (revenueSharePercent === null || revenueShareCostPercent === null)) return;
       await decide({
         id,
         decision,
@@ -108,10 +238,22 @@ export default function CompanyPartnerRelationsPage() {
                 canManageAccount: true,
                 canEarnRevenue: relationRevenueValue(relation),
               },
+              revenueSharePercent,
+              revenueShareCostPercent,
             }
           : {}),
       }).unwrap();
       setRevenueSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setRevenueRateSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setRevenueCostSelections((current) => {
         const next = { ...current };
         delete next[id];
         return next;
@@ -130,11 +272,26 @@ export default function CompanyPartnerRelationsPage() {
     setActionSuccess('');
     const id = relation.id || relation._id;
     try {
+      const revenueSharePercent = revenueSharePercentFor(relation);
+      const revenueShareCostPercent = revenueShareCostPercentFor(relation);
+      if (revenueSharePercent === null || revenueShareCostPercent === null) return;
       await updateCapabilities({
         id,
         canEarnRevenue: relationRevenueValue(relation),
+        revenueSharePercent,
+        revenueShareCostPercent,
       }).unwrap();
       setRevenueSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setRevenueRateSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setRevenueCostSelections((current) => {
         const next = { ...current };
         delete next[id];
         return next;
@@ -161,6 +318,16 @@ export default function CompanyPartnerRelationsPage() {
     try {
       await removeRelation({ id }).unwrap();
       setRevenueSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setRevenueRateSelections((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setRevenueCostSelections((current) => {
         const next = { ...current };
         delete next[id];
         return next;
@@ -267,8 +434,12 @@ export default function CompanyPartnerRelationsPage() {
                           <CapabilityBadges capabilities={{ ...capabilities, canManageAccount: true }} />
                           <RevenueChoice
                             checked={relationRevenueValue(relation)}
+                            percent={relationRevenueRate(relation)}
+                            costPercent={relationRevenueCost(relation)}
                             disabled={deciding}
                             onChange={(value) => setRelationRevenueValue(relation, value)}
+                            onPercentChange={(value) => setRelationRevenueRate(relation, value)}
+                            onCostPercentChange={(value) => setRelationRevenueCost(relation, value)}
                           />
                         </TableCell>
                         <TableCell><Badge variant={statusVariant}>{statusLabel}</Badge></TableCell>
@@ -361,8 +532,13 @@ export default function CompanyPartnerRelationsPage() {
                         <TableCell>
                           <RevenueChoice
                             checked={relationRevenueValue(relation)}
+                            percent={relationRevenueRate(relation)}
+                            costPercent={relationRevenueCost(relation)}
+                            commissionSummary={relation.commissionSummary}
                             disabled={updatingCapabilities || removingRelation}
                             onChange={(value) => setRelationRevenueValue(relation, value)}
+                            onPercentChange={(value) => setRelationRevenueRate(relation, value)}
+                            onCostPercentChange={(value) => setRelationRevenueCost(relation, value)}
                           />
                         </TableCell>
                         <TableCell className="text-right">

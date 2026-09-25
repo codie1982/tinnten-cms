@@ -54,11 +54,24 @@ export const companyPartnersApi = baseApi.injectEndpoints({
         { type: 'PartnerRelation', id: 'LIST' },
       ],
     }),
+    getCompanyPartnerRevenueSharePreview: build.query({
+      query: ({ commissionPercent, costPercent, grossAmount = 1000, currency = 'USD' }) => ({
+        url: ENDPOINTS.companyPartners.cmsRevenueSharePreview,
+        params: { commissionPercent, costPercent, grossAmount, currency },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
     decideCompanyPartnerRelation: build.mutation({
-      query: ({ id, decision, note = '', capabilities }) => ({
+      query: ({ id, decision, note = '', capabilities, revenueSharePercent, revenueShareCostPercent }) => ({
         url: ENDPOINTS.companyPartners.cmsDecision(id),
         method: 'PATCH',
-        body: { decision, note, ...(capabilities ? { capabilities } : {}) },
+        body: {
+          decision,
+          note,
+          ...(capabilities ? { capabilities } : {}),
+          ...(revenueSharePercent !== undefined ? { revenueSharePercent } : {}),
+          ...(revenueShareCostPercent !== undefined ? { revenueShareCostPercent } : {}),
+        },
       }),
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (result, error, { id }) => [
@@ -68,7 +81,7 @@ export const companyPartnersApi = baseApi.injectEndpoints({
       ],
     }),
     updateCompanyPartnerCapabilities: build.mutation({
-      query: ({ id, canEarnRevenue }) => ({
+      query: ({ id, canEarnRevenue, revenueSharePercent, revenueShareCostPercent }) => ({
         url: ENDPOINTS.companyPartners.cmsCapabilities(id),
         method: 'PATCH',
         body: {
@@ -76,6 +89,8 @@ export const companyPartnersApi = baseApi.injectEndpoints({
             canManageAccount: true,
             canEarnRevenue,
           },
+          ...(revenueSharePercent !== undefined ? { revenueSharePercent } : {}),
+          ...(revenueShareCostPercent !== undefined ? { revenueShareCostPercent } : {}),
         },
       }),
       transformResponse: (res) => res?.data ?? res,
@@ -107,6 +122,7 @@ export const {
   useAssignCmsCompanyPartnerMutation,
   useUpdateCmsCompanyPartnerEligibilityMutation,
   useGetPendingCompanyPartnerRelationsQuery,
+  useGetCompanyPartnerRevenueSharePreviewQuery,
   useDecideCompanyPartnerRelationMutation,
   useUpdateCompanyPartnerCapabilitiesMutation,
   useRemoveCompanyPartnerRelationMutation,
