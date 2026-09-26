@@ -436,6 +436,17 @@ function ContractDetailPageInner({ params }) {
                     </div>
                   </div>
 
+                  {selected?.requiredAcceptanceParties?.length > 0 && (
+                    <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      Zorunlu onay tarafları:{' '}
+                      <span className="font-medium text-foreground">
+                        {selected.requiredAcceptanceParties
+                          .map((party) => party === 'partner_company' ? 'Partner firma' : 'Yetkili kullanıcı')
+                          .join(' ve ')}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Dil Sekmeleri */}
                   <LocaleTabs
                     selectedLocale={selectedLocale}
