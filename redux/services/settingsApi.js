@@ -60,6 +60,11 @@ export const settingsApi = baseApi.injectEndpoints({
       transformResponse: (res) => (res?.data ?? res)?.items ?? [],
       providesTags: [{ type: 'PackageCode', id: 'LIST' }],
     }),
+    getPackageCodePublishers: build.query({
+      query: (params = {}) => ({ url: ENDPOINTS.systemPackages.cmsCodePublishers, params }),
+      transformResponse: (res) => (res?.data ?? res)?.items ?? [],
+      providesTags: [{ type: 'PackageCode', id: 'PUBLISHERS' }],
+    }),
     createPackageCode: build.mutation({
       query: (body) => ({ url: ENDPOINTS.systemPackages.cmsCodes, method: 'POST', body }),
       transformResponse: (res) => (res?.data ?? res)?.code ?? null,
@@ -74,6 +79,11 @@ export const settingsApi = baseApi.injectEndpoints({
       query: (id) => ENDPOINTS.systemPackages.cmsCodeRedemptions(id),
       transformResponse: (res) => (res?.data ?? res)?.items ?? [],
       providesTags: (r, e, id) => [{ type: 'PackageCode', id: `REDEMPTIONS-${id}` }],
+    }),
+    getPackageCodeAttributions: build.query({
+      query: ({ id, ...params }) => ({ url: ENDPOINTS.systemPackages.cmsCodeAttributions(id), params }),
+      transformResponse: (res) => (res?.data ?? res)?.items ?? [],
+      providesTags: (r, e, { id }) => [{ type: 'PackageCode', id: `ATTRIBUTIONS-${id}` }],
     }),
   }),
   overrideExisting: false,
@@ -90,7 +100,9 @@ export const {
   useDeletePackageMutation,
   useAssignPrivatePackageMutation,
   useGetCmsPackageCodesQuery,
+  useGetPackageCodePublishersQuery,
   useCreatePackageCodeMutation,
   useUpdatePackageCodeMutation,
   useGetPackageCodeRedemptionsQuery,
+  useGetPackageCodeAttributionsQuery,
 } = settingsApi;

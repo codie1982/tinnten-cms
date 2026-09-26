@@ -144,8 +144,10 @@ export const ENDPOINTS = {
     assignToCompany: (id) => `/system-packages/cms/${id}/assign-to-company`,
     creditConfig: '/system-packages/cms/credit-config',
     cmsCodes: '/system-packages/cms/codes',
+    cmsCodePublishers: '/system-packages/cms/code-publishers',
     cmsCode: (id) => `/system-packages/cms/codes/${id}`,
     cmsCodeRedemptions: (id) => `/system-packages/cms/codes/${id}/redemptions`,
+    cmsCodeAttributions: (id) => `/system-packages/cms/codes/${id}/attributions`,
   },
   // MCP connector kataloğu — admin'in yayınladığı, kullanıcıya "Bağla" olarak
   // görünen şablonlar. Secret tutmaz (backend .env'de yaşar).

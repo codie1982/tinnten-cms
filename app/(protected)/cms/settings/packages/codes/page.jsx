@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { Check, Clipboard, Eye, EyeOff, Ticket, Users } from 'lucide-react';
+import { Check, Clipboard, Eye, EyeOff, Pencil, Ticket, Users, X } from 'lucide-react';
 
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -20,6 +20,8 @@ import {
   useCreatePackageCodeMutation,
   useGetCmsPackageCodesQuery,
   useGetCmsPackagesQuery,
+  useGetPackageCodeAttributionsQuery,
+  useGetPackageCodePublishersQuery,
   useGetPackageCodeRedemptionsQuery,
   useUpdatePackageCodeMutation,
 } from '@/redux/services';
@@ -44,7 +46,89 @@ const initialForm = {
   maxRedemptions: '100',
   startsAt: '',
   expiresAt: '',
+  publisherType: 'none',
+  partnerCompanyId: '',
+  partnerUserId: '',
+  publisherName: '',
+  publisherEmail: '',
 };
+
+const publisherLabel = (publisher) => {
+  if (!publisher || publisher.type === 'none') return 'Sahipsiz';
+  if (publisher.type === 'partner_company') return publisher.name || 'Partner firma';
+  if (publisher.type === 'partner_person') return publisher.name || publisher.email || 'Partner kişi';
+  return publisher.name || publisher.email || 'Harici yayıncı';
+};
+
+const publisherPayload = (value) => value.publisherType === 'partner_company'
+  ? { type: 'partner_company', partnerCompanyId: value.partnerCompanyId }
+  : value.publisherType === 'partner_person'
+    ? {
+        type: 'partner_person',
+        partnerCompanyId: value.partnerCompanyId,
+        partnerUserId: value.partnerUserId,
+      }
+    : value.publisherType === 'external_email'
+      ? {
+          type: 'external_email',
+          name: value.publisherName,
+          email: value.publisherEmail,
+        }
+      : { type: 'none' };
+
+function AttributionList({ codeId }) {
+  const [domainFilter, setDomainFilter] = useState('');
+  const { data = [], isLoading, error } = useGetPackageCodeAttributionsQuery({
+    id: codeId,
+    domain: domainFilter.trim() || undefined,
+  });
+  if (isLoading) return <Skeleton className="m-4 h-12" />;
+  if (error) return <p className="p-4 text-sm text-destructive">Kayıt atıfları yüklenemedi.</p>;
+  if (!data.length) return <p className="p-4 text-sm text-muted-foreground">Bu kodla ilişkilendirilmiş kayıt bulunmuyor.</p>;
+  return (
+    <div className="border-t border-border bg-muted/10 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Kayıt ve yönlendirme izleri</p>
+          <p className="text-xs text-muted-foreground">Referrer bilgisi tarayıcıdan gelir; UTM kullanmak domain eşleşmesini daha güvenilir kılar.</p>
+        </div>
+        <Input
+          className="w-64"
+          value={domainFilter}
+          onChange={(event) => setDomainFilter(event.target.value)}
+          placeholder="Domain filtrele: ornek.com"
+          aria-label="Referrer domain filtrele"
+        />
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Kullanıcı</TableHead>
+            <TableHead>Kaynak</TableHead>
+            <TableHead>Referrer domain</TableHead>
+            <TableHead>UTM</TableHead>
+            <TableHead>Durum</TableHead>
+            <TableHead>İlk kayıt</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {data.map((item) => (
+            <TableRow key={item._id}>
+              <TableCell>{item.userId?.emailNormalized || item.userId?.email || item.userId?._id || '—'}</TableCell>
+              <TableCell>{item.source === 'manual' ? 'Manuel' : item.source === 'legacy' ? 'Eski akış' : 'Referans linki'}</TableCell>
+              <TableCell>{item.acquisition?.referrerDomain || 'Doğrudan / bilinmiyor'}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {[item.acquisition?.utmSource, item.acquisition?.utmMedium, item.acquisition?.utmCampaign].filter(Boolean).join(' / ') || '—'}
+              </TableCell>
+              <TableCell><Badge variant={item.status === 'redeemed' ? 'success' : item.status === 'pending' ? 'warning' : 'muted'}>{item.status}</Badge></TableCell>
+              <TableCell>{formatDate(item.claimedAt || item.createdAt)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
 
 function RedemptionList({ codeId }) {
   const { data = [], isLoading, error } = useGetPackageCodeRedemptionsQuery(codeId);
@@ -58,6 +142,8 @@ function RedemptionList({ codeId }) {
           <TableRow>
             <TableHead>Kullanıcı</TableHead>
             <TableHead>Firma</TableHead>
+            <TableHead>E-posta domain</TableHead>
+            <TableHead>Firma domain</TableHead>
             <TableHead>Kullanım</TableHead>
             <TableHead>Erişim Sonu</TableHead>
             <TableHead>Durum</TableHead>
@@ -68,6 +154,8 @@ function RedemptionList({ codeId }) {
             <TableRow key={item._id}>
               <TableCell>{item.userId?.email || item.userId?._id || '—'}</TableCell>
               <TableCell>{item.companyId?.companyName || item.companyId?._id || '—'}</TableCell>
+              <TableCell>{item.userEmailDomain || '—'}</TableCell>
+              <TableCell>{item.companyWebsiteDomain || '—'}</TableCell>
               <TableCell>{formatDate(item.redeemedAt)}</TableCell>
               <TableCell>{formatDate(item.accessEndsAt)}</TableCell>
               <TableCell><Badge variant={item.status === 'active' ? 'success' : 'muted'}>{item.status}</Badge></TableCell>
@@ -87,10 +175,15 @@ export default function PackageCodesPage() {
   const [searchFilter, setSearchFilter] = useState('');
   const [expandedCode, setExpandedCode] = useState(null);
   const [copiedCode, setCopiedCode] = useState(null);
+  const [publisherEdit, setPublisherEdit] = useState(null);
   const [notice, setNotice] = useState(null);
 
   const { data: packages = [] } = useGetCmsPackagesQuery(
     { forCompany: 'true', status: 'active' },
+    { skip: !authorized },
+  );
+  const { data: publisherOptions = [] } = useGetPackageCodePublishersQuery(
+    { limit: 100 },
     { skip: !authorized },
   );
   const { data: codes = [], isLoading, error } = useGetCmsPackageCodesQuery(
@@ -111,6 +204,10 @@ export default function PackageCodesPage() {
     () => (selectedPackage?.pricing || []).filter((price) => ['month', 'year'].includes(price.interval)),
     [selectedPackage],
   );
+  const selectedPartnerCompany = useMemo(
+    () => publisherOptions.find((company) => company.id === form.partnerCompanyId) || null,
+    [form.partnerCompanyId, publisherOptions],
+  );
 
   const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -127,6 +224,7 @@ export default function PackageCodesPage() {
         startsAt: toIsoOrNull(form.startsAt),
         expiresAt: toIsoOrNull(form.expiresAt),
         offerPrice: { amount: 0, currency: 'TRY' },
+        publisher: publisherPayload(form),
       }).unwrap();
       setForm(initialForm);
       setNotice({ type: 'success', text: `${created?.code || 'Kod'} oluşturuldu.` });
@@ -139,9 +237,36 @@ export default function PackageCodesPage() {
     await updateCode({ id: item._id, status: item.status === 'active' ? 'inactive' : 'active' }).unwrap().catch(() => {});
   };
 
+  const beginPublisherEdit = (item) => {
+    const publisher = item.publisher || {};
+    setPublisherEdit({
+      codeId: item._id,
+      publisherType: publisher.type || 'none',
+      partnerCompanyId: String(publisher.partnerCompanyId?._id || publisher.partnerCompanyId || ''),
+      partnerUserId: String(publisher.partnerUserId?._id || publisher.partnerUserId || ''),
+      publisherName: publisher.name || '',
+      publisherEmail: publisher.email || '',
+    });
+  };
+
+  const savePublisherEdit = async () => {
+    if (!publisherEdit) return;
+    setNotice(null);
+    try {
+      await updateCode({
+        id: publisherEdit.codeId,
+        publisher: publisherPayload(publisherEdit),
+      }).unwrap();
+      setPublisherEdit(null);
+      setNotice({ type: 'success', text: 'Kod yayıncısı güncellendi.' });
+    } catch (cause) {
+      setNotice({ type: 'error', text: cause?.data?.message || cause?.normalizedMessage || 'Kod yayıncısı güncellenemedi.' });
+    }
+  };
+
   const copyLink = async (item) => {
     const base = String(process.env.NEXT_PUBLIC_FRONTEND_URL || 'https://tinten.ai').replace(/\/+$/, '');
-    const url = `${base}/onboarding?code=${encodeURIComponent(item.code)}&openWizard=1`;
+    const url = `${base}/onboarding?ref=${encodeURIComponent(item.code)}&openWizard=1`;
     await navigator.clipboard.writeText(url);
     setCopiedCode(item._id);
     window.setTimeout(() => setCopiedCode(null), 1800);
@@ -153,7 +278,7 @@ export default function PackageCodesPage() {
         breadcrumb={[{ label: 'Paketler', href: '/cms/settings/packages' }, { label: 'Kodlar' }]}
         section="Sistem Ayarları"
         title="Paket Kodları"
-        description="Kotalı veya sınırsız özel deneme kodları üretin ve kullanımlarını izleyin."
+        description="Özel deneme kodları üretin; yayıncı, kayıt kaynağı, domain ve kullanım dönüşümünü izleyin."
         actions={<Link href="/cms/settings/packages" className={buttonVariants({ variant: 'outline' })}>Paketlere Dön</Link>}
       />
 
@@ -213,8 +338,80 @@ export default function PackageCodesPage() {
               <label className="mb-1 block text-xs text-muted-foreground">Kod bitişi (opsiyonel)</label>
               <Input type="datetime-local" value={form.expiresAt} onChange={(e) => setField('expiresAt', e.target.value)} />
             </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Kod yayıncısı</label>
+              <Select value={form.publisherType} onValueChange={(value) => setForm((current) => ({
+                ...current,
+                publisherType: value,
+                partnerCompanyId: '',
+                partnerUserId: '',
+                publisherName: '',
+                publisherEmail: '',
+              }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sahipsiz</SelectItem>
+                  <SelectItem value="partner_company">Partner firma</SelectItem>
+                  <SelectItem value="partner_person">Partner kişi</SelectItem>
+                  <SelectItem value="external_email">Yalnız ad / e-posta</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {['partner_company', 'partner_person'].includes(form.publisherType) ? (
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Onaylı partner firma</label>
+                <Select value={form.partnerCompanyId} onValueChange={(value) => setForm((current) => ({
+                  ...current,
+                  partnerCompanyId: value,
+                  partnerUserId: '',
+                }))}>
+                  <SelectTrigger><SelectValue placeholder="Partner firma seçin" /></SelectTrigger>
+                  <SelectContent>
+                    {publisherOptions.map((company) => (
+                      <SelectItem key={company.id} value={company.id}>{company.name}{company.email ? ` · ${company.email}` : ''}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {form.publisherType === 'partner_person' ? (
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Partner firma kişisi</label>
+                <Select value={form.partnerUserId} onValueChange={(value) => setField('partnerUserId', value)} disabled={!selectedPartnerCompany}>
+                  <SelectTrigger><SelectValue placeholder="Kişi seçin" /></SelectTrigger>
+                  <SelectContent>
+                    {(selectedPartnerCompany?.representatives || []).map((person) => (
+                      <SelectItem key={person.id} value={person.id}>{person.name}{person.email ? ` · ${person.email}` : ''}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {form.publisherType === 'external_email' ? (
+              <>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Yayıncı adı (opsiyonel)</label>
+                  <Input value={form.publisherName} onChange={(e) => setField('publisherName', e.target.value)} placeholder="Kişi veya kurum adı" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Yayıncı e-postası</label>
+                  <Input type="email" value={form.publisherEmail} onChange={(e) => setField('publisherEmail', e.target.value)} placeholder="ornek@firma.com" required />
+                </div>
+              </>
+            ) : null}
             <div className="lg:col-span-4 flex justify-end">
-              <Button type="submit" disabled={isCreating || !form.packageId}>{isCreating ? 'Oluşturuluyor…' : 'Kod Oluştur'}</Button>
+              <Button
+                type="submit"
+                disabled={
+                  isCreating ||
+                  !form.packageId ||
+                  (form.publisherType === 'partner_company' && !form.partnerCompanyId) ||
+                  (form.publisherType === 'partner_person' && (!form.partnerCompanyId || !form.partnerUserId)) ||
+                  (form.publisherType === 'external_email' && !form.publisherEmail.trim())
+                }
+              >
+                {isCreating ? 'Oluşturuluyor…' : 'Kod Oluştur'}
+              </Button>
             </div>
           </form>
         </CardContent>
@@ -245,13 +442,29 @@ export default function PackageCodesPage() {
             <div className="flex flex-col items-center gap-2 py-14 text-center"><Ticket className="size-6 text-muted-foreground" /><p className="font-semibold">Kod yok</p></div>
           ) : (
             <Table>
-              <TableHeader><TableRow><TableHead>Kod</TableHead><TableHead>Paket</TableHead><TableHead>Süre</TableHead><TableHead>Kota</TableHead><TableHead>Geçerlilik</TableHead><TableHead>Durum</TableHead><TableHead className="w-40" /></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Kod</TableHead><TableHead>Yayıncı</TableHead><TableHead>Paket</TableHead><TableHead>Süre</TableHead><TableHead>Kota</TableHead><TableHead>Geçerlilik</TableHead><TableHead>Durum</TableHead><TableHead className="w-40" /></TableRow></TableHeader>
               <TableBody>
                 {codes.map((item) => {
                   const remaining = item.maxRedemptions == null ? 'Sınırsız' : Math.max(item.maxRedemptions - item.redeemedCount, 0);
+                  const editingPublisher = publisherEdit?.codeId === item._id;
+                  const editCompany = editingPublisher
+                    ? publisherOptions.find((company) => company.id === publisherEdit.partnerCompanyId)
+                    : null;
+                  const publisherEditInvalid = editingPublisher && (
+                    (publisherEdit.publisherType === 'partner_company' && !publisherEdit.partnerCompanyId) ||
+                    (publisherEdit.publisherType === 'partner_person' && (!publisherEdit.partnerCompanyId || !publisherEdit.partnerUserId)) ||
+                    (publisherEdit.publisherType === 'external_email' && !publisherEdit.publisherEmail.trim())
+                  );
                   return [
                     <TableRow key={item._id}>
                       <TableCell><p className="font-mono text-sm font-semibold">{item.code}</p><p className="text-xs text-muted-foreground">{item.label || '—'}</p></TableCell>
+                      <TableCell>
+                        <p className="text-sm font-medium">{publisherLabel(item.publisher)}</p>
+                        <p className="text-xs text-muted-foreground">{item.publisher?.email || '—'}</p>
+                        <button type="button" onClick={() => beginPublisherEdit(item)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                          <Pencil className="size-3" /> Düzenle
+                        </button>
+                      </TableCell>
                       <TableCell>{packageTitle(item.packageId)}</TableCell>
                       <TableCell>{item.grantDuration?.count || 1} ay</TableCell>
                       <TableCell><span className="font-medium">{item.redeemedCount || 0}</span> kullanıldı · {remaining} kaldı</TableCell>
@@ -263,7 +476,75 @@ export default function PackageCodesPage() {
                         <Button variant="ghost" size="icon" className="size-8" title={item.status === 'active' ? 'Pasife al' : 'Aktifleştir'} onClick={() => toggleStatus(item)}>{item.status === 'active' ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</Button>
                       </div></TableCell>
                     </TableRow>,
-                    expandedCode === item._id ? <TableRow key={`${item._id}-redemptions`}><TableCell colSpan={7} className="p-0"><RedemptionList codeId={item._id} /></TableCell></TableRow> : null,
+                    editingPublisher ? (
+                      <TableRow key={`${item._id}-publisher-edit`}>
+                        <TableCell colSpan={8} className="bg-muted/15 p-4">
+                          <div className="grid gap-3 lg:grid-cols-4">
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Yayıncı türü</label>
+                              <Select value={publisherEdit.publisherType} onValueChange={(value) => setPublisherEdit((current) => ({
+                                ...current,
+                                publisherType: value,
+                                partnerCompanyId: '',
+                                partnerUserId: '',
+                                publisherName: '',
+                                publisherEmail: '',
+                              }))}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Sahipsiz</SelectItem>
+                                  <SelectItem value="partner_company">Partner firma</SelectItem>
+                                  <SelectItem value="partner_person">Partner kişi</SelectItem>
+                                  <SelectItem value="external_email">Yalnız ad / e-posta</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {['partner_company', 'partner_person'].includes(publisherEdit.publisherType) ? (
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Onaylı partner firma</label>
+                                <Select value={publisherEdit.partnerCompanyId} onValueChange={(value) => setPublisherEdit((current) => ({ ...current, partnerCompanyId: value, partnerUserId: '' }))}>
+                                  <SelectTrigger><SelectValue placeholder="Partner firma seçin" /></SelectTrigger>
+                                  <SelectContent>{publisherOptions.map((company) => <SelectItem key={company.id} value={company.id}>{company.name}</SelectItem>)}</SelectContent>
+                                </Select>
+                              </div>
+                            ) : null}
+                            {publisherEdit.publisherType === 'partner_person' ? (
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Partner firma kişisi</label>
+                                <Select value={publisherEdit.partnerUserId} onValueChange={(value) => setPublisherEdit((current) => ({ ...current, partnerUserId: value }))} disabled={!editCompany}>
+                                  <SelectTrigger><SelectValue placeholder="Kişi seçin" /></SelectTrigger>
+                                  <SelectContent>{(editCompany?.representatives || []).map((person) => <SelectItem key={person.id} value={person.id}>{person.name}{person.email ? ` · ${person.email}` : ''}</SelectItem>)}</SelectContent>
+                                </Select>
+                              </div>
+                            ) : null}
+                            {publisherEdit.publisherType === 'external_email' ? (
+                              <>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Yayıncı adı</label>
+                                  <Input value={publisherEdit.publisherName} onChange={(event) => setPublisherEdit((current) => ({ ...current, publisherName: event.target.value }))} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Yayıncı e-postası</label>
+                                  <Input type="email" value={publisherEdit.publisherEmail} onChange={(event) => setPublisherEdit((current) => ({ ...current, publisherEmail: event.target.value }))} />
+                                </div>
+                              </>
+                            ) : null}
+                            <div className="flex items-end justify-end gap-2 lg:col-start-4">
+                              <Button type="button" variant="outline" onClick={() => setPublisherEdit(null)}><X className="size-4" /> Vazgeç</Button>
+                              <Button type="button" disabled={publisherEditInvalid} onClick={() => void savePublisherEdit()}><Check className="size-4" /> Kaydet</Button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : null,
+                    expandedCode === item._id ? (
+                      <TableRow key={`${item._id}-tracking`}>
+                        <TableCell colSpan={8} className="p-0">
+                          <AttributionList codeId={item._id} />
+                          <RedemptionList codeId={item._id} />
+                        </TableCell>
+                      </TableRow>
+                    ) : null,
                   ];
                 })}
               </TableBody>
