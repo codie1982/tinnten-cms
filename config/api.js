@@ -146,6 +146,7 @@ export const ENDPOINTS = {
     cmsCodes: '/system-packages/cms/codes',
     cmsCodePublishers: '/system-packages/cms/code-publishers',
     cmsCode: (id) => `/system-packages/cms/codes/${id}`,
+    cmsCodeDashboard: (id) => `/system-packages/cms/codes/${id}/dashboard`,
     cmsCodeRedemptions: (id) => `/system-packages/cms/codes/${id}/redemptions`,
     cmsCodeAttributions: (id) => `/system-packages/cms/codes/${id}/attributions`,
   },

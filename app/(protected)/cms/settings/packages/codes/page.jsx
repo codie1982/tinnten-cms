@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Check, Clipboard, Eye, EyeOff, Pencil, Ticket, Users, X } from 'lucide-react';
@@ -35,6 +36,22 @@ const formatDate = (value) => value
 
 const toIsoOrNull = (value) => value ? new Date(value).toISOString() : null;
 
+const pricingIntervalLabel = (price) => [
+  price.interval === 'year' ? 'Yıllık' : 'Aylık',
+  price.amount,
+  price.currency,
+].filter((value) => value !== undefined && value !== null && value !== '').join(' · ');
+
+const publisherCompanyLabel = (company) => company.displayLabel
+  || [company.companyName || company.name, company.companyEmail || company.email].filter(Boolean).join(' · ')
+  || 'İsimsiz partner firma';
+
+const publisherPersonLabel = (person, company) => person.displayLabel
+  || [person.fullName || person.name, person.email, person.companyName || company?.companyName || company?.name]
+    .filter(Boolean)
+    .join(' · ')
+  || 'İsimsiz partner kişisi';
+
 const initialForm = {
   label: '',
   packageId: '',
@@ -56,6 +73,17 @@ const publisherLabel = (publisher) => {
   if (publisher.type === 'partner_company') return publisher.name || 'Partner firma';
   if (publisher.type === 'partner_person') return publisher.name || publisher.email || 'Partner kişi';
   return publisher.name || publisher.email || 'Harici yayıncı';
+};
+
+const codeState = (item) => {
+  const now = Date.now();
+  if (item.status !== 'active') return { label: 'Pasif', variant: 'muted' };
+  if (item.startsAt && new Date(item.startsAt).getTime() > now) return { label: 'Henüz başlamadı', variant: 'warning' };
+  if (item.expiresAt && new Date(item.expiresAt).getTime() <= now) return { label: 'Son kullanım geçti', variant: 'muted' };
+  if (item.maxRedemptions != null && Number(item.redeemedCount || 0) >= Number(item.maxRedemptions)) {
+    return { label: 'Kota doldu', variant: 'warning' };
+  }
+  return { label: 'Kullanılabilir', variant: 'success' };
 };
 
 const publisherPayload = (value) => value.publisherType === 'partner_company'
@@ -156,7 +184,7 @@ function RedemptionList({ codeId }) {
               <TableCell>{item.companyWebsiteDomain || '—'}</TableCell>
               <TableCell>{formatDate(item.redeemedAt)}</TableCell>
               <TableCell>{formatDate(item.accessEndsAt)}</TableCell>
-              <TableCell><Badge variant={item.status === 'active' ? 'success' : 'muted'}>{item.status}</Badge></TableCell>
+              <TableCell><Badge variant={item.effectiveStatus === 'active' ? 'success' : 'muted'}>{item.effectiveStatus === 'active' ? 'Erişim aktif' : 'Erişim sona erdi'}</Badge></TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -220,9 +248,21 @@ export default function PackageCodesPage({ packageId, packageData }) {
     && ['public', 'unlisted'].includes(packageData?.visibility || 'public')
     && intervals.length > 0;
   const selectedPartnerCompany = useMemo(
-    () => publisherOptions.find((company) => company.id === form.partnerCompanyId) || null,
+    () => publisherOptions.find((company) => (company.companyId || company.id) === form.partnerCompanyId) || null,
     [form.partnerCompanyId, publisherOptions],
   );
+  const validityError = useMemo(() => {
+    if (!form.expiresAt) return '';
+    const end = new Date(form.expiresAt);
+    if (Number.isNaN(end.getTime())) return 'Kodun son kullanım tarihi geçersiz.';
+    if (end <= new Date()) return 'Kodun son kullanım tarihi gelecekte olmalıdır.';
+    if (form.startsAt) {
+      const start = new Date(form.startsAt);
+      if (Number.isNaN(start.getTime())) return 'Kodun kullanım başlangıcı geçersiz.';
+      if (end <= start) return 'Son kullanım tarihi başlangıçtan sonra olmalıdır.';
+    }
+    return '';
+  }, [form.expiresAt, form.startsAt]);
 
   const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -234,6 +274,10 @@ export default function PackageCodesPage({ packageId, packageData }) {
         type: 'error',
         text: 'Kod oluşturmak için paket aktif, genel veya link/kod ile görünür ve aylık ya da yıllık dönemli olmalıdır.',
       });
+      return;
+    }
+    if (validityError) {
+      setNotice({ type: 'error', text: validityError });
       return;
     }
     try {
@@ -346,12 +390,13 @@ export default function PackageCodesPage({ packageId, packageData }) {
               <label className="mb-1 block text-xs text-muted-foreground">Paket dönemi</label>
               <Select value={form.pricingInterval} onValueChange={(value) => setField('pricingInterval', value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{intervals.map((price) => <SelectItem key={price.interval} value={price.interval}>{price.interval === 'year' ? 'Yıllık' : 'Aylık'} · {price.amount} {price.currency}</SelectItem>)}</SelectContent>
+                <SelectContent>{intervals.map((price) => <SelectItem key={price.interval} value={price.interval}>{pricingIntervalLabel(price)}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Erişim süresi (ay)</label>
+              <label className="mb-1 block text-xs text-muted-foreground">Kullanım sonrası erişim süresi (ay)</label>
               <Input type="number" min="1" step="1" value={form.durationCount} onChange={(e) => setField('durationCount', e.target.value)} required />
+              <p className="mt-1 text-[11px] text-muted-foreground">Kod kullanıldığı anda başlar; aşağıdaki son kullanım tarihinden bağımsızdır.</p>
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Kod kullanım türü</label>
@@ -364,13 +409,22 @@ export default function PackageCodesPage({ packageId, packageData }) {
               <label className="mb-1 block text-xs text-muted-foreground">Maksimum kayıt / firma</label>
               <Input type="number" min="1" step="1" value={form.maxRedemptions} onChange={(e) => setField('maxRedemptions', e.target.value)} disabled={form.quotaMode === 'unlimited'} required={form.quotaMode === 'limited'} />
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Kod başlangıcı (opsiyonel)</label>
-              <Input type="datetime-local" value={form.startsAt} onChange={(e) => setField('startsAt', e.target.value)} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Kod bitişi (opsiyonel)</label>
-              <Input type="datetime-local" value={form.expiresAt} onChange={(e) => setField('expiresAt', e.target.value)} />
+            <div className="rounded-lg border border-border bg-muted/20 p-3 lg:col-span-2">
+              <p className="text-xs font-semibold text-foreground">Kodun kullanılabileceği tarih aralığı</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Bu tarihler yeni kullanımı sınırlar. Kod daha önce kullanılmışsa verilen erişimin bitiş tarihini değiştirmez.
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Kullanım başlangıcı (opsiyonel)</label>
+                  <Input type="datetime-local" value={form.startsAt} onChange={(e) => setField('startsAt', e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Son kullanım tarihi (opsiyonel)</label>
+                  <Input type="datetime-local" value={form.expiresAt} onChange={(e) => setField('expiresAt', e.target.value)} />
+                </div>
+              </div>
+              {validityError ? <p className="mt-2 text-xs font-medium text-destructive">{validityError}</p> : null}
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Kod yayıncısı</label>
@@ -402,10 +456,11 @@ export default function PackageCodesPage({ packageId, packageData }) {
                   <SelectTrigger><SelectValue placeholder="Partner firma seçin" /></SelectTrigger>
                   <SelectContent>
                     {publisherOptions.map((company) => (
-                      <SelectItem key={company.id} value={company.id}>{company.name}{company.email ? ` · ${company.email}` : ''}</SelectItem>
+                      <SelectItem key={company.companyId || company.id} value={company.companyId || company.id}>{publisherCompanyLabel(company)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="mt-1 text-[11px] text-muted-foreground">Yalnız CMS’te onaylanmış aktif partner firmalar listelenir.</p>
               </div>
             ) : null}
             {form.publisherType === 'partner_person' ? (
@@ -415,7 +470,7 @@ export default function PackageCodesPage({ packageId, packageData }) {
                   <SelectTrigger><SelectValue placeholder="Kişi seçin" /></SelectTrigger>
                   <SelectContent>
                     {(selectedPartnerCompany?.representatives || []).map((person) => (
-                      <SelectItem key={person.id} value={person.id}>{person.name}{person.email ? ` · ${person.email}` : ''}</SelectItem>
+                      <SelectItem key={person.userId || person.id} value={person.userId || person.id}>{publisherPersonLabel(person, selectedPartnerCompany)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -439,6 +494,7 @@ export default function PackageCodesPage({ packageId, packageData }) {
                 disabled={
                   isCreating ||
                   !canCreateCode ||
+                  Boolean(validityError) ||
                   !packageId ||
                   (form.publisherType === 'partner_company' && !form.partnerCompanyId) ||
                   (form.publisherType === 'partner_person' && (!form.partnerCompanyId || !form.partnerUserId)) ||
@@ -477,13 +533,14 @@ export default function PackageCodesPage({ packageId, packageData }) {
             <div className="flex flex-col items-center gap-2 py-14 text-center"><Ticket className="size-6 text-muted-foreground" /><p className="font-semibold">Kod yok</p></div>
           ) : (
             <Table>
-              <TableHeader><TableRow><TableHead>Kod</TableHead><TableHead>Yayıncı</TableHead><TableHead>Süre</TableHead><TableHead>Kota</TableHead><TableHead>Geçerlilik</TableHead><TableHead>Durum</TableHead><TableHead className="w-40" /></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Kod</TableHead><TableHead>Yayıncı</TableHead><TableHead>Kullanım sonrası erişim</TableHead><TableHead>Kota</TableHead><TableHead>Kod kullanım aralığı</TableHead><TableHead>Durum</TableHead><TableHead className="w-40" /></TableRow></TableHeader>
               <TableBody>
                 {codes.map((item) => {
                   const remaining = item.maxRedemptions == null ? 'Sınırsız' : Math.max(item.maxRedemptions - item.redeemedCount, 0);
+                  const state = codeState(item);
                   const editingPublisher = publisherEdit?.codeId === item._id;
                   const editCompany = editingPublisher
-                    ? publisherOptions.find((company) => company.id === publisherEdit.partnerCompanyId)
+                    ? publisherOptions.find((company) => (company.companyId || company.id) === publisherEdit.partnerCompanyId)
                     : null;
                   const publisherEditInvalid = editingPublisher && (
                     (publisherEdit.publisherType === 'partner_company' && !publisherEdit.partnerCompanyId) ||
@@ -492,18 +549,29 @@ export default function PackageCodesPage({ packageId, packageData }) {
                   );
                   return [
                     <TableRow key={item._id}>
-                      <TableCell><p className="font-mono text-sm font-semibold">{item.code}</p><p className="text-xs text-muted-foreground">{item.label || '—'}</p></TableCell>
+                      <TableCell>
+                        <Link
+                          href={`/cms/settings/packages/${packageId}/codes/${item._id}`}
+                          className="font-mono text-sm font-semibold text-primary hover:underline"
+                          title="Kod dashboard’unu aç"
+                        >
+                          {item.code}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">{item.label || '—'}</p>
+                      </TableCell>
                       <TableCell>
                         <p className="text-sm font-medium">{publisherLabel(item.publisher)}</p>
-                        <p className="text-xs text-muted-foreground">{item.publisher?.email || '—'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {[item.publisher?.email, item.publisher?.partnerCompanyId?.companyName].filter(Boolean).join(' · ') || '—'}
+                        </p>
                         <button type="button" onClick={() => beginPublisherEdit(item)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
                           <Pencil className="size-3" /> Düzenle
                         </button>
                       </TableCell>
-                      <TableCell>{item.grantDuration?.count || 1} ay</TableCell>
+                      <TableCell>{item.grantDuration?.count || 1} ay · kullanıldığı anda başlar</TableCell>
                       <TableCell><span className="font-medium">{item.redeemedCount || 0}</span> kullanıldı · {remaining} kaldı</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{item.startsAt ? formatDate(item.startsAt) : 'Hemen'} — {item.expiresAt ? formatDate(item.expiresAt) : 'Süresiz'}</TableCell>
-                      <TableCell><Badge variant={item.status === 'active' ? 'success' : 'muted'}>{item.status === 'active' ? 'Aktif' : 'Pasif'}</Badge></TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{item.startsAt ? formatDate(item.startsAt) : 'Hemen'} — {item.expiresAt ? formatDate(item.expiresAt) : 'Son kullanım tarihi yok'}</TableCell>
+                      <TableCell><Badge variant={state.variant}>{state.label}</Badge></TableCell>
                       <TableCell><div className="flex items-center gap-1">
                         <Button variant="ghost" size="icon" className="size-8" title="Onboarding linkini kopyala" onClick={() => copyLink(item)}>{copiedCode === item._id ? <Check className="size-4 text-emerald-600" /> : <Clipboard className="size-4" />}</Button>
                         <Button variant="ghost" size="icon" className="size-8" title="Kullanımları göster" onClick={() => setExpandedCode((current) => current === item._id ? null : item._id)}><Users className="size-4" /></Button>
@@ -538,7 +606,7 @@ export default function PackageCodesPage({ packageId, packageData }) {
                                 <label className="mb-1 block text-xs text-muted-foreground">Onaylı partner firma</label>
                                 <Select value={publisherEdit.partnerCompanyId} onValueChange={(value) => setPublisherEdit((current) => ({ ...current, partnerCompanyId: value, partnerUserId: '' }))}>
                                   <SelectTrigger><SelectValue placeholder="Partner firma seçin" /></SelectTrigger>
-                                  <SelectContent>{publisherOptions.map((company) => <SelectItem key={company.id} value={company.id}>{company.name}</SelectItem>)}</SelectContent>
+                                  <SelectContent>{publisherOptions.map((company) => <SelectItem key={company.companyId || company.id} value={company.companyId || company.id}>{publisherCompanyLabel(company)}</SelectItem>)}</SelectContent>
                                 </Select>
                               </div>
                             ) : null}
@@ -547,7 +615,7 @@ export default function PackageCodesPage({ packageId, packageData }) {
                                 <label className="mb-1 block text-xs text-muted-foreground">Partner firma kişisi</label>
                                 <Select value={publisherEdit.partnerUserId} onValueChange={(value) => setPublisherEdit((current) => ({ ...current, partnerUserId: value }))} disabled={!editCompany}>
                                   <SelectTrigger><SelectValue placeholder="Kişi seçin" /></SelectTrigger>
-                                  <SelectContent>{(editCompany?.representatives || []).map((person) => <SelectItem key={person.id} value={person.id}>{person.name}{person.email ? ` · ${person.email}` : ''}</SelectItem>)}</SelectContent>
+                                  <SelectContent>{(editCompany?.representatives || []).map((person) => <SelectItem key={person.userId || person.id} value={person.userId || person.id}>{publisherPersonLabel(person, editCompany)}</SelectItem>)}</SelectContent>
                                 </Select>
                               </div>
                             ) : null}

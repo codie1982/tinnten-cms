@@ -144,7 +144,7 @@ export default function PackageEditorPage({ params }) {
     targetDescription: '',
   });
   const [i18n, setI18n] = useState(emptyI18n);
-  const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1, discount: 0, localPrices: {} }]);
+  const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }]);
   // Limitler artık PERİYOT BAZLI: her fatura periyodu (month/year) kendi limit
   // objesini tutar. Satın alınan periyodun limiti kullanıcıya aktarılır; reset
   // fatura döngüsüne bağlı (periyot başına bir kez sıfırlanır).
@@ -208,6 +208,9 @@ export default function PackageEditorPage({ params }) {
         durationTime: p.durationTime ?? 1,
         discount: p.discount ?? 0,
         localPrices: p.localPrices ?? {},
+        introductoryAmount: p.introductoryPrice?.amount ?? '',
+        introductoryBillingCycles: p.introductoryPrice?.billingCycles ?? '',
+        introductoryLocalPrices: p.introductoryPrice?.localPrices ?? {},
       })),
     );
     // PERİYOT BAZLI limit yükleme: her pricing satırının kendi `.limit` objesi var.
@@ -231,7 +234,18 @@ export default function PackageEditorPage({ params }) {
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setLocaleField = (loc, k, v) => setI18n((s) => ({ ...s, [loc]: { ...s[loc], [k]: v } }));
   const setPriceRow = (i, k, v) => setPricing((rows) => rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
-  const addPriceRow = () => setPricing((rows) => [...rows, { interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false, durationTime: 1, discount: 0, localPrices: {} }]);
+  const setPriceInterval = (i, interval) => setPricing((rows) => rows.map((r, idx) => (
+    idx === i
+      ? {
+          ...r,
+          interval,
+          ...(interval !== 'month'
+            ? { introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }
+            : {}),
+        }
+      : r
+  )));
+  const addPriceRow = () => setPricing((rows) => [...rows, { interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false, durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }]);
   const removePriceRow = (i) => setPricing((rows) => rows.filter((_, idx) => idx !== i));
 
   // Nested limit alanlarını güncelleme: setLimitField('file', 'upload', 1024)
@@ -376,6 +390,18 @@ export default function PackageEditorPage({ params }) {
           EUR: p.localPrices?.EUR != null && p.localPrices?.EUR !== '' ? Number(p.localPrices.EUR) : null,
           USD: p.localPrices?.USD != null && p.localPrices?.USD !== '' ? Number(p.localPrices.USD) : null,
         },
+        introductoryPrice:
+          p.interval === 'month' && p.introductoryAmount !== '' && p.introductoryAmount != null
+            ? {
+                amount: Number(p.introductoryAmount),
+                billingCycles: Number(p.introductoryBillingCycles),
+                localPrices: {
+                  TRY: p.introductoryLocalPrices?.TRY != null && p.introductoryLocalPrices?.TRY !== '' ? Number(p.introductoryLocalPrices.TRY) : null,
+                  EUR: p.introductoryLocalPrices?.EUR != null && p.introductoryLocalPrices?.EUR !== '' ? Number(p.introductoryLocalPrices.EUR) : null,
+                  USD: p.introductoryLocalPrices?.USD != null && p.introductoryLocalPrices?.USD !== '' ? Number(p.introductoryLocalPrices.USD) : null,
+                },
+              }
+            : null,
         // PERİYOT BAZLI limit: month/year satırları kendi limit objesini taşır;
         // lifetime satırının limiti yok (reset fatura döngüsüne bağlı, ömür boyunun
         // döngüsü yok).
@@ -423,6 +449,29 @@ export default function PackageEditorPage({ params }) {
     }
     if (pricedRows.some((p) => p.interval === 'lifetime' && Number(p.amount) > 0)) {
       setNotice('Ömür boyu paket ücretli olamaz.'); return;
+    }
+    const invalidIntroInterval = pricedRows.find(
+      (p) => p.introductoryAmount !== '' && p.introductoryAmount != null && p.interval !== 'month',
+    );
+    if (invalidIntroInterval) {
+      setNotice('Tanıtım fiyatı yalnız aylık paketlerde kullanılabilir.'); return;
+    }
+    const invalidIntroAmount = pricedRows.find(
+      (p) => p.introductoryAmount !== '' && p.introductoryAmount != null && (
+        Number(p.introductoryAmount) <= 0 ||
+        Number(p.introductoryAmount) >= Number(p.amount)
+      ),
+    );
+    if (invalidIntroAmount) {
+      setNotice('Tanıtım fiyatı sıfırdan büyük ve normal fiyattan düşük olmalıdır.'); return;
+    }
+    const invalidIntroCycles = pricedRows.find((p) => {
+      if (p.introductoryAmount === '' || p.introductoryAmount == null) return false;
+      const cycles = Number(p.introductoryBillingCycles);
+      return !Number.isInteger(cycles) || cycles < 1 || cycles > 36;
+    });
+    if (invalidIntroCycles) {
+      setNotice('Tanıtım dönemi 1 ile 36 ay arasında tam sayı olmalıdır.'); return;
     }
     if (isNew) {
       const r = await createPackage(body).unwrap().catch((e) => { setNotice(e?.data?.message || 'Oluşturulamadı.'); return null; });
@@ -668,7 +717,7 @@ export default function PackageEditorPage({ params }) {
                 <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-3">
                   <div className="w-32">
                     <label className="mb-1 block text-[11px] text-muted-foreground">Periyot</label>
-                    <Select value={p.interval} onValueChange={(v) => setPriceRow(i, 'interval', v)}>
+                    <Select value={p.interval} onValueChange={(v) => setPriceInterval(i, v)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {INTERVALS.map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}
@@ -676,7 +725,7 @@ export default function PackageEditorPage({ params }) {
                     </Select>
                   </div>
                   <div className="w-28">
-                    <label className="mb-1 block text-[11px] text-muted-foreground">Tutar</label>
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Normal fiyat</label>
                     <Input type="number" value={p.amount} onChange={(e) => setPriceRow(i, 'amount', e.target.value)} placeholder="0" />
                   </div>
                   <div className="w-24">
@@ -687,6 +736,30 @@ export default function PackageEditorPage({ params }) {
                         {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="w-28">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Tanıtım fiyatı</label>
+                    <Input
+                      type="number"
+                      min="0.01"
+                      value={p.introductoryAmount ?? ''}
+                      onChange={(e) => setPriceRow(i, 'introductoryAmount', e.target.value)}
+                      placeholder="Kapalı"
+                      disabled={p.interval !== 'month'}
+                    />
+                  </div>
+                  <div className="w-28">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">İlk kaç ay</label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="36"
+                      step="1"
+                      value={p.introductoryBillingCycles ?? ''}
+                      onChange={(e) => setPriceRow(i, 'introductoryBillingCycles', e.target.value)}
+                      placeholder="Örn. 3"
+                      disabled={p.interval !== 'month' || p.introductoryAmount === ''}
+                    />
                   </div>
                   <div className="w-24">
                     <label className="mb-1 block text-[11px] text-muted-foreground">İndirim %</label>
@@ -707,14 +780,26 @@ export default function PackageEditorPage({ params }) {
                     </p>
                   </div>
                   {p.currency !== 'USD' && (
-                    <div className="w-24">
-                      <label className="mb-1 block text-[11px] text-muted-foreground">USD karşılığı</label>
-                      <Input
-                        type="number" min="0" placeholder="0"
-                        value={p.localPrices?.USD ?? ''}
-                        onChange={(e) => setPriceRow(i, 'localPrices', { ...(p.localPrices || {}), USD: e.target.value })}
-                      />
-                    </div>
+                    <>
+                      <div className="w-24">
+                        <label className="mb-1 block text-[11px] text-muted-foreground">USD karşılığı</label>
+                        <Input
+                          type="number" min="0" placeholder="0"
+                          value={p.localPrices?.USD ?? ''}
+                          onChange={(e) => setPriceRow(i, 'localPrices', { ...(p.localPrices || {}), USD: e.target.value })}
+                        />
+                      </div>
+                      {p.introductoryAmount !== '' && (
+                        <div className="w-28">
+                          <label className="mb-1 block text-[11px] text-muted-foreground">Tanıtım USD</label>
+                          <Input
+                            type="number" min="0" placeholder="0"
+                            value={p.introductoryLocalPrices?.USD ?? ''}
+                            onChange={(e) => setPriceRow(i, 'introductoryLocalPrices', { ...(p.introductoryLocalPrices || {}), USD: e.target.value })}
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
                   <label className="flex items-center gap-1.5 pb-2 text-xs text-foreground">
                     <input type="checkbox" checked={p.isDefault} onChange={(e) => setPriceRow(i, 'isDefault', e.target.checked)} className="size-4" />
@@ -727,6 +812,11 @@ export default function PackageEditorPage({ params }) {
                   <Button variant="ghost" size="icon" className="size-8 hover:text-destructive" onClick={() => removePriceRow(i)}>
                     <Trash2 className="size-4" />
                   </Button>
+                  {p.interval === 'month' && p.introductoryAmount !== '' && (
+                    <p className="w-full text-[11px] text-muted-foreground">
+                      İlk {p.introductoryBillingCycles || '?'} ay {p.introductoryAmount || 0} {p.currency}; ardından her ay {p.amount || 0} {p.currency}.
+                    </p>
+                  )}
                 </div>
               ))}
             </CardContent>

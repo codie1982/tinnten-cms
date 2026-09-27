@@ -75,6 +75,11 @@ export const settingsApi = baseApi.injectEndpoints({
       transformResponse: (res) => (res?.data ?? res)?.code ?? null,
       invalidatesTags: (r, e, { id }) => [{ type: 'PackageCode', id }, { type: 'PackageCode', id: 'LIST' }],
     }),
+    getPackageCodeDashboard: build.query({
+      query: (id) => ENDPOINTS.systemPackages.cmsCodeDashboard(id),
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (r, e, id) => [{ type: 'PackageCode', id }],
+    }),
     getPackageCodeRedemptions: build.query({
       query: (id) => ENDPOINTS.systemPackages.cmsCodeRedemptions(id),
       transformResponse: (res) => (res?.data ?? res)?.items ?? [],
@@ -103,6 +108,7 @@ export const {
   useGetPackageCodePublishersQuery,
   useCreatePackageCodeMutation,
   useUpdatePackageCodeMutation,
+  useGetPackageCodeDashboardQuery,
   useGetPackageCodeRedemptionsQuery,
   useGetPackageCodeAttributionsQuery,
 } = settingsApi;
