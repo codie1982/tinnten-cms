@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
-  Save, Plus, Trash2, Loader2, ChevronLeft, Check, Eye, EyeOff, AlertTriangle,
+  Save, Plus, Trash2, Loader2, ChevronLeft, Check, Eye, EyeOff, AlertTriangle, Ticket,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -21,6 +21,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { CONTENT_LOCALES } from '@/config/api';
@@ -34,6 +35,7 @@ import {
 } from '@/redux/services';
 import CompanySearchSelect from './CompanySearchSelect';
 import PackageProfitAnalysis from './PackageProfitAnalysis';
+import PackageCodesPage from '../codes/page';
 
 const CATEGORIES = ['free', 'basic', 'premium', 'enterprise'];
 const CONTENT_TYPES = ['standart', 'multisubscribe', 'student'];
@@ -159,6 +161,19 @@ export default function PackageEditorPage({ params }) {
   const [migrateToAccounts, setMigrateToAccounts] = useState(false);
   const [migrateIncludeExpired, setMigrateIncludeExpired] = useState(false);
   const [confirmMigrate, setConfirmMigrate] = useState(false);
+  const [activeSection, setActiveSection] = useState('details');
+
+  useEffect(() => {
+    if (isNew) return;
+    const requestedTab = new URLSearchParams(window.location.search).get('tab');
+    if (requestedTab === 'codes') setActiveSection('codes');
+  }, [isNew]);
+
+  useEffect(() => {
+    if (activeSection === 'codes' && (isNew || !pkg?.forCompany)) {
+      setActiveSection('details');
+    }
+  }, [activeSection, isNew, pkg?.forCompany]);
 
   useEffect(() => {
     if (isNew || !pkg) return;
@@ -489,6 +504,16 @@ export default function PackageEditorPage({ params }) {
     if (r) setNotice('Paket şirkete atandı.');
   }
 
+  function handleSectionChange(value) {
+    setActiveSection(value);
+    if (!isNew) {
+      router.replace(
+        `/cms/settings/packages/${id}${value === 'codes' ? '?tab=codes' : ''}`,
+        { scroll: false },
+      );
+    }
+  }
+
   if (!isNew && isLoading) {
     return (
       <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
@@ -524,7 +549,7 @@ export default function PackageEditorPage({ params }) {
       <PageHeader
         breadcrumb={[{ label: 'Paketler', href: '/cms/settings/packages' }, { label: isNew ? 'Yeni' : form.name || 'Düzenle' }]}
         title={isNew ? 'Yeni Paket' : form.name || 'Paketi Düzenle'}
-        actions={
+        actions={activeSection === 'details' ? (
           <div className="flex flex-wrap items-center gap-2">
             {!isNew && (
               <>
@@ -553,12 +578,23 @@ export default function PackageEditorPage({ params }) {
               Kaydet
             </Button>
           </div>
-        }
+        ) : null}
       />
 
-      {notice && <Alert variant="info" className="mb-4"><AlertDescription>{notice}</AlertDescription></Alert>}
+      <Tabs value={activeSection} onValueChange={handleSectionChange}>
+        <TabsList className="mb-5">
+          <TabsTrigger value="details">Paket Ayarları</TabsTrigger>
+          {!isNew && pkg?.forCompany && (
+            <TabsTrigger value="codes">
+              <span className="inline-flex items-center gap-2"><Ticket className="size-4" /> Paket Kodları</span>
+            </TabsTrigger>
+          )}
+        </TabsList>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+        <TabsContent value="details">
+          {notice && <Alert variant="info" className="mb-4"><AlertDescription>{notice}</AlertDescription></Alert>}
+
+          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="space-y-5">
           {/* Çok dilli içerik */}
           <Card>
@@ -1142,10 +1178,10 @@ export default function PackageEditorPage({ params }) {
             <ChevronLeft className="size-4" /> Listeye Dön
           </Link>
         </div>
-      </div>
+          </div>
 
-      {/* Silme onay diyaloğu */}
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          {/* Silme onay diyaloğu */}
+          <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1168,10 +1204,10 @@ export default function PackageEditorPage({ params }) {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+          </Dialog>
 
-      {/* Migrasyon onay diyaloğu — geniş etkili işlem: mevcut hesap snapshot'larını ezer */}
-      <Dialog open={confirmMigrate} onOpenChange={setConfirmMigrate}>
+          {/* Migrasyon onay diyaloğu — geniş etkili işlem: mevcut hesap snapshot'larını ezer */}
+          <Dialog open={confirmMigrate} onOpenChange={setConfirmMigrate}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1206,7 +1242,15 @@ export default function PackageEditorPage({ params }) {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+          </Dialog>
+        </TabsContent>
+
+        {!isNew && pkg?.forCompany && (
+          <TabsContent value="codes">
+            <PackageCodesPage packageId={id} packageData={pkg} />
+          </TabsContent>
+        )}
+      </Tabs>
     </RoleGuard>
   );
 }

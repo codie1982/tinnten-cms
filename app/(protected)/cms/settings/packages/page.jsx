@@ -79,16 +79,7 @@ export default function SettingsPackagesPage() {
         section="Sistem Ayarları"
         title="Paketler"
         description="Sistem paketlerini yönetin: fiyatlandırma, kullanım ve MCP limitleri, çok dilli içerik"
-        actions={
-          <div className="flex items-center gap-2">
-            <Link href="/cms/settings/packages/codes" className={buttonVariants({ variant: 'outline' })}>
-              <Ticket className="size-4" /> Kodlar
-            </Link>
-            <Link href="/cms/settings/packages/new" className={buttonVariants()}>
-              <Plus className="size-4" /> Yeni Paket
-            </Link>
-          </div>
-        }
+        actions={<Link href="/cms/settings/packages/new" className={buttonVariants()}><Plus className="size-4" /> Yeni Paket</Link>}
       />
 
       <Card className="mb-5">
@@ -182,6 +173,15 @@ export default function SettingsPackagesPage() {
                         <TableCell><Badge variant={s.variant}>{s.label}</Badge></TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
+                            {p.forCompany && (
+                              <Link
+                                href={`/cms/settings/packages/${p._id}?tab=codes`}
+                                className={buttonVariants({ variant: 'ghost', size: 'icon' }) + ' size-7'}
+                                title="Pakete ait kodlar"
+                              >
+                                <Ticket className="size-3.5" />
+                              </Link>
+                            )}
                             <Link href={`/cms/settings/packages/${p._id}`} className={buttonVariants({ variant: 'ghost', size: 'icon' }) + ' size-7'}>
                               <Pencil className="size-3.5" />
                             </Link>

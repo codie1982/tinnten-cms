@@ -1,15 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Check, Clipboard, Eye, EyeOff, Pencil, Ticket, Users, X } from 'lucide-react';
 
 import { RoleGuard } from '@/components/auth/role-guard';
-import { PageHeader } from '@/components/layout/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -19,7 +18,6 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useCreatePackageCodeMutation,
   useGetCmsPackageCodesQuery,
-  useGetCmsPackagesQuery,
   useGetPackageCodeAttributionsQuery,
   useGetPackageCodePublishersQuery,
   useGetPackageCodeRedemptionsQuery,
@@ -167,10 +165,17 @@ function RedemptionList({ codeId }) {
   );
 }
 
-export default function PackageCodesPage() {
+export default function PackageCodesPage({ packageId, packageData }) {
+  const router = useRouter();
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
-  const [form, setForm] = useState(initialForm);
+  const defaultPricingInterval = (packageData?.pricing || [])
+    .find((price) => ['month', 'year'].includes(price.interval))?.interval || 'month';
+  const [form, setForm] = useState(() => ({
+    ...initialForm,
+    packageId: packageId || '',
+    pricingInterval: defaultPricingInterval,
+  }));
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchFilter, setSearchFilter] = useState('');
   const [expandedCode, setExpandedCode] = useState(null);
@@ -178,32 +183,42 @@ export default function PackageCodesPage() {
   const [publisherEdit, setPublisherEdit] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  const { data: packages = [] } = useGetCmsPackagesQuery(
-    { forCompany: 'true', status: 'active' },
-    { skip: !authorized },
-  );
+  useEffect(() => {
+    if (!packageId) {
+      router.replace('/cms/settings/packages');
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      packageId,
+      pricingInterval: (packageData?.pricing || []).some(
+        (price) => price.interval === current.pricingInterval,
+      ) ? current.pricingInterval : defaultPricingInterval,
+    }));
+  }, [defaultPricingInterval, packageData?.pricing, packageId, router]);
+
   const { data: publisherOptions = [] } = useGetPackageCodePublishersQuery(
     { limit: 100 },
-    { skip: !authorized },
+    { skip: !authorized || !packageId },
   );
   const { data: codes = [], isLoading, error } = useGetCmsPackageCodesQuery(
     {
+      packageId,
       status: statusFilter === 'all' ? undefined : statusFilter,
       search: searchFilter.trim() || undefined,
     },
-    { skip: !authorized },
+    { skip: !authorized || !packageId },
   );
   const [createCode, { isLoading: isCreating }] = useCreatePackageCodeMutation();
   const [updateCode] = useUpdatePackageCodeMutation();
 
-  const selectedPackage = useMemo(
-    () => packages.find((pkg) => pkg._id === form.packageId) || null,
-    [form.packageId, packages],
-  );
   const intervals = useMemo(
-    () => (selectedPackage?.pricing || []).filter((price) => ['month', 'year'].includes(price.interval)),
-    [selectedPackage],
+    () => (packageData?.pricing || []).filter((price) => ['month', 'year'].includes(price.interval)),
+    [packageData?.pricing],
   );
+  const canCreateCode = packageData?.status === 'active'
+    && ['public', 'unlisted'].includes(packageData?.visibility || 'public')
+    && intervals.length > 0;
   const selectedPartnerCompany = useMemo(
     () => publisherOptions.find((company) => company.id === form.partnerCompanyId) || null,
     [form.partnerCompanyId, publisherOptions],
@@ -214,10 +229,17 @@ export default function PackageCodesPage() {
   const submit = async (event) => {
     event.preventDefault();
     setNotice(null);
+    if (!canCreateCode) {
+      setNotice({
+        type: 'error',
+        text: 'Kod oluşturmak için paket aktif, genel veya link/kod ile görünür ve aylık ya da yıllık dönemli olmalıdır.',
+      });
+      return;
+    }
     try {
       const created = await createCode({
         label: form.label,
-        packageId: form.packageId,
+        packageId,
         pricingInterval: form.pricingInterval,
         grantDuration: { count: Number(form.durationCount), unit: 'month' },
         maxRedemptions: form.quotaMode === 'unlimited' ? null : Number(form.maxRedemptions),
@@ -226,7 +248,11 @@ export default function PackageCodesPage() {
         offerPrice: { amount: 0, currency: 'TRY' },
         publisher: publisherPayload(form),
       }).unwrap();
-      setForm(initialForm);
+      setForm({
+        ...initialForm,
+        packageId,
+        pricingInterval: defaultPricingInterval,
+      });
       setNotice({ type: 'success', text: `${created?.code || 'Kod'} oluşturuldu.` });
     } catch (cause) {
       setNotice({ type: 'error', text: cause?.data?.message || cause?.normalizedMessage || 'Kod oluşturulamadı.' });
@@ -272,15 +298,16 @@ export default function PackageCodesPage() {
     window.setTimeout(() => setCopiedCode(null), 1800);
   };
 
+  if (!packageId) {
+    return (
+      <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
+        <Skeleton className="h-96 w-full" />
+      </RoleGuard>
+    );
+  }
+
   return (
-    <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
-      <PageHeader
-        breadcrumb={[{ label: 'Paketler', href: '/cms/settings/packages' }, { label: 'Kodlar' }]}
-        section="Sistem Ayarları"
-        title="Paket Kodları"
-        description="Özel deneme kodları üretin; yayıncı, kayıt kaynağı, domain ve kullanım dönüşümünü izleyin."
-        actions={<Link href="/cms/settings/packages" className={buttonVariants({ variant: 'outline' })}>Paketlere Dön</Link>}
-      />
+    <>
 
       {notice ? (
         <Alert variant={notice.type === 'error' ? 'destructive' : 'default'} className="mb-5">
@@ -289,8 +316,26 @@ export default function PackageCodesPage() {
         </Alert>
       ) : null}
 
+      {!canCreateCode ? (
+        <Alert className="mb-5">
+          <AlertTitle>Yeni kod oluşturma kapalı</AlertTitle>
+          <AlertDescription>
+            Mevcut kodları görüntüleyebilirsiniz. Yeni kod için paket aktif olmalı, görünürlüğü “Genel” veya
+            “Link/Kod ile” olmalı ve aylık ya da yıllık fiyat dönemi içermelidir.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <Card className="mb-5">
-        <CardHeader><CardTitle>Yeni Kod Oluştur</CardTitle></CardHeader>
+        <CardHeader>
+          <div>
+            <CardTitle>Yeni Kod Oluştur</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Kod doğrudan <strong>{packageTitle(packageData)}</strong> paketine bağlanır. Paket özellikleri ve limitleri
+              paket ayarlarından gelir; burada yalnız erişim süresi, dağıtım kotası ve yayıncı belirlenir.
+            </p>
+          </div>
+        </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="grid gap-4 lg:grid-cols-4">
             <div>
@@ -298,36 +343,25 @@ export default function PackageCodesPage() {
               <Input value={form.label} onChange={(e) => setField('label', e.target.value)} placeholder="Örn. Eylül partner teklifi" />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Paket</label>
-              <Select value={form.packageId} onValueChange={(value) => {
-                const pkg = packages.find((item) => item._id === value);
-                const firstInterval = (pkg?.pricing || []).find((price) => ['month', 'year'].includes(price.interval))?.interval || 'month';
-                setForm((current) => ({ ...current, packageId: value, pricingInterval: firstInterval }));
-              }}>
-                <SelectTrigger><SelectValue placeholder="Paket seçin" /></SelectTrigger>
-                <SelectContent>{packages.filter((pkg) => pkg.visibility !== 'private').map((pkg) => <SelectItem key={pkg._id} value={pkg._id}>{packageTitle(pkg)}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Paket kota döngüsü</label>
-              <Select value={form.pricingInterval} onValueChange={(value) => setField('pricingInterval', value)} disabled={!form.packageId}>
+              <label className="mb-1 block text-xs text-muted-foreground">Paket dönemi</label>
+              <Select value={form.pricingInterval} onValueChange={(value) => setField('pricingInterval', value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{intervals.map((price) => <SelectItem key={price.interval} value={price.interval}>{price.interval === 'year' ? 'Yıllık' : 'Aylık'} · {price.amount} {price.currency}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Ücretsiz erişim (ay)</label>
+              <label className="mb-1 block text-xs text-muted-foreground">Erişim süresi (ay)</label>
               <Input type="number" min="1" step="1" value={form.durationCount} onChange={(e) => setField('durationCount', e.target.value)} required />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Kod kotası</label>
+              <label className="mb-1 block text-xs text-muted-foreground">Kod kullanım türü</label>
               <Select value={form.quotaMode} onValueChange={(value) => setField('quotaMode', value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent><SelectItem value="limited">Kotalı</SelectItem><SelectItem value="unlimited">Sınırsız</SelectItem></SelectContent>
               </Select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Maksimum kullanım</label>
+              <label className="mb-1 block text-xs text-muted-foreground">Maksimum kayıt / firma</label>
               <Input type="number" min="1" step="1" value={form.maxRedemptions} onChange={(e) => setField('maxRedemptions', e.target.value)} disabled={form.quotaMode === 'unlimited'} required={form.quotaMode === 'limited'} />
             </div>
             <div>
@@ -404,7 +438,8 @@ export default function PackageCodesPage() {
                 type="submit"
                 disabled={
                   isCreating ||
-                  !form.packageId ||
+                  !canCreateCode ||
+                  !packageId ||
                   (form.publisherType === 'partner_company' && !form.partnerCompanyId) ||
                   (form.publisherType === 'partner_person' && (!form.partnerCompanyId || !form.partnerUserId)) ||
                   (form.publisherType === 'external_email' && !form.publisherEmail.trim())
@@ -442,7 +477,7 @@ export default function PackageCodesPage() {
             <div className="flex flex-col items-center gap-2 py-14 text-center"><Ticket className="size-6 text-muted-foreground" /><p className="font-semibold">Kod yok</p></div>
           ) : (
             <Table>
-              <TableHeader><TableRow><TableHead>Kod</TableHead><TableHead>Yayıncı</TableHead><TableHead>Paket</TableHead><TableHead>Süre</TableHead><TableHead>Kota</TableHead><TableHead>Geçerlilik</TableHead><TableHead>Durum</TableHead><TableHead className="w-40" /></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Kod</TableHead><TableHead>Yayıncı</TableHead><TableHead>Süre</TableHead><TableHead>Kota</TableHead><TableHead>Geçerlilik</TableHead><TableHead>Durum</TableHead><TableHead className="w-40" /></TableRow></TableHeader>
               <TableBody>
                 {codes.map((item) => {
                   const remaining = item.maxRedemptions == null ? 'Sınırsız' : Math.max(item.maxRedemptions - item.redeemedCount, 0);
@@ -465,7 +500,6 @@ export default function PackageCodesPage() {
                           <Pencil className="size-3" /> Düzenle
                         </button>
                       </TableCell>
-                      <TableCell>{packageTitle(item.packageId)}</TableCell>
                       <TableCell>{item.grantDuration?.count || 1} ay</TableCell>
                       <TableCell><span className="font-medium">{item.redeemedCount || 0}</span> kullanıldı · {remaining} kaldı</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{item.startsAt ? formatDate(item.startsAt) : 'Hemen'} — {item.expiresAt ? formatDate(item.expiresAt) : 'Süresiz'}</TableCell>
@@ -478,7 +512,7 @@ export default function PackageCodesPage() {
                     </TableRow>,
                     editingPublisher ? (
                       <TableRow key={`${item._id}-publisher-edit`}>
-                        <TableCell colSpan={8} className="bg-muted/15 p-4">
+                        <TableCell colSpan={7} className="bg-muted/15 p-4">
                           <div className="grid gap-3 lg:grid-cols-4">
                             <div>
                               <label className="mb-1 block text-xs text-muted-foreground">Yayıncı türü</label>
@@ -539,7 +573,7 @@ export default function PackageCodesPage() {
                     ) : null,
                     expandedCode === item._id ? (
                       <TableRow key={`${item._id}-tracking`}>
-                        <TableCell colSpan={8} className="p-0">
+                        <TableCell colSpan={7} className="p-0">
                           <AttributionList codeId={item._id} />
                           <RedemptionList codeId={item._id} />
                         </TableCell>
@@ -552,6 +586,6 @@ export default function PackageCodesPage() {
           )}
         </CardContent>
       </Card>
-    </RoleGuard>
+    </>
   );
 }
