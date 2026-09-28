@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetCompanyQuery,
+  useUpdateCompanyBusinessModesMutation,
   useUpdateCompanyLimitsMutation,
   useUpdateCompanyUsageMutation,
   useResetCompanyUsageMutation,
@@ -97,6 +98,19 @@ function countOf(c, key) {
   const v = c?.[key];
   return Array.isArray(v) ? v.length : 0;
 }
+
+const ASSIGNABLE_BUSINESS_MODES = Object.entries(businessModeMeta)
+  .filter(([value]) => value !== 'service')
+  .map(([value, meta]) => ({ value, ...meta }));
+
+const BUSINESS_MODE_IMPACTS = {
+  ecommerce: 'Ürün kataloğu, ürün içe aktarma ve Analytics',
+  direct: 'Hizmet kataloğu ve doğrudan satış',
+  quote: 'Hizmet kataloğu, talep ve teklif akışı',
+  reservation: 'Hizmet kataloğu, rezervasyon ve takvim',
+  appointment: 'Hizmet kataloğu, randevu ve takvim',
+  content: 'Kütüphane ve Derin Araştırma; satış alanları kapalı',
+};
 
 /* ─── paket seçici için yardımcılar (paket ekleme paneli) ─── */
 const PKG_INTERVAL_LABEL = { month: 'Aylık', year: 'Yıllık', lifetime: 'Ömür Boyu' };
@@ -171,6 +185,10 @@ function CmsCompanyDetailView({ id }) {
   };
 
   const { data: company, isLoading, error } = useGetCompanyQuery(id, { skip: !authorized });
+  const [updateBusinessModes, { isLoading: savingBusinessModes }] =
+    useUpdateCompanyBusinessModesMutation();
+  const [businessModeSelection, setBusinessModeSelection] = useState([]);
+  const [businessModeNotice, setBusinessModeNotice] = useState(null);
   const [updateLimits, { isLoading: savingLimits }] = useUpdateCompanyLimitsMutation();
   const [updateUsage, { isLoading: savingUsage }] = useUpdateCompanyUsageMutation();
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
@@ -178,6 +196,20 @@ function CmsCompanyDetailView({ id }) {
   const [setPoc, { isLoading: savingPoc }] = useSetCompanyPocMutation();
   const [transferOwner, { isLoading: transferring }] = useTransferCompanyOwnerMutation();
   const [assignPackage, { isLoading: assigningPackage }] = useAssignCompanyPackageMutation();
+
+  useEffect(() => {
+    if (!company) return;
+    const source =
+      Array.isArray(company.businessModes) && company.businessModes.length > 0
+        ? company.businessModes
+        : company.businessMode
+          ? [company.businessMode]
+          : [];
+    const normalized = ASSIGNABLE_BUSINESS_MODES
+      .map((option) => option.value)
+      .filter((value) => source.includes(value));
+    setBusinessModeSelection(normalized);
+  }, [company]);
 
   // Ürünler / Hizmetler sekmesi — yalnız aktifken (lazy) çekilir; firma ucu değişmez.
   const [prodSort, setProdSort] = useState('createdAt:desc');
@@ -526,7 +558,17 @@ function CmsCompanyDetailView({ id }) {
   }
 
   const s = statusMeta[company.status];
-  const mode = businessModeMeta[company.businessMode];
+  const storedBusinessModeSource =
+    Array.isArray(company.businessModes) && company.businessModes.length > 0
+      ? company.businessModes.filter((value) => value !== 'service')
+      : company.businessMode && company.businessMode !== 'service'
+        ? [company.businessMode]
+        : [];
+  const storedBusinessModes = ASSIGNABLE_BUSINESS_MODES
+    .map((option) => option.value)
+    .filter((value) => storedBusinessModeSource.includes(value));
+  const businessModesDirty =
+    JSON.stringify(businessModeSelection) !== JSON.stringify(storedBusinessModes);
   const type = companyTypeMeta[company.companyType];
   const addresses = company.address ?? [];
   const phones = company.phone ?? [];
@@ -602,6 +644,39 @@ function CmsCompanyDetailView({ id }) {
       });
     } catch (e) {
       setPocNotice({ type: 'error', text: e?.data?.message || 'POC işareti güncellenemedi.' });
+    }
+  };
+
+  const toggleBusinessMode = (value) => {
+    setBusinessModeNotice(null);
+    setBusinessModeSelection((current) => {
+      const selected = current.includes(value)
+        ? current.filter((modeValue) => modeValue !== value)
+        : [...current, value];
+      const order = ASSIGNABLE_BUSINESS_MODES.map((option) => option.value);
+      return order.filter((modeValue) => selected.includes(modeValue));
+    });
+  };
+
+  const handleSaveBusinessModes = async () => {
+    if (businessModeSelection.length === 0) {
+      setBusinessModeNotice({
+        type: 'error',
+        text: 'Firma panelinin güvenli biçimde sınırlandırılması için en az bir işletme modu seçilmelidir.',
+      });
+      return;
+    }
+    try {
+      await updateBusinessModes({ id, businessModes: businessModeSelection }).unwrap();
+      setBusinessModeNotice({
+        type: 'success',
+        text: 'İşletme modları güncellendi. Firma paneli ve asistan araçları bu kapsama göre sınırlandırılacak.',
+      });
+    } catch (e) {
+      setBusinessModeNotice({
+        type: 'error',
+        text: e?.data?.message || e?.normalizedMessage || 'İşletme modları güncellenemedi.',
+      });
     }
   };
 
@@ -719,6 +794,91 @@ function CmsCompanyDetailView({ id }) {
               )}
             </CardContent>
           </Card>
+
+          {section === 'genel' && (
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>İşletme Modları</CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Bu yönetim ayarı firma panelindeki katalog, içe aktarma, takvim,
+                    Analytics ve asistan araçlarını sınırlar.
+                  </p>
+                </div>
+                <CardToolbar>
+                  <Button
+                    size="sm"
+                    onClick={handleSaveBusinessModes}
+                    disabled={
+                      savingBusinessModes ||
+                      !businessModesDirty ||
+                      businessModeSelection.length === 0
+                    }
+                  >
+                    {savingBusinessModes ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Check className="size-4" />
+                    )}
+                    Kaydet
+                  </Button>
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="space-y-4 p-4">
+                {businessModeNotice && (
+                  <Alert variant={businessModeNotice.type === 'error' ? 'destructive' : 'info'}>
+                    <AlertDescription>{businessModeNotice.text}</AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {ASSIGNABLE_BUSINESS_MODES.map((option) => {
+                    const selected = businessModeSelection.includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={selected}
+                        disabled={savingBusinessModes}
+                        onClick={() => toggleBusinessMode(option.value)}
+                        className={cn(
+                          'rounded-lg border p-3 text-left transition disabled:opacity-60',
+                          selected
+                            ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                            : 'border-border hover:border-primary/40 hover:bg-accent/40',
+                        )}
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-foreground">
+                            {option.label}
+                          </span>
+                          <span
+                            className={cn(
+                              'flex size-5 items-center justify-center rounded-full border',
+                              selected
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-border text-transparent',
+                            )}
+                          >
+                            <Check className="size-3" />
+                          </span>
+                        </span>
+                        <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                          {BUSINESS_MODE_IMPACTS[option.value]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {businessModeSelection.length === 0 && (
+                  <p className="text-xs font-medium text-destructive">
+                    En az bir işletme modu seçin. Atama yapılana kadar firma paneli kilitli kalır.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {section === 'genel' && (
             <Card>
@@ -856,7 +1016,19 @@ function CmsCompanyDetailView({ id }) {
                 <InfoRow icon={Mail} label="E-posta" value={company.email} />
                 <InfoRow icon={Globe} label="Web Sitesi" value={company.website} href={company.website || undefined} />
                 <InfoRow icon={BadgeCheck} label="Firma Tipi" value={type?.label ?? company.companyType} />
-                <InfoRow icon={BadgeCheck} label="İş Modu" value={mode?.label ?? company.businessMode} />
+                <InfoRow
+                  icon={BadgeCheck}
+                  label="İşletme Modları"
+                  value={
+                    storedBusinessModes.length > 0
+                      ? storedBusinessModes
+                          .map((value) => businessModeMeta[value]?.label ?? value)
+                          .join(', ')
+                      : company.businessMode === 'service'
+                        ? businessModeMeta.service.label
+                        : 'Atanmamış'
+                  }
+                />
                 <InfoRow icon={CalendarDays} label="Kuruluş" value={formatTrDate(company.foundedDate)} />
                 <InfoRow icon={CalendarDays} label="Kayıt Tarihi" value={formatTrDate(company.createdAt)} />
                 <InfoRow icon={isBlocked ? Ban : ShieldCheck} label="Admin Durumu" value={isBlocked ? 'Engelli' : 'Aktif'} />

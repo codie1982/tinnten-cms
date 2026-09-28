@@ -22,6 +22,18 @@ export const companiesApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
       providesTags: (r, e, id) => [{ type: 'Company', id }],
     }),
+    updateCompanyBusinessModes: build.mutation({
+      query: ({ id, businessModes }) => ({
+        url: ENDPOINTS.companies.businessModes(id),
+        method: 'PATCH',
+        body: { businessModes },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { id }) => [
+        { type: 'Company', id },
+        { type: 'Company', id: 'LIST' },
+      ],
+    }),
     updateCompany: build.mutation({
       query: ({ id, ...body }) => ({ url: ENDPOINTS.companies.update(id), method: 'PATCH', body }),
       invalidatesTags: (r, e, { id }) => [{ type: 'Company', id }, { type: 'Company', id: 'LIST' }],
@@ -106,6 +118,7 @@ export const companiesApi = baseApi.injectEndpoints({
 export const {
   useGetCompaniesQuery,
   useGetCompanyQuery,
+  useUpdateCompanyBusinessModesMutation,
   useUpdateCompanyMutation,
   useUpdateCompanyLimitsMutation,
   useUpdateCompanyUsageMutation,
