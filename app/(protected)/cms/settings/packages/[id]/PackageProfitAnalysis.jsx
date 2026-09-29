@@ -1,27 +1,16 @@
 'use client';
 
 /**
- * PackageProfitAnalysis — Paket kâr/zarar analizi (canlı, salt-gösterim).
- *
- * Kredi sistemi maliyet tabanı: 1 kredi = $0.01 GERÇEK maliyet (backend
- * CREDIT_PER_USD=100 ile SENKRON — orada değişirse burayı da güncelle).
- *
- * Limitler artık PERİYOT BAZLI: her fiyat satırının (month/year/lifetime) kendi
- * limit objesi vardır ve kendi `llm.credit`'ini taşır. Reset fatura döngüsüne
- * bağlı; her periyot için döngü başına bir kez sıfırlanır. Bu yüzden maliyet =
- * o satırın kredisi × $0.01 (periyot başına TEK döngü — eski Daily/monthly
- * çarpanı kaldırıldı).
- *
- * Karşılaştırma USD üzerinden: currency=USD ise amount, değilse localPrices.USD
- * (yoksa satır içi USD girişi ile localPrices.USD'ye yazılır).
- *
- * Ömür boyu (lifetime): fatura döngüsü olmadığından tek-döngü maliyet yanıltıcı
- * olabilir; bu satırlar için marj gösterilmez, yalnız bilgi amaçlı etiketlenir.
+ * LLM kredisi müşterinin harcanabilir bakiyesidir. Depolama ise byte tabanlı
+ * ayrılmış kapasite maliyetidir. Kredi eşdeğeri yalnız ortak maliyet birimi
+ * olarak gösterilir; hiçbir zaman `limit.llm.credit` alanına eklenmez.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { aiCatalogApi } from '@/lib/ai-catalog';
 import { cn } from '@/lib/utils';
+import { allocatedStorageUsd, periodMonths } from './quota-utils.mjs';
 
 // Fallback: backend'den `creditUsdCost` gelmezse (offline/eski) 1 kredi = $0.01.
 // Asıl değer backend Cost.creditPerUsd'den (credit-config endpoint) prop ile gelir.
@@ -29,24 +18,63 @@ const DEFAULT_CREDIT_USD_COST = 0.01;
 
 const INTERVAL_LABEL = { month: 'Aylık', year: 'Yıllık', lifetime: 'Ömür Boyu' };
 
-const fmtUsd = (n) => (Number.isFinite(n) ? `$${n.toFixed(2)}` : '—');
+const fmtUsd = (n) => {
+  if (!Number.isFinite(n)) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: n > 0 && n < 0.01 ? 6 : 2,
+  }).format(n);
+};
 const fmtPct = (n) => (Number.isFinite(n) ? `%${Math.round(n)}` : '—');
+const fmtCredits = (n) => (
+  Number.isFinite(n)
+    ? new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 4 }).format(n)
+    : '—'
+);
+const fmtTokens = (n) => (
+  Number.isFinite(n)
+    ? new Intl.NumberFormat('tr-TR', { notation: 'compact', maximumFractionDigits: 2 }).format(n)
+    : '—'
+);
 
 export default function PackageProfitAnalysis({ pricing, limitsByInterval, credits, creditUsdCost }) {
-  const [consumption, setConsumption] = useState(70); // beklenen tüketim %
-
-  // Maliyet tabanı backend'den (Cost.creditPerUsd → creditUsdCost); yoksa fallback.
+  const [consumption, setConsumption] = useState(70);
+  const [tokenModels, setTokenModels] = useState([]);
+  const [tokenModelId, setTokenModelId] = useState('');
   const creditCost = Number(creditUsdCost) > 0 ? Number(creditUsdCost) : DEFAULT_CREDIT_USD_COST;
   const consPct = Math.min(100, Math.max(0, Number(consumption) || 0));
   const rows = (pricing || []).filter((p) => p.amount !== '' && p.amount != null);
 
-  // Bir fiyat satırının kredi limitini oku: her periyodun kendi limit objesi var
-  // (limitsByInterval[interval].llm.credit). Bulunamazsa tekil `credits` fallback.
+  const limitsFor = (interval) =>
+    limitsByInterval?.[interval] || limitsByInterval?.month || limitsByInterval?.year;
+
   const creditFor = (interval) => {
-    const perInterval = limitsByInterval?.[interval]?.llm?.credit;
+    const perInterval = limitsFor(interval)?.llm?.credit;
     const raw = perInterval != null && perInterval !== '' ? perInterval : credits;
     return Number(raw) || 0;
   };
+
+  useEffect(() => {
+    const abort = new AbortController();
+    (async () => {
+      const context = await aiCatalogApi.context(abort.signal);
+      if (abort.signal.aborted || (!context.availability?.catalog && !context.readAvailability?.catalog)) return;
+      const page = await aiCatalogApi.models(abort.signal);
+      if (abort.signal.aborted) return;
+      const usable = (page.items || []).filter((model) =>
+        Number(model.creditTariff?.input) > 0 && Number(model.creditTariff?.output) > 0,
+      );
+      setTokenModels(usable);
+      setTokenModelId((current) => current || usable[0]?.id || '');
+    })().catch(() => {
+      // Token dönüşümü yardımcı analizdir; katalog kapalıysa paket editörünü etkilemez.
+    });
+    return () => abort.abort();
+  }, []);
+
+  const tokenModel = tokenModels.find((model) => model.id === tokenModelId) || tokenModels[0];
 
   return (
     <Card>
@@ -56,10 +84,10 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
       <CardContent className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <span>Maliyet tabanı: <b className="text-foreground">1 kredi = ${creditCost}</b></span>
-          <span>Kredi: <b className="text-foreground">periyoda göre (satırda)</b></span>
-          <span>Reset: <b className="text-foreground">fatura döngüsü</b></span>
+          <span>LLM: <b className="text-foreground">periyot kredisi × kredi maliyeti</b></span>
+          <span>Depolama: <b className="text-foreground">byte tarife × kapasite × ay</b></span>
           <span className="flex items-center gap-1">
-            Beklenen tüketim:
+            Beklenen LLM tüketimi:
             <Input
               type="number" min="0" max="100" value={consumption}
               onChange={(e) => setConsumption(e.target.value)}
@@ -77,12 +105,14 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
               <thead>
                 <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
                   <th className="px-2 py-2 text-start">Periyot</th>
-                  <th className="px-2 py-2 text-end">Kredi</th>
-                  <th className="px-2 py-2 text-end">Net USD Fiyat</th>
-                  <th className="px-2 py-2 text-end">Maliyet (max)</th>
+                  <th className="px-2 py-2 text-end">LLM kredisi</th>
+                  <th className="px-2 py-2 text-end">LLM max</th>
+                  <th className="px-2 py-2 text-end">Depolama / kredi eşd.</th>
+                  <th className="px-2 py-2 text-end">Toplam max</th>
+                  <th className="px-2 py-2 text-end">Net USD fiyat</th>
                   <th className="px-2 py-2 text-end">Kâr (beklenen)</th>
-                  <th className="px-2 py-2 text-end">Marj (beklenen)</th>
-                  <th className="px-2 py-2 text-end">Başabaş tüketim</th>
+                  <th className="px-2 py-2 text-end">Marj</th>
+                  <th className="px-2 py-2 text-end">Başabaş LLM tüketimi</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,13 +126,29 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
                         : null;
                   const disc = Math.min(100, Math.max(0, Number(p.discount) || 0));
                   const rowCredit = creditFor(p.interval);
-                  // Periyot başına TEK döngü — reset fatura döngüsüne bağlı.
-                  const maxCost = rowCredit * creditCost;
-                  const expCost = maxCost * (consPct / 100);
+                  const aiMaxCost = rowCredit * creditCost;
+                  const aiExpectedCost = aiMaxCost * (consPct / 100);
+                  const limits = limitsFor(p.interval);
+                  const months = periodMonths(p.interval, p.durationTime);
+                  const storageCost = allocatedStorageUsd({
+                    maxBytes: limits?.storage?.maxBytes,
+                    usdPerByteMonth: p.costRates?.storage?.usdPerByteMonth || '0',
+                    // Lifetime için toplam uydurmak yerine aylık run-rate gösterilir.
+                    months: isLifetime ? 1 : months,
+                  });
+                  const storageCredits = storageCost == null ? null : storageCost / creditCost;
+                  const totalMaxCost = !isLifetime && storageCost != null ? aiMaxCost + storageCost : null;
+                  const expectedCost = !isLifetime && storageCost != null
+                    ? aiExpectedCost + storageCost
+                    : null;
                   const net = usdRaw != null && Number.isFinite(usdRaw) ? usdRaw * (1 - disc / 100) : null;
-                  const profitExp = net != null ? net - expCost : null;
-                  const marginExp = net != null && net > 0 ? (profitExp / net) * 100 : null;
-                  const breakEven = maxCost > 0 && net != null ? (net / maxCost) * 100 : null;
+                  const profitExp = net != null && expectedCost != null ? net - expectedCost : null;
+                  const marginExp = net != null && net > 0 && profitExp != null ? (profitExp / net) * 100 : null;
+                  const breakEven = net != null && storageCost != null
+                    ? aiMaxCost > 0
+                      ? ((net - storageCost) / aiMaxCost) * 100
+                      : net >= storageCost ? Infinity : 0
+                    : null;
                   const loss = profitExp != null && profitExp < 0;
                   const profitCls = loss ? 'text-red-600' : 'text-emerald-600';
                   return (
@@ -111,26 +157,35 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
                         {INTERVAL_LABEL[p.interval] || p.interval}
                         {disc > 0 && <span className="ml-1 text-[10px] text-muted-foreground">(-%{disc})</span>}
                         {isLifetime && (
-                          <span className="ml-1 text-[10px] text-amber-600">ömür boyu — tek seferlik grant</span>
+                          <span className="ml-1 text-[10px] text-amber-600">aylık run-rate</span>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-end font-mono">{rowCredit || '—'}</td>
+                      <td className="px-2 py-2 text-end font-mono">{fmtCredits(rowCredit)}</td>
+                      <td className="px-2 py-2 text-end font-mono">{fmtUsd(aiMaxCost)}</td>
+                      <td className="px-2 py-2 text-end font-mono">
+                        {storageCost == null ? (
+                          <span className="text-[10px] text-amber-600">sınırsız kapasite — hesaplanamaz</span>
+                        ) : (
+                          <>
+                            {fmtUsd(storageCost)}
+                            <span className="block text-[10px] text-muted-foreground">
+                              {fmtCredits(storageCredits)} kredi eşd.{isLifetime ? ' / ay' : ''}
+                            </span>
+                          </>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-end font-mono">{fmtUsd(totalMaxCost)}</td>
                       <td className="px-2 py-2 text-end font-mono">
                         {net != null ? (
                           fmtUsd(net)
                         ) : (
-                          <span className="text-[10px] text-amber-600">
-                            fiyat satırında "USD karşılığı" gir
-                          </span>
+                          <span className="text-[10px] text-amber-600">USD karşılığı gir</span>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-end font-mono">{fmtUsd(maxCost)}</td>
                       {isLifetime ? (
-                        <>
-                          <td className="px-2 py-2 text-end text-[10px] text-muted-foreground" colSpan={3}>
-                            Ömür boyu — fatura döngüsü yok, marj hesaplanmaz
-                          </td>
-                        </>
+                        <td className="px-2 py-2 text-end text-[10px] text-muted-foreground" colSpan={3}>
+                          Ömür boyunda yalnız aylık depolama run-rate gösterilir; toplam marj hesaplanmaz
+                        </td>
                       ) : (
                         <>
                           <td className={cn('px-2 py-2 text-end font-mono font-semibold', profitCls)}>
@@ -138,10 +193,10 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
                           </td>
                           <td className={cn('px-2 py-2 text-end', profitCls)}>{fmtPct(marginExp)}</td>
                           <td className="px-2 py-2 text-end">
-                            {breakEven == null ? (
-                              '—'
-                            ) : breakEven >= 100 ? (
+                            {breakEven == null ? '—' : breakEven === Infinity || breakEven >= 100 ? (
                               <span className="text-emerald-600">%&gt;100 (güvenli)</span>
+                            ) : breakEven < 0 ? (
+                              <span className="text-red-600">depolama maliyeti fiyatı aşıyor</span>
                             ) : (
                               <span className="text-red-600">{fmtPct(breakEven)}</span>
                             )}
@@ -156,11 +211,54 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
           </div>
         )}
 
+        {tokenModel && rows.length > 0 && (
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model Bazlı Token Tahmini</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Kredi tek başına sabit token sayısı değildir; seçilen modelin input/output tarifesine göre değişir.
+                </p>
+              </div>
+              <label className="grid gap-1 text-[11px] text-muted-foreground">
+                Model
+                <select
+                  value={tokenModel.id}
+                  onChange={(event) => setTokenModelId(event.target.value)}
+                  className="h-9 min-w-56 rounded-lg border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  {tokenModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {rows.map((row, index) => {
+                const rowCredits = creditFor(row.interval);
+                const inputTokens = (rowCredits / Number(tokenModel.creditTariff.input)) * 1_000_000;
+                const outputTokens = (rowCredits / Number(tokenModel.creditTariff.output)) * 1_000_000;
+                return (
+                  <div key={`${row.interval}-${index}`} className="rounded-md border border-border bg-background px-3 py-2 text-xs">
+                    <b>{INTERVAL_LABEL[row.interval] || row.interval}: {fmtCredits(rowCredits)} kredi</b>
+                    <p className="mt-1 text-muted-foreground">
+                      ≈ {fmtTokens(inputTokens)} yalnız input token veya {fmtTokens(outputTokens)} yalnız output token
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Gerçek kullanım input ve output&apos;un karışımıdır; değerler aktif katalog tarifesine göre iki uç senaryoyu gösterir.
+            </p>
+          </div>
+        )}
+
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          <b>Maliyet</b> = o periyodun kredisi × ${creditCost} (reset fatura döngüsüne bağlı, periyot başına tek döngü).
-          <b> Net USD fiyat</b> = USD fiyat × (1 − indirim%). <b>Kâr (beklenen)</b> = net fiyat − (max maliyet ×
-          beklenen tüketim%). <b>Başabaş tüketim</b>: bu %'nin ÜSTÜNDE tüketimde zarar; &quot;%&gt;100&quot; =
-          tam tüketimde bile kârlı. Ömür boyu satırlarda fatura döngüsü olmadığından marj gösterilmez.
+          <b>LLM max maliyeti</b> = spendable kredi × kredi USD maliyeti. <b>Depolama maliyeti</b> = ayrılan byte
+          kapasitesi × byte/ay tarifesi × periyot ayı; beklenen tüketim yüzdesinden etkilenmez. Yanındaki kredi değeri
+          yalnız maliyet eşdeğeridir, müşterinin LLM kredisine eklenmez. <b>Beklenen kâr</b> = net fiyat − depolama
+          maliyeti − beklenen LLM maliyeti. Örneğin mevcut $0.01/kredi oranında 20.000 LLM kredisi $200 max maliyettir.
         </p>
       </CardContent>
     </Card>

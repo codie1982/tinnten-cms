@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -36,6 +36,17 @@ import {
 import CompanySearchSelect from './CompanySearchSelect';
 import PackageProfitAnalysis from './PackageProfitAnalysis';
 import PackageCodesPage from '../codes/page';
+import {
+  buildLimitBody,
+  bytesToGiBDisplay,
+  cloneDefaultLimits,
+  decimalUnitToBytes,
+  DEFAULT_LIMITS,
+  mergeLimits,
+  normalizeNonNegativeDecimal,
+  usdPerByteMonthToUsdPerGiBMonth,
+  usdPerGiBMonthToUsdPerByteMonth,
+} from './quota-utils.mjs';
 
 const CATEGORIES = ['free', 'basic', 'premium', 'enterprise'];
 const CONTENT_TYPES = ['standart', 'multisubscribe', 'student'];
@@ -56,39 +67,9 @@ const MCP_PLAN_DEFAULTS = {
   premium: { requestsPerMinute: 600, maxConcurrent: 20 },
   enterprise: { requestsPerMinute: 3000, maxConcurrent: 100 },
 };
-// Backend systemPackagesController.buildLimitPayload ile birebir uyumlu birimler
-const SIZE_UNITS = ['kb', 'mb', 'gb', 'tb'];
-const STREAM_UNITS = ['mb', 'gb', 'tb'];
 // NOT: `regeneretetime` alanı backend'den tamamen kaldırıldı. Reset artık
 // fatura döngüsü (satın alınan periyot) tarafından yönlendiriliyor; her periyot
 // (month/year) kendi limit objesini tutuyor ve döngü başına bir kez sıfırlanıyor.
-
-// Backend default değerleri ile birebir aynı (buildLimitPayload)
-const DEFAULT_LIMITS = {
-  product: { amount: 10 },
-  services: { amount: 10 },
-  file: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
-  image: { download: 512, upload: 512, maxfileupload: 20, maxfileDownload: 20, unit: 'mb', stream: 10, stream_unit: 'gb' },
-  video: { download: 1024, upload: 1024, maxfileupload: 100, maxfileDownload: 100, unit: 'mb', stream: 50, stream_unit: 'gb' },
-  offer: { max: 10 },
-  llm: { token: 1024, credit: 1000 },
-  workflow: { count: 5, totalRun: 100 },
-  // Backend system-packages.model.js limit.assistant ile birebir — 4 alan da
-  // taşınmalı, aksi halde kaydetmede tools/libraryFiles/previewViewsPerMonth
-  // backend default'larına (5/10/100) sıfırlanır.
-  assistant: { published: 1, tools: 5, libraryFiles: 10, previewViewsPerMonth: 100 },
-  // Firma oluşturma limiti — yalnız Kullanıcı Paketi (forCompany:false) için anlamlı.
-  // Kayıtta kullanıcının account snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok.
-  company: { count: 1 },
-  // server = firma başına MCP server adedi. Diğer iki alan null kaldığında
-  // runtime kategori varsayılanını kullanır; yalnız müşteri/paket özelinde
-  // gerçekten farklı bir değer gerekiyorsa override girilir.
-  mcp: { server: 1, requestsPerMinute: null, maxConcurrent: null },
-  // Aylık web araması (Brave) kotası. Hesap başına uygulanır; kayıtta account
-  // snapshot'ına kopyalanır. null/boş = sınırsız, 0 = kota yok. Periyot backend'de
-  // fatura döngüsüne bağlı; paket bazında ayrıca bir periyot alanı tutulmaz.
-  maxDevices: null,
-};
 
 const emptyI18n = () => {
   const o = {};
@@ -101,20 +82,7 @@ const emptyI18n = () => {
 const STOREFRONT_URL = (process.env.NEXT_PUBLIC_STOREFRONT_URL || 'https://tinnten.com').replace(/\/$/, '');
 const shareUrl = (token) => `${STOREFRONT_URL}/paket/${token}`;
 
-// Backend'den gelen kısmi limits'i default ile derinlemesine merge et — eksik
-// alanlar default değer alır, böylece UI hep dolu render eder.
-const mergeLimits = (incoming) => {
-  const out = JSON.parse(JSON.stringify(DEFAULT_LIMITS));
-  if (!incoming || typeof incoming !== 'object') return out;
-  for (const [k, v] of Object.entries(incoming)) {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      out[k] = { ...out[k], ...v };
-    } else if (v !== undefined) {
-      out[k] = v;
-    }
-  }
-  return out;
-};
+const emptyStorageCostRates = () => ({ storage: { usdPerByteMonth: '0' } });
 
 export default function PackageEditorPage({ params }) {
   const { id } = use(params);
@@ -144,13 +112,17 @@ export default function PackageEditorPage({ params }) {
     targetDescription: '',
   });
   const [i18n, setI18n] = useState(emptyI18n);
-  const [pricing, setPricing] = useState([{ interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false, durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }]);
+  const [pricing, setPricing] = useState([{
+    interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false,
+    durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '',
+    introductoryBillingCycles: '', introductoryLocalPrices: {}, costRates: emptyStorageCostRates(),
+  }]);
   // Limitler artık PERİYOT BAZLI: her fatura periyodu (month/year) kendi limit
   // objesini tutar. Satın alınan periyodun limiti kullanıcıya aktarılır; reset
   // fatura döngüsüne bağlı (periyot başına bir kez sıfırlanır).
   const [limitsByInterval, setLimitsByInterval] = useState(() => ({
-    month: JSON.parse(JSON.stringify(DEFAULT_LIMITS)),
-    year: JSON.parse(JSON.stringify(DEFAULT_LIMITS)),
+    month: cloneDefaultLimits(),
+    year: cloneDefaultLimits(),
   }));
   const [activeLimitInterval, setActiveLimitInterval] = useState('month');
   const [activeLocale, setActiveLocale] = useState('tr');
@@ -211,6 +183,14 @@ export default function PackageEditorPage({ params }) {
         introductoryAmount: p.introductoryPrice?.amount ?? '',
         introductoryBillingCycles: p.introductoryPrice?.billingCycles ?? '',
         introductoryLocalPrices: p.introductoryPrice?.localPrices ?? {},
+        costRates: {
+          storage: {
+            usdPerByteMonth: normalizeNonNegativeDecimal(
+              p.costRates?.storage?.usdPerByteMonth,
+              '0',
+            ),
+          },
+        },
       })),
     );
     // PERİYOT BAZLI limit yükleme: her pricing satırının kendi `.limit` objesi var.
@@ -245,7 +225,11 @@ export default function PackageEditorPage({ params }) {
         }
       : r
   )));
-  const addPriceRow = () => setPricing((rows) => [...rows, { interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false, durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }]);
+  const addPriceRow = () => setPricing((rows) => [...rows, {
+    interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false,
+    durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '',
+    introductoryBillingCycles: '', introductoryLocalPrices: {}, costRates: emptyStorageCostRates(),
+  }]);
   const removePriceRow = (i) => setPricing((rows) => rows.filter((_, idx) => idx !== i));
 
   // Nested limit alanlarını güncelleme: setLimitField('file', 'upload', 1024)
@@ -265,103 +249,6 @@ export default function PackageEditorPage({ params }) {
       return { ...s, [activeLimitInterval]: { ...cur, [key]: v } };
     });
   };
-
-  function buildLimitBody(limitsArg) {
-    // Periyot bazlı: hangi periyodun limitini gövdeye çevireceğimizi çağıran verir.
-    const limits = limitsArg || DEFAULT_LIMITS;
-    // Sayısal alanları Number'a çevir; null/boş → 0 (maxDevices hariç)
-    const num = (v, fallback = 0) => {
-      if (v === '' || v === null || v === undefined) return fallback;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : fallback;
-    };
-    // Boş/null → null = SINIRSIZ (backend toLimit ile birebir; llm.credit /
-    // maxDevices kalıbı). Bu alanlarda backend sözleşmesi null=sınırsız, 0=kota yok.
-    // num()'la coerce edilseydi admin sınırsız için alanı temizleyemez, boş bırakılan
-    // her sınırsız paket kayıtta sessizce fallback'e (ör. 0/kota-yok) düşerdi.
-    const nullable = (v, fallback = 0) =>
-      v === '' || v === null || v === undefined ? null : num(v, fallback);
-    return {
-      product: { amount: num(limits.product?.amount) },
-      services: { amount: num(limits.services?.amount) },
-      file: {
-        download: num(limits.file?.download),
-        upload: num(limits.file?.upload),
-        maxfileupload: num(limits.file?.maxfileupload),
-        maxfileDownload: num(limits.file?.maxfileDownload),
-        unit: limits.file?.unit || 'mb',
-        stream: num(limits.file?.stream),
-        stream_unit: limits.file?.stream_unit || 'gb',
-      },
-      image: {
-        download: num(limits.image?.download),
-        upload: num(limits.image?.upload),
-        maxfileupload: num(limits.image?.maxfileupload),
-        maxfileDownload: num(limits.image?.maxfileDownload),
-        unit: limits.image?.unit || 'mb',
-        stream: num(limits.image?.stream),
-        stream_unit: limits.image?.stream_unit || 'gb',
-      },
-      video: {
-        download: num(limits.video?.download),
-        upload: num(limits.video?.upload),
-        maxfileupload: num(limits.video?.maxfileupload),
-        maxfileDownload: num(limits.video?.maxfileDownload),
-        unit: limits.video?.unit || 'mb',
-        stream: num(limits.video?.stream),
-        stream_unit: limits.video?.stream_unit || 'gb',
-      },
-      offer: {
-        max: num(limits.offer?.max),
-      },
-      llm: {
-        // Kota kredi bazlı (backend hasLLMCreditQuota → limit.llm.credit).
-        // `token` analitik alanı korunur (gönderilmezse backend 1024'e sıfırlar).
-        token: num(limits.llm?.token),
-        // Boş/null → null = SINIRSIZ (backend toLimit ile birebir; maxDevices kalıbı).
-        // num()'la 1000'e coerce edilseydi, credit=null tutan sınırsız paket admin
-        // LLM alanına dokunmasa bile her kayıtta sessizce 1000'e düşerdi (backend'in
-        // özellikle koruduğu "sessizce sınırsızlığı geri alma" tuzağı).
-        credit:
-          limits.llm?.credit === '' || limits.llm?.credit === null || limits.llm?.credit === undefined
-            ? null
-            : num(limits.llm?.credit, 1000),
-      },
-      // ai limitleri KALDIRILDI — AI üretim artık LLM kredi bütçesinden düşer (backend
-      // buildLimitPayload da ai bloğunu üretmez).
-      workflow: {
-        count: num(limits.workflow?.count),
-        totalRun: num(limits.workflow?.totalRun),
-      },
-      assistant: {
-        // published: aynı anda yayında olabilecek asistan sayısı (publish quota enforce eder).
-        // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (yayınlama bloke).
-        published: nullable(limits.assistant?.published, 1),
-        // Aşağıdakiler UI'da düzenlenmese de taşınır — yoksa backend buildLimitPayload
-        // bunları default'a (5/10/100) sıfırlar. previewViewsPerMonth enforce edilir.
-        tools: num(limits.assistant?.tools, 5),
-        // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (dosya eklenemez).
-        libraryFiles: nullable(limits.assistant?.libraryFiles, 10),
-        previewViewsPerMonth: num(limits.assistant?.previewViewsPerMonth, 100),
-      },
-      // Firma oluşturma limiti — bireysel pakette anlamlı; backend buildLimitPayload
-      // company.count'u whitelist eder, gönderilmezse default 1'e döner.
-      // Boş → null = SINIRSIZ (backend toLimit ile birebir); 0 = kota yok (firma açılamaz).
-      company: {
-        count: nullable(limits.company?.count, 1),
-      },
-      mcp: {
-        server: nullable(limits.mcp?.server, 1),
-        requestsPerMinute: nullable(limits.mcp?.requestsPerMinute, null),
-        maxConcurrent: nullable(limits.mcp?.maxConcurrent, null),
-      },
-      // web_search limiti KALDIRILDI — web araması LLM kredi bütçesinden düşülür (AI gibi).
-      maxDevices:
-        limits.maxDevices === '' || limits.maxDevices === null || limits.maxDevices === undefined
-          ? null
-          : num(limits.maxDevices, null),
-    };
-  }
 
   function buildBody() {
     // Sadece başlığı olan diller gönderilir
@@ -389,6 +276,16 @@ export default function PackageEditorPage({ params }) {
           TRY: p.localPrices?.TRY != null && p.localPrices?.TRY !== '' ? Number(p.localPrices.TRY) : null,
           EUR: p.localPrices?.EUR != null && p.localPrices?.EUR !== '' ? Number(p.localPrices.EUR) : null,
           USD: p.localPrices?.USD != null && p.localPrices?.USD !== '' ? Number(p.localPrices.USD) : null,
+        },
+        // Tarife limitten ayrıdır: byte başına aylık gerçek maliyet ondalık string
+        // olarak saklanır; böylece çok küçük oranlar Number yuvarlamasına uğramaz.
+        costRates: {
+          storage: {
+            usdPerByteMonth: normalizeNonNegativeDecimal(
+              p.costRates?.storage?.usdPerByteMonth,
+              '0',
+            ),
+          },
         },
         introductoryPrice:
           p.interval === 'month' && p.introductoryAmount !== '' && p.introductoryAmount != null
@@ -585,7 +482,7 @@ export default function PackageEditorPage({ params }) {
 
   const lc = i18n[activeLocale] || { title: '', description: '', features: '' };
 
-  // Aktif periyodun limit objesi — Limitler JSX'i (limits.file?.upload vs.) bunu okur.
+  // Aktif periyodun limit objesi — ekrandaki stok ve dönemsel limitler bunu okur.
   const limits = limitsByInterval[activeLimitInterval] || limitsByInterval.month;
   // Limit sekmesi için mevcut pricing'deki month/year periyotları (lifetime hariç,
   // tekrarsız ve month/year sırasında).
@@ -779,6 +676,16 @@ export default function PackageEditorPage({ params }) {
                       Her {p.durationTime || 1} {p.interval === 'year' ? 'yıl' : p.interval === 'lifetime' ? 'dönem' : 'ay'}
                     </p>
                   </div>
+                  <StorageRateInput
+                    valuePerByte={p.costRates?.storage?.usdPerByteMonth}
+                    onChange={(usdPerByteMonth) => setPriceRow(i, 'costRates', {
+                      ...(p.costRates || {}),
+                      storage: {
+                        ...(p.costRates?.storage || {}),
+                        usdPerByteMonth,
+                      },
+                    })}
+                  />
                   {p.currency !== 'USD' && (
                     <>
                       <div className="w-24">
@@ -842,7 +749,7 @@ export default function PackageEditorPage({ params }) {
                   onClick={() =>
                     setLimitsByInterval((s) => ({
                       ...s,
-                      [activeLimitInterval]: JSON.parse(JSON.stringify(DEFAULT_LIMITS)),
+                      [activeLimitInterval]: cloneDefaultLimits(),
                     }))
                   }
                   title="Bu periyodun limitlerini varsayılana sıfırla"
@@ -896,58 +803,39 @@ export default function PackageEditorPage({ params }) {
                 </div>
               </div>
 
-              {/* Dosya / Görsel / Video kotaları */}
-              {[
-                { key: 'file', label: 'Dosya' },
-                { key: 'image', label: 'Görsel' },
-                { key: 'video', label: 'Video' },
-              ].map(({ key, label }) => (
-                <div key={key}>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label} Kotası</p>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <LimitRowWithUnit
-                      label="Aylık upload"
-                      value={limits[key]?.upload}
-                      unit={limits[key]?.unit}
-                      unitOptions={SIZE_UNITS}
-                      onChange={(v) => setLimitField(key, 'upload', v)}
-                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
-                    />
-                    <LimitRowWithUnit
-                      label="Aylık download"
-                      value={limits[key]?.download}
-                      unit={limits[key]?.unit}
-                      unitOptions={SIZE_UNITS}
-                      onChange={(v) => setLimitField(key, 'download', v)}
-                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
-                    />
-                    <LimitRowWithUnit
-                      label="Tek upload (maks.)"
-                      value={limits[key]?.maxfileupload}
-                      unit={limits[key]?.unit}
-                      unitOptions={SIZE_UNITS}
-                      onChange={(v) => setLimitField(key, 'maxfileupload', v)}
-                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
-                    />
-                    <LimitRowWithUnit
-                      label="Tek download (maks.)"
-                      value={limits[key]?.maxfileDownload}
-                      unit={limits[key]?.unit}
-                      unitOptions={SIZE_UNITS}
-                      onChange={(v) => setLimitField(key, 'maxfileDownload', v)}
-                      onUnitChange={(u) => setLimitField(key, 'unit', u)}
-                    />
-                    <LimitRowWithUnit
-                      label="Aylık stream"
-                      value={limits[key]?.stream}
-                      unit={limits[key]?.stream_unit}
-                      unitOptions={STREAM_UNITS}
-                      onChange={(v) => setLimitField(key, 'stream', v)}
-                      onUnitChange={(u) => setLimitField(key, 'stream_unit', u)}
-                    />
-                  </div>
+              {/* Birleşik depolama: tüm müşteri dosyaları aynı byte stok kotasını tüketir. */}
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <div className="mb-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Depolama Kotası</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                    Dosya, görsel ve video aynı toplam kotayı kullanır. Arayüz GB gösterir; API&apos;ye tam sayı byte kaydedilir.
+                    Boş alan sınırsız, 0 ise yüklemeye kapalıdır. Aylık stream/download kotası uygulanmaz.
+                  </p>
                 </div>
-              ))}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <ByteLimitRow
+                    label="Toplam depolama"
+                    valueBytes={limits.storage?.maxBytes}
+                    onChange={(v) => setLimitField('storage', 'maxBytes', v)}
+                    helper="Paketin tüm müşteri dosyaları için ortak stok kapasitesi"
+                  />
+                  <ByteLimitRow
+                    label="Tek dosya yükleme (maks.)"
+                    valueBytes={limits.uploads?.fileMaxBytes}
+                    onChange={(v) => setLimitField('uploads', 'fileMaxBytes', v)}
+                  />
+                  <ByteLimitRow
+                    label="Tek görsel yükleme (maks.)"
+                    valueBytes={limits.uploads?.imageMaxBytes}
+                    onChange={(v) => setLimitField('uploads', 'imageMaxBytes', v)}
+                  />
+                  <ByteLimitRow
+                    label="Tek video yükleme (maks.)"
+                    valueBytes={limits.uploads?.videoMaxBytes}
+                    onChange={(v) => setLimitField('uploads', 'videoMaxBytes', v)}
+                  />
+                </div>
+              </div>
 
               {/* Teklif limiti */}
               <div>
@@ -999,6 +887,56 @@ export default function PackageEditorPage({ params }) {
                   />
                 </div>
               </div>
+
+              {form.forCompany && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ekip & Bilgi Tabanı</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                      Bu stok limitleri fatura döneminde sıfırlanmaz; hesapta o anda bulunan aktif kaynakları sınırlar.
+                      Boş = sınırsız, 0 = kapalı.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <LimitRow
+                      label="Ekip koltuğu"
+                      value={limits.team?.seats}
+                      unit="kişi"
+                      onChange={(v) => setLimitField('team', 'seats', v === '' ? null : v)}
+                      placeholder="sınırsız"
+                      helper="Firma sahibi, aktif üyeler ve bekleyen davetler birlikte sayılır"
+                    />
+                    <LimitRow
+                      label="Domain limiti"
+                      value={limits.website?.count}
+                      unit="domain"
+                      onChange={(v) => setLimitField('website', 'count', v === '' ? null : v)}
+                      placeholder="sınırsız"
+                    />
+                    <LimitRow
+                      label="Taranan aktif sayfa"
+                      value={limits.crawl?.pages}
+                      unit="sayfa"
+                      onChange={(v) => setLimitField('crawl', 'pages', v === '' ? null : v)}
+                      placeholder="sınırsız"
+                      helper="Firma toplamındaki aktif crawl sayfası"
+                    />
+                    <LimitRow
+                      label="İndeks dokümanı"
+                      value={limits.index?.documents}
+                      unit="doküman"
+                      onChange={(v) => setLimitField('index', 'documents', v === '' ? null : v)}
+                      placeholder="sınırsız"
+                    />
+                    <ByteLimitRow
+                      label="İndeks büyüklüğü"
+                      valueBytes={limits.index?.vectorBytes}
+                      onChange={(v) => setLimitField('index', 'vectorBytes', v)}
+                      helper="Aktif vektörlerin mantıksal byte toplamı"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Hosted MCP limitleri — yalnız Business paketlerinde anlamlıdır. */}
               {form.forCompany && (
@@ -1372,7 +1310,45 @@ function LimitRow({ label, value, unit, onChange, placeholder, helper, min = 0, 
   );
 }
 
-function LimitRowWithUnit({ label, value, unit, unitOptions, onChange, onUnitChange }) {
+function ByteLimitRow({ label, valueBytes, onChange, helper }) {
+  const editing = useRef(false);
+  const dirty = useRef(false);
+  const [displayValue, setDisplayValue] = useState(() => bytesToGiBDisplay(valueBytes));
+
+  useEffect(() => {
+    if (!editing.current) setDisplayValue(bytesToGiBDisplay(valueBytes));
+  }, [valueBytes]);
+
+  const update = (raw) => {
+    dirty.current = true;
+    setDisplayValue(raw);
+    if (raw === '') {
+      onChange(null);
+      return;
+    }
+    const bytes = decimalUnitToBytes(raw);
+    if (bytes !== null) onChange(bytes);
+  };
+
+  const normalizeOnBlur = () => {
+    editing.current = false;
+    if (!dirty.current) {
+      setDisplayValue(bytesToGiBDisplay(valueBytes));
+      return;
+    }
+    if (displayValue === '') {
+      onChange(null);
+      return;
+    }
+    const bytes = decimalUnitToBytes(displayValue);
+    if (bytes === null) {
+      setDisplayValue(bytesToGiBDisplay(valueBytes));
+      return;
+    }
+    onChange(bytes);
+    setDisplayValue(bytesToGiBDisplay(bytes));
+  };
+
   return (
     <div>
       <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
@@ -1380,22 +1356,84 @@ function LimitRowWithUnit({ label, value, unit, unitOptions, onChange, onUnitCha
         <Input
           type="number"
           min={0}
-          value={value ?? ''}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="0"
+          step="any"
+          value={displayValue}
+          onFocus={() => { editing.current = true; dirty.current = false; }}
+          onBlur={normalizeOnBlur}
+          onChange={(e) => update(e.target.value)}
+          placeholder="sınırsız"
           className="flex-1"
         />
-        <div className="w-24 shrink-0">
-          <Select value={unit || unitOptions[0]} onValueChange={onUnitChange}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {unitOptions.map((u) => (
-                <SelectItem key={u} value={u} className="uppercase">{u.toUpperCase()}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <span className="rounded-md border border-border bg-muted px-2.5 py-2 text-xs font-medium text-muted-foreground">
+          GB (1024³ B)
+        </span>
       </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {helper ? `${helper} · ` : ''}
+        {valueBytes === null || valueBytes === undefined || valueBytes === ''
+          ? 'sınırsız'
+          : `${Number(valueBytes).toLocaleString('tr-TR')} byte`}
+      </p>
+    </div>
+  );
+}
+
+function StorageRateInput({ valuePerByte, onChange }) {
+  const editing = useRef(false);
+  const dirty = useRef(false);
+  const [displayValue, setDisplayValue] = useState(() =>
+    usdPerByteMonthToUsdPerGiBMonth(valuePerByte),
+  );
+
+  useEffect(() => {
+    if (!editing.current) {
+      setDisplayValue(usdPerByteMonthToUsdPerGiBMonth(valuePerByte));
+    }
+  }, [valuePerByte]);
+
+  const update = (raw) => {
+    dirty.current = true;
+    setDisplayValue(raw);
+    const perByte = usdPerGiBMonthToUsdPerByteMonth(raw);
+    if (perByte !== null) onChange(perByte);
+  };
+
+  const normalizeOnBlur = () => {
+    editing.current = false;
+    if (!dirty.current) {
+      setDisplayValue(usdPerByteMonthToUsdPerGiBMonth(valuePerByte));
+      return;
+    }
+    const perByte = usdPerGiBMonthToUsdPerByteMonth(displayValue);
+    if (perByte === null) {
+      setDisplayValue(usdPerByteMonthToUsdPerGiBMonth(valuePerByte));
+      return;
+    }
+    onChange(perByte);
+    setDisplayValue(usdPerByteMonthToUsdPerGiBMonth(perByte));
+  };
+
+  return (
+    <div className="w-52">
+      <label className="mb-1 block text-[11px] text-muted-foreground">Depolama maliyeti</label>
+      <div className="flex items-stretch gap-2">
+        <Input
+          type="number"
+          min="0"
+          step="any"
+          value={displayValue}
+          onFocus={() => { editing.current = true; dirty.current = false; }}
+          onBlur={normalizeOnBlur}
+          onChange={(e) => update(e.target.value)}
+          placeholder="0.001"
+        />
+        <span className="whitespace-nowrap rounded-md border border-border bg-muted px-2 py-2 text-[10px] font-medium text-muted-foreground">
+          USD / GB-ay
+        </span>
+      </div>
+      <p className="mt-1 break-all text-[10px] text-muted-foreground">
+        {normalizeNonNegativeDecimal(valuePerByte, '0')} USD / byte-ay
+      </p>
     </div>
   );
 }
