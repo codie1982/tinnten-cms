@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Inbox, RefreshCw, Loader2, X, Mail, Reply, Forward, Search,
-  ArrowUpDown, ChevronUp, ChevronDown, CheckCheck, MailOpen, Trash2,
+  ArrowUpDown, ChevronUp, ChevronDown, CheckCheck, MailOpen,
+  Archive, CloudDownload, CloudOff,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
 import { PageHeader } from '@/components/layout/page-header';
@@ -28,6 +29,7 @@ import {
   useGetInboxMailQuery,
   useLazyGetInboxQuery,
   useSetInboxReadMutation,
+  useSyncInboxMutation,
 } from '@/redux/services';
 
 function formatTrDateTime(input) {
@@ -91,6 +93,7 @@ export default function InboxPage() {
   const [error, setError] = useState('');
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [recipient, setRecipient] = useState('all');
+  const [recipientOptions, setRecipientOptions] = useState([]);
   const [readFilter, setReadFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState('date'); // 'date' | 'from' | 'to' | 'subject'
@@ -105,11 +108,20 @@ export default function InboxPage() {
     setError('');
     try {
       // preferCacheValue=false (varsayılan) → her çağrıda taze veri çeker (Yenile).
-      const d = await loadInbox({ limit: 25, token: token || undefined }).unwrap();
+      const d = await loadInbox({
+        limit: 25,
+        token: token || undefined,
+        recipient,
+        read: readFilter,
+        query: query.trim() || undefined,
+        sortKey,
+        sortDir,
+      }).unwrap();
       setItems((prev) => (token ? [...prev, ...(d.items || [])] : d.items || []));
       if (!token) setSelectedKeys([]);
       setNextToken(d.nextToken || null);
       setTotal(Number(d.total) || 0);
+      if (Array.isArray(d.recipients)) setRecipientOptions(d.recipients);
     } catch (e) {
       setError(e?.data?.message || e?.normalizedMessage || 'Gelen kutusu yüklenemedi.');
     } finally {
@@ -118,9 +130,11 @@ export default function InboxPage() {
   };
 
   useEffect(() => {
-    if (authorized) fetchPage(null);
+    if (!authorized) return undefined;
+    const timer = window.setTimeout(() => fetchPage(null), query ? 300 : 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authorized]);
+  }, [authorized, recipient, readFilter, query, sortKey, sortDir]);
 
   // Yenile: baştan (page 1) taze çek + sayfalamayı sıfırla.
   const refresh = () => {
@@ -130,29 +144,8 @@ export default function InboxPage() {
     fetchPage(null);
   };
 
-  // Kullanıcı (alıcı) bazlı sınıflama
-  const recipients = useMemo(() => {
-    const set = new Set(items.map((m) => emailOf(m.to)).filter(Boolean));
-    return [...set].sort();
-  }, [items]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return items.filter((m) => {
-      if (recipient !== 'all' && emailOf(m.to) !== recipient) return false;
-      if (readFilter !== 'all' && (readFilter === 'unread' ? m.read : !m.read)) return false;
-      if (q && !`${m.from} ${m.to} ${m.subject}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [items, recipient, readFilter, query]);
-
-  const sorted = useMemo(() => {
-    const dir = sortDir === 'asc' ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      if (sortKey === 'date') return (new Date(a.date || 0) - new Date(b.date || 0)) * dir;
-      return String(a[sortKey] || '').localeCompare(String(b[sortKey] || ''), 'tr', { sensitivity: 'base' }) * dir;
-    });
-  }, [filtered, sortKey, sortDir]);
+  // Filtreleme, sıralama ve sayfalama backend'de MongoDB üzerinden yapılır.
+  const sorted = items;
 
   const unreadCount = items.filter((m) => !m.read).length;
 
@@ -164,6 +157,7 @@ export default function InboxPage() {
   const { data: detail, isFetching: detailLoading } = useGetInboxMailQuery(detailKey, { skip: !detailKey });
   const [setInboxRead] = useSetInboxReadMutation();
   const [deleteInbox] = useDeleteInboxMutation();
+  const [syncInbox] = useSyncInboxMutation();
 
   const openDetail = (key) => {
     setDetailKey(key);
@@ -216,10 +210,13 @@ export default function InboxPage() {
     }
   };
 
-  const deleteMails = async (keys) => {
+  const deleteMails = async (keys, deleteFromAws) => {
     if (!keys.length) return;
     const label = keys.length === 1 ? 'Bu mail' : `${keys.length} mail`;
-    if (!window.confirm(`${label} AWS S3 üzerinden kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
+    const confirmation = deleteFromAws
+      ? `${label} hem sistemden hem AWS S3'ten kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`
+      : `${label} sistemden kaldırılsın mı? AWS kopyası korunacak.`;
+    if (!window.confirm(confirmation)) return;
 
     setActionBusy(true);
     setActionError('');
@@ -230,7 +227,7 @@ export default function InboxPage() {
 
     for (const batch of chunksOf(keys)) {
       try {
-        const result = await deleteInbox(batch).unwrap();
+        const result = await deleteInbox({ keys: batch, deleteFromAws }).unwrap();
         deletedKeys.push(...(result?.deletedKeys || []));
         failed.push(...(result?.failed || []));
       } catch (e) {
@@ -250,9 +247,27 @@ export default function InboxPage() {
     } else if (failed.length) {
       setActionError(`${deletedKeys.length} mail silindi, ${failed.length} mail silinemedi.`);
     } else {
-      setNotice(`${deletedKeys.length} mail AWS S3 üzerinden kalıcı olarak silindi.`);
+      setNotice(deleteFromAws
+        ? `${deletedKeys.length} mail sistemden ve AWS S3'ten kalıcı olarak silindi.`
+        : `${deletedKeys.length} mail sistemden kaldırıldı; AWS kopyası korundu.`);
     }
     setActionBusy(false);
+  };
+
+  const syncFromAws = async () => {
+    setActionBusy(true);
+    setActionError('');
+    setNotice('');
+    try {
+      const result = await syncInbox(100).unwrap();
+      await fetchPage(null);
+      const pending = Number(result?.pending) || 0;
+      setNotice(`${Number(result?.imported) || 0} mail DB'ye aktarıldı.${pending ? ` ${pending} mail sonraki senkronizasyonu bekliyor.` : ''}`);
+    } catch (e) {
+      setActionError(e?.data?.message || e?.normalizedMessage || 'AWS senkronizasyonu tamamlanamadı.');
+    } finally {
+      setActionBusy(false);
+    }
   };
 
   // Cevapla/İlet: taslağı sessionStorage'a bırakıp Yeni Mail sayfasına yönlen.
@@ -299,11 +314,16 @@ export default function InboxPage() {
       <PageHeader
         section="Email"
         title="Gelen Mailler"
-        description="@tinnten.com ve @tinten.ai adreslerine gelen e-postalar (S3 inbox)"
+        description="Mailler MongoDB'den listelenir; AWS yalnız kaynak arşividir"
         actions={
-          <Button variant="outline" onClick={refresh} disabled={isFetching}>
-            <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} /> Yenile
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={syncFromAws} disabled={actionBusy || isFetching}>
+              {actionBusy ? <Loader2 className="size-4 animate-spin" /> : <CloudDownload className="size-4" />} AWS Senkronize
+            </Button>
+            <Button variant="outline" onClick={refresh} disabled={isFetching || actionBusy}>
+              <RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} /> DB Yenile
+            </Button>
+          </div>
         }
       />
 
@@ -323,7 +343,7 @@ export default function InboxPage() {
               <SelectTrigger><SelectValue placeholder="Alıcıya göre" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tüm Alıcılar</SelectItem>
-                {recipients.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                {recipientOptions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -337,7 +357,7 @@ export default function InboxPage() {
               </SelectContent>
             </Select>
           </div>
-          <span className="text-xs text-muted-foreground">{sorted.length} / {items.length} mail · {unreadCount} okunmadı</span>
+          <span className="text-xs text-muted-foreground">{items.length} / {total} mail · yüklenenlerde {unreadCount} okunmadı</span>
           {selectedKeys.length > 0 && (
             <div className="flex basis-full flex-wrap items-center gap-2 border-t border-border pt-3">
               <span className="me-auto text-sm font-medium">{selectedKeys.length} mail seçili</span>
@@ -347,8 +367,11 @@ export default function InboxPage() {
               <Button variant="outline" size="sm" disabled={actionBusy} onClick={() => setReadForKeys(selectedKeys, false)}>
                 <MailOpen className="size-4" /> Okunmadı
               </Button>
-              <Button variant="destructive" size="sm" disabled={actionBusy} onClick={() => deleteMails(selectedKeys)}>
-                {actionBusy ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />} Kalıcı Sil
+              <Button variant="outline" size="sm" disabled={actionBusy} onClick={() => deleteMails(selectedKeys, false)}>
+                <Archive className="size-4" /> Sistemden Kaldır
+              </Button>
+              <Button variant="destructive" size="sm" disabled={actionBusy} onClick={() => deleteMails(selectedKeys, true)}>
+                {actionBusy ? <Loader2 className="size-4 animate-spin" /> : <CloudOff className="size-4" />} AWS Dahil Sil
               </Button>
             </div>
           )}
@@ -441,12 +464,21 @@ export default function InboxPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            title="AWS S3'ten kalıcı sil"
+                            title="Sistemden kaldır, AWS'de sakla"
+                            disabled={actionBusy}
+                            onClick={() => deleteMails([m.key], false)}
+                          >
+                            <Archive className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Sistemden ve AWS S3'ten kalıcı sil"
                             disabled={actionBusy}
                             className="text-destructive hover:text-destructive"
-                            onClick={() => deleteMails([m.key])}
+                            onClick={() => deleteMails([m.key], true)}
                           >
-                            <Trash2 className="size-4" />
+                            <CloudOff className="size-4" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -479,8 +511,11 @@ export default function InboxPage() {
                 <Button variant="outline" size="sm" onClick={forward} disabled={!detail}>
                   <Forward className="size-4" /> İlet
                 </Button>
-                <Button variant="destructive" size="sm" onClick={() => deleteMails([detailKey])} disabled={!detail || actionBusy}>
-                  {actionBusy ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />} Sil
+                <Button variant="outline" size="sm" onClick={() => deleteMails([detailKey], false)} disabled={!detail || actionBusy}>
+                  <Archive className="size-4" /> Sistemden Kaldır
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => deleteMails([detailKey], true)} disabled={!detail || actionBusy}>
+                  {actionBusy ? <Loader2 className="size-4 animate-spin" /> : <CloudOff className="size-4" />} AWS Dahil Sil
                 </Button>
                 <Button variant="ghost" size="icon" onClick={() => setDetailKey(null)}><X className="size-4" /></Button>
               </CardToolbar>
