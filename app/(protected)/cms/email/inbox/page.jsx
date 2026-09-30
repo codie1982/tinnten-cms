@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
@@ -109,8 +109,12 @@ export default function InboxPage() {
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [deleteJobId, setDeleteJobId] = useState(null);
+  const finalizingDeleteJobRef = useRef(null);
   const {
-    data: deleteJob,
+    // `data` arg değiştiğinde önceki işin sonucunu geçici olarak korur. Yeni bir
+    // iş başlatıldığında eski "completed" sonucunun yeni iş sanılmaması için
+    // yalnız aktif arg'a ait `currentData` kullanılmalı.
+    currentData: deleteJob,
     error: deleteJobStatusError,
   } = useGetInboxDeleteJobQuery(deleteJobId, {
     skip: !deleteJobId || !authorized,
@@ -188,6 +192,7 @@ export default function InboxPage() {
 
   useEffect(() => {
     if (!deleteJobId || !deleteJob) return;
+    if (String(deleteJob.jobId || '') !== String(deleteJobId)) return;
     const requested = Number(deleteJob.requested) || 0;
     const processed = Number(deleteJob.processed) || 0;
     const deleted = Number(deleteJob.deleted) || 0;
@@ -200,25 +205,34 @@ export default function InboxPage() {
       return;
     }
 
-    try { localStorage.removeItem(ACTIVE_DELETE_JOB_KEY); } catch { /* yoksay */ }
-    setDeleteJobId(null);
-    setActionBusy(false);
-    setSelectedKeys([]);
-    setDetailKey(null);
-    fetchPage(1);
+    // Kuyruk tamamlandıktan sonra seçimleri temizle ve DB listesini gerçekten
+    // yeniden yükle. Yenileme bitene kadar işi kapatmayarak kullanıcının eski
+    // liste üzerinde ikinci bir işlem başlatmasını engelle.
+    if (finalizingDeleteJobRef.current === deleteJobId) return;
+    finalizingDeleteJobRef.current = deleteJobId;
+    const finalizeDeleteJob = async () => {
+      try { localStorage.removeItem(ACTIVE_DELETE_JOB_KEY); } catch { /* yoksay */ }
+      setSelectedKeys([]);
+      setDetailKey(null);
+      await fetchPage(1);
 
-    if (deleteJob.status === 'failed') {
-      setNotice('');
-      setActionError(deleteJob.error || `Silme işi ${processed} / ${requested} mailden sonra durdu.`);
-    } else if (failedCount > 0) {
-      setNotice('');
-      setActionError(`${deleted} mail silindi, ${failedCount} mail silinemedi.`);
-    } else {
-      setActionError('');
-      setNotice(deleteJob.deleteFromAws
-        ? `${deleted} mail sistemden ve AWS S3'ten kalıcı olarak silindi.`
-        : `${deleted} mail sistemden kaldırıldı; AWS kopyası korundu.`);
-    }
+      setDeleteJobId(null);
+      setActionBusy(false);
+
+      if (deleteJob.status === 'failed') {
+        setNotice('');
+        setActionError(deleteJob.error || `Silme işi ${processed} / ${requested} mailden sonra durdu.`);
+      } else if (failedCount > 0) {
+        setNotice('');
+        setActionError(`${deleted} mail silindi, ${failedCount} mail silinemedi.`);
+      } else {
+        setActionError('');
+        setNotice(deleteJob.deleteFromAws
+          ? `${deleted} mail sistemden ve AWS S3'ten kalıcı olarak silindi.`
+          : `${deleted} mail sistemden kaldırıldı; AWS kopyası korundu.`);
+      }
+    };
+    finalizeDeleteJob();
     // fetchPage her render'da yeniden oluştuğu için yalnız iş durumu değişimlerini izle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deleteJobId, deleteJob]);
@@ -331,6 +345,7 @@ export default function InboxPage() {
     try {
       const result = await deleteInbox({ keys, deleteFromAws }).unwrap();
       if (!result?.jobId) throw new Error('Silme işi kimliği alınamadı.');
+      finalizingDeleteJobRef.current = null;
       setDeleteJobId(result.jobId);
       try { localStorage.setItem(ACTIVE_DELETE_JOB_KEY, result.jobId); } catch { /* yoksay */ }
       setNotice(`${Number(result.requested) || keys.length} mail silme kuyruğuna alındı: 0 / ${Number(result.requested) || keys.length} tamamlandı.`);
