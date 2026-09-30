@@ -5,6 +5,26 @@ export const BYTES_PER_MIB = 1024 ** 2;
 export const BYTES_PER_GIB = 1024 ** 3;
 export const BYTES_PER_TIB = 1024 ** 4;
 
+// AWS S3 Standard, Europe (Frankfurt / eu-central-1), first 50 TB tier.
+// AWS defines its storage GB as 2^30 bytes, matching this editor's GiB unit.
+// Request, retrieval and internet egress costs remain separate.
+export const DEFAULT_STORAGE_USD_PER_GIB_MONTH = '0.0245';
+export const DEFAULT_STORAGE_USD_PER_BYTE_MONTH =
+  '0.0000000000228174030780792236328125';
+
+export function createDefaultStorageCostRates() {
+  return {
+    storage: { usdPerByteMonth: DEFAULT_STORAGE_USD_PER_BYTE_MONTH },
+  };
+}
+
+export const PAYMENT_PLAN_TYPES = Object.freeze({
+  FIXED_TERM: 'fixed_term',
+  RECURRING: 'recurring',
+  INTRODUCTORY_RECURRING: 'introductory_recurring',
+  NO_PAYMENT: 'no_payment',
+});
+
 const BINARY_UNIT_BYTES = {
   b: 1,
   kb: BYTES_PER_KIB,
@@ -125,6 +145,102 @@ export function periodMonths(interval, durationTime = 1) {
   if (interval === 'month') return duration;
   if (interval === 'year') return duration * 12;
   return null;
+}
+
+const optionalNumber = (value) => {
+  if (value === '' || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const money = (value) => Number(Number(value || 0).toFixed(2));
+
+/**
+ * CMS state keeps a UI-only paymentPlanType. Persistence remains compatible
+ * with the server contract: isRenewable + optional introductoryPrice. Public
+ * package responses may already contain the server-resolved paymentPlan.type,
+ * so that is accepted as another source when loading existing records.
+ */
+export function resolvePaymentPlanType(pricing = {}) {
+  const explicit = pricing.paymentPlanType || pricing.paymentPlan?.type;
+  if (Object.values(PAYMENT_PLAN_TYPES).includes(explicit)) return explicit;
+
+  const hasIntro =
+    pricing.introductoryAmount !== '' &&
+    pricing.introductoryAmount !== null &&
+    pricing.introductoryAmount !== undefined
+      ? true
+      : pricing.introductoryPrice?.amount !== '' &&
+        pricing.introductoryPrice?.amount !== null &&
+        pricing.introductoryPrice?.amount !== undefined;
+  if (hasIntro) return PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING;
+  if (pricing.interval === 'lifetime' || pricing.unlimited === true) {
+    return PAYMENT_PLAN_TYPES.NO_PAYMENT;
+  }
+  return pricing.isRenewable === true
+    ? PAYMENT_PLAN_TYPES.RECURRING
+    : PAYMENT_PLAN_TYPES.FIXED_TERM;
+}
+
+/**
+ * Profit rows follow charge phases, not merely the package price row. This is
+ * what keeps an introductory first N cycles distinct from the standard cycle.
+ */
+export function buildPricingAnalysisPhases(pricing = {}) {
+  const planType = resolvePaymentPlanType(pricing);
+  const interval = pricing.interval || 'month';
+  const baseMonths = periodMonths(interval, pricing.durationTime) ?? 1;
+  const baseUsd = pricing.currency === 'USD'
+    ? optionalNumber(pricing.amount)
+    : optionalNumber(pricing.localPrices?.USD);
+  const discount = Math.min(100, Math.max(0, optionalNumber(pricing.discount) || 0));
+  const regularUsd = baseUsd === null ? null : money(baseUsd * (1 - discount / 100));
+
+  if (planType !== PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING) {
+    const labels = {
+      [PAYMENT_PLAN_TYPES.FIXED_TERM]: 'Tek dönem',
+      [PAYMENT_PLAN_TYPES.RECURRING]: interval === 'year' ? 'Standart · her yıl' : 'Standart · her ay',
+      [PAYMENT_PLAN_TYPES.NO_PAYMENT]: 'Ücretsiz',
+    };
+    return [{
+      type: planType,
+      label: labels[planType] || 'Standart',
+      cycleCount: 1,
+      months: baseMonths,
+      revenueUsd: planType === PAYMENT_PLAN_TYPES.NO_PAYMENT ? 0 : regularUsd,
+      discount,
+    }];
+  }
+
+  const rawCycles = optionalNumber(
+    pricing.introductoryBillingCycles ?? pricing.introductoryPrice?.billingCycles,
+  );
+  const cycles = Number.isInteger(rawCycles) && rawCycles >= 1 ? rawCycles : 1;
+  const introUsd = pricing.currency === 'USD'
+    ? optionalNumber(pricing.introductoryAmount ?? pricing.introductoryPrice?.amount)
+    : optionalNumber(
+        pricing.introductoryLocalPrices?.USD ??
+        pricing.introductoryPrice?.localPrices?.USD,
+      );
+
+  return [
+    {
+      type: 'introductory',
+      label: `Başlangıç · ilk ${cycles} ay toplam`,
+      cycleCount: cycles,
+      months: baseMonths * cycles,
+      revenueUsd: introUsd === null ? null : money(introUsd * cycles),
+      discount: 0,
+    },
+    {
+      type: 'standard',
+      label: 'Standart · sonraki her ay',
+      cycleCount: 1,
+      months: baseMonths,
+      revenueUsd: regularUsd,
+      discount,
+    },
+  ];
 }
 
 export function allocatedStorageUsd({ maxBytes, usdPerByteMonth, months }) {

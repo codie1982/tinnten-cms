@@ -40,10 +40,15 @@ import {
   buildLimitBody,
   bytesToGiBDisplay,
   cloneDefaultLimits,
+  createDefaultStorageCostRates,
   decimalUnitToBytes,
   DEFAULT_LIMITS,
+  DEFAULT_STORAGE_USD_PER_BYTE_MONTH,
+  DEFAULT_STORAGE_USD_PER_GIB_MONTH,
   mergeLimits,
   normalizeNonNegativeDecimal,
+  PAYMENT_PLAN_TYPES,
+  resolvePaymentPlanType,
   usdPerByteMonthToUsdPerGiBMonth,
   usdPerGiBMonthToUsdPerByteMonth,
 } from './quota-utils.mjs';
@@ -61,6 +66,11 @@ const INTERVALS = [
   { value: 'lifetime', label: 'Ömür Boyu' },
 ];
 const CURRENCIES = ['USD', 'TRY', 'EUR'];
+const PAYMENT_PLAN_OPTIONS = [
+  { value: PAYMENT_PLAN_TYPES.FIXED_TERM, label: 'Tek dönem — yenileme yok' },
+  { value: PAYMENT_PLAN_TYPES.RECURRING, label: 'Otomatik yenilenen' },
+  { value: PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING, label: 'Başlangıç fiyatlı abonelik' },
+];
 const MCP_PLAN_DEFAULTS = {
   free: { requestsPerMinute: 60, maxConcurrent: 4 },
   basic: { requestsPerMinute: 300, maxConcurrent: 10 },
@@ -82,7 +92,7 @@ const emptyI18n = () => {
 const STOREFRONT_URL = (process.env.NEXT_PUBLIC_STOREFRONT_URL || 'https://tinnten.com').replace(/\/$/, '');
 const shareUrl = (token) => `${STOREFRONT_URL}/paket/${token}`;
 
-const emptyStorageCostRates = () => ({ storage: { usdPerByteMonth: '0' } });
+const emptyStorageCostRates = createDefaultStorageCostRates;
 
 export default function PackageEditorPage({ params }) {
   const { id } = use(params);
@@ -113,7 +123,8 @@ export default function PackageEditorPage({ params }) {
   });
   const [i18n, setI18n] = useState(emptyI18n);
   const [pricing, setPricing] = useState([{
-    interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: false,
+    interval: 'month', amount: '', currency: 'USD', isDefault: true, isRenewable: true,
+    paymentPlanType: PAYMENT_PLAN_TYPES.RECURRING,
     durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '',
     introductoryBillingCycles: '', introductoryLocalPrices: {}, costRates: emptyStorageCostRates(),
   }]);
@@ -171,27 +182,30 @@ export default function PackageEditorPage({ params }) {
     setI18n(merged);
     const loadedPricing = (pkg.pricing?.length ? pkg.pricing : [{ interval: 'month', amount: '', currency: 'USD', isDefault: true }]);
     setPricing(
-      loadedPricing.map((p) => ({
-        interval: p.interval || 'month',
-        amount: p.amount ?? '',
-        currency: p.currency || 'USD',
-        isDefault: Boolean(p.isDefault),
-        isRenewable: Boolean(p.isRenewable),
-        durationTime: p.durationTime ?? 1,
-        discount: p.discount ?? 0,
-        localPrices: p.localPrices ?? {},
-        introductoryAmount: p.introductoryPrice?.amount ?? '',
-        introductoryBillingCycles: p.introductoryPrice?.billingCycles ?? '',
-        introductoryLocalPrices: p.introductoryPrice?.localPrices ?? {},
-        costRates: {
-          storage: {
-            usdPerByteMonth: normalizeNonNegativeDecimal(
-              p.costRates?.storage?.usdPerByteMonth,
-              '0',
-            ),
+      loadedPricing.map((p) => {
+        const row = {
+          interval: p.interval || 'month',
+          amount: p.amount ?? '',
+          currency: p.currency || 'USD',
+          isDefault: Boolean(p.isDefault),
+          isRenewable: Boolean(p.isRenewable),
+          durationTime: p.durationTime ?? 1,
+          discount: p.discount ?? 0,
+          localPrices: p.localPrices ?? {},
+          introductoryAmount: p.introductoryPrice?.amount ?? '',
+          introductoryBillingCycles: p.introductoryPrice?.billingCycles ?? '',
+          introductoryLocalPrices: p.introductoryPrice?.localPrices ?? {},
+          costRates: {
+            storage: {
+              usdPerByteMonth: normalizeNonNegativeDecimal(
+                p.costRates?.storage?.usdPerByteMonth,
+                DEFAULT_STORAGE_USD_PER_BYTE_MONTH,
+              ),
+            },
           },
-        },
-      })),
+        };
+        return { ...row, paymentPlanType: resolvePaymentPlanType({ ...p, ...row }) };
+      }),
     );
     // PERİYOT BAZLI limit yükleme: her pricing satırının kendi `.limit` objesi var.
     // Top-level `limit` (tekil) / eski kayıtlarda `limits` (çoğul), per-entry limiti
@@ -219,14 +233,37 @@ export default function PackageEditorPage({ params }) {
       ? {
           ...r,
           interval,
+          isRenewable: interval !== 'lifetime',
+          paymentPlanType:
+            interval === 'lifetime'
+              ? PAYMENT_PLAN_TYPES.NO_PAYMENT
+              : interval === 'year'
+                ? PAYMENT_PLAN_TYPES.RECURRING
+                : resolvePaymentPlanType(r) === PAYMENT_PLAN_TYPES.NO_PAYMENT
+                  ? PAYMENT_PLAN_TYPES.RECURRING
+                  : resolvePaymentPlanType(r),
           ...(interval !== 'month'
             ? { introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }
             : {}),
         }
       : r
   )));
+  const setPaymentPlanType = (i, paymentPlanType) => setPricing((rows) => rows.map((row, idx) => {
+    if (idx !== i) return row;
+    const isIntro = paymentPlanType === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING;
+    return {
+      ...row,
+      paymentPlanType,
+      isRenewable:
+        paymentPlanType === PAYMENT_PLAN_TYPES.RECURRING || isIntro,
+      ...(!isIntro
+        ? { introductoryAmount: '', introductoryBillingCycles: '', introductoryLocalPrices: {} }
+        : {}),
+    };
+  }));
   const addPriceRow = () => setPricing((rows) => [...rows, {
-    interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: false,
+    interval: 'year', amount: '', currency: 'USD', isDefault: false, isRenewable: true,
+    paymentPlanType: PAYMENT_PLAN_TYPES.RECURRING,
     durationTime: 1, discount: 0, localPrices: {}, introductoryAmount: '',
     introductoryBillingCycles: '', introductoryLocalPrices: {}, costRates: emptyStorageCostRates(),
   }]);
@@ -269,7 +306,10 @@ export default function PackageEditorPage({ params }) {
         amount: Number(p.amount),
         currency: p.currency,
         isDefault: Boolean(p.isDefault),
-        isRenewable: Boolean(p.isRenewable),
+        isRenewable: [
+          PAYMENT_PLAN_TYPES.RECURRING,
+          PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING,
+        ].includes(resolvePaymentPlanType(p)),
         durationTime: Number(p.durationTime) || 1,
         discount: Math.min(100, Math.max(0, Number(p.discount) || 0)),
         localPrices: {
@@ -283,11 +323,12 @@ export default function PackageEditorPage({ params }) {
           storage: {
             usdPerByteMonth: normalizeNonNegativeDecimal(
               p.costRates?.storage?.usdPerByteMonth,
-              '0',
+              DEFAULT_STORAGE_USD_PER_BYTE_MONTH,
             ),
           },
         },
         introductoryPrice:
+          resolvePaymentPlanType(p) === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING &&
           p.interval === 'month' && p.introductoryAmount !== '' && p.introductoryAmount != null
             ? {
                 amount: Number(p.introductoryAmount),
@@ -348,27 +389,29 @@ export default function PackageEditorPage({ params }) {
       setNotice('Ömür boyu paket ücretli olamaz.'); return;
     }
     const invalidIntroInterval = pricedRows.find(
-      (p) => p.introductoryAmount !== '' && p.introductoryAmount != null && p.interval !== 'month',
+      (p) => resolvePaymentPlanType(p) === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING && p.interval !== 'month',
     );
     if (invalidIntroInterval) {
-      setNotice('Tanıtım fiyatı yalnız aylık paketlerde kullanılabilir.'); return;
+      setNotice('Başlangıç fiyatlı ödeme planı yalnız aylık paketlerde kullanılabilir.'); return;
     }
     const invalidIntroAmount = pricedRows.find(
-      (p) => p.introductoryAmount !== '' && p.introductoryAmount != null && (
+      (p) => resolvePaymentPlanType(p) === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING && (
+        p.introductoryAmount === '' ||
+        p.introductoryAmount == null ||
         Number(p.introductoryAmount) <= 0 ||
-        Number(p.introductoryAmount) >= Number(p.amount)
+        Number(p.introductoryAmount) >= Number(p.amount) * (1 - (Number(p.discount) || 0) / 100)
       ),
     );
     if (invalidIntroAmount) {
-      setNotice('Tanıtım fiyatı sıfırdan büyük ve normal fiyattan düşük olmalıdır.'); return;
+      setNotice('Başlangıç fiyatı sıfırdan büyük ve indirim sonrası standart fiyattan düşük olmalıdır.'); return;
     }
     const invalidIntroCycles = pricedRows.find((p) => {
-      if (p.introductoryAmount === '' || p.introductoryAmount == null) return false;
+      if (resolvePaymentPlanType(p) !== PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING) return false;
       const cycles = Number(p.introductoryBillingCycles);
       return !Number.isInteger(cycles) || cycles < 1 || cycles > 36;
     });
     if (invalidIntroCycles) {
-      setNotice('Tanıtım dönemi 1 ile 36 ay arasında tam sayı olmalıdır.'); return;
+      setNotice('Başlangıç fazı 1 ile 36 ay arasında tam sayı olmalıdır.'); return;
     }
     if (isNew) {
       const r = await createPackage(body).unwrap().catch((e) => { setNotice(e?.data?.message || 'Oluşturulamadı.'); return null; });
@@ -634,30 +677,52 @@ export default function PackageEditorPage({ params }) {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="w-28">
-                    <label className="mb-1 block text-[11px] text-muted-foreground">Tanıtım fiyatı</label>
-                    <Input
-                      type="number"
-                      min="0.01"
-                      value={p.introductoryAmount ?? ''}
-                      onChange={(e) => setPriceRow(i, 'introductoryAmount', e.target.value)}
-                      placeholder="Kapalı"
-                      disabled={p.interval !== 'month'}
-                    />
+                  <div className="w-56">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Ödeme planı</label>
+                    <Select
+                      value={resolvePaymentPlanType(p)}
+                      onValueChange={(value) => setPaymentPlanType(i, value)}
+                      disabled={p.interval === 'lifetime'}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(p.interval === 'year'
+                          ? PAYMENT_PLAN_OPTIONS.filter((option) => option.value === PAYMENT_PLAN_TYPES.RECURRING)
+                          : p.interval === 'lifetime'
+                            ? [{ value: PAYMENT_PLAN_TYPES.NO_PAYMENT, label: 'Ücretsiz — ödeme yok' }]
+                            : PAYMENT_PLAN_OPTIONS
+                        ).map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div className="w-28">
-                    <label className="mb-1 block text-[11px] text-muted-foreground">İlk kaç ay</label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max="36"
-                      step="1"
-                      value={p.introductoryBillingCycles ?? ''}
-                      onChange={(e) => setPriceRow(i, 'introductoryBillingCycles', e.target.value)}
-                      placeholder="Örn. 3"
-                      disabled={p.interval !== 'month' || p.introductoryAmount === ''}
-                    />
-                  </div>
+                  {resolvePaymentPlanType(p) === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING && (
+                    <>
+                      <div className="w-32">
+                        <label className="mb-1 block text-[11px] text-muted-foreground">Başlangıç fiyatı</label>
+                        <Input
+                          type="number"
+                          min="0.01"
+                          value={p.introductoryAmount ?? ''}
+                          onChange={(e) => setPriceRow(i, 'introductoryAmount', e.target.value)}
+                          placeholder="Örn. 1"
+                        />
+                      </div>
+                      <div className="w-28">
+                        <label className="mb-1 block text-[11px] text-muted-foreground">İlk kaç ay</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="36"
+                          step="1"
+                          value={p.introductoryBillingCycles ?? ''}
+                          onChange={(e) => setPriceRow(i, 'introductoryBillingCycles', e.target.value)}
+                          placeholder="Örn. 3"
+                        />
+                      </div>
+                    </>
+                  )}
                   <div className="w-24">
                     <label className="mb-1 block text-[11px] text-muted-foreground">İndirim %</label>
                     <Input type="number" min="0" max="100" value={p.discount ?? 0} onChange={(e) => setPriceRow(i, 'discount', e.target.value)} placeholder="0" />
@@ -696,9 +761,9 @@ export default function PackageEditorPage({ params }) {
                           onChange={(e) => setPriceRow(i, 'localPrices', { ...(p.localPrices || {}), USD: e.target.value })}
                         />
                       </div>
-                      {p.introductoryAmount !== '' && (
+                      {resolvePaymentPlanType(p) === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING && (
                         <div className="w-28">
-                          <label className="mb-1 block text-[11px] text-muted-foreground">Tanıtım USD</label>
+                          <label className="mb-1 block text-[11px] text-muted-foreground">Başlangıç USD</label>
                           <Input
                             type="number" min="0" placeholder="0"
                             value={p.introductoryLocalPrices?.USD ?? ''}
@@ -712,18 +777,10 @@ export default function PackageEditorPage({ params }) {
                     <input type="checkbox" checked={p.isDefault} onChange={(e) => setPriceRow(i, 'isDefault', e.target.checked)} className="size-4" />
                     Varsayılan
                   </label>
-                  <label className="flex items-center gap-1.5 pb-2 text-xs text-foreground">
-                    <input type="checkbox" checked={p.isRenewable} onChange={(e) => setPriceRow(i, 'isRenewable', e.target.checked)} className="size-4" />
-                    Yenilenebilir
-                  </label>
                   <Button variant="ghost" size="icon" className="size-8 hover:text-destructive" onClick={() => removePriceRow(i)}>
                     <Trash2 className="size-4" />
                   </Button>
-                  {p.interval === 'month' && p.introductoryAmount !== '' && (
-                    <p className="w-full text-[11px] text-muted-foreground">
-                      İlk {p.introductoryBillingCycles || '?'} ay {p.introductoryAmount || 0} {p.currency}; ardından her ay {p.amount || 0} {p.currency}.
-                    </p>
-                  )}
+                  <PaymentPlanSummary pricing={p} />
                 </div>
               ))}
             </CardContent>
@@ -1378,6 +1435,35 @@ function ByteLimitRow({ label, valueBytes, onChange, helper }) {
   );
 }
 
+function PaymentPlanSummary({ pricing }) {
+  const planType = resolvePaymentPlanType(pricing);
+  const currency = pricing.currency || 'USD';
+  const discount = Math.min(100, Math.max(0, Number(pricing.discount) || 0));
+  const regular = Number(pricing.amount || 0) * (1 - discount / 100);
+  const format = (value) => Number(value || 0).toLocaleString('tr-TR', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+
+  let text = 'Ücretsiz; ödeme alınmaz.';
+  if (planType === PAYMENT_PLAN_TYPES.FIXED_TERM) {
+    text = `Bir kez ${format(regular)} ${currency}; dönem sonunda otomatik yenilenmez.`;
+  } else if (planType === PAYMENT_PLAN_TYPES.RECURRING) {
+    text = `${pricing.interval === 'year' ? 'Her yıl' : 'Her ay'} ${format(regular)} ${currency}; otomatik yenilenir.`;
+  } else if (planType === PAYMENT_PLAN_TYPES.INTRODUCTORY_RECURRING) {
+    text = `İlk ${pricing.introductoryBillingCycles || '?'} ay ${format(pricing.introductoryAmount)} ${currency}; ardından her ay ${format(regular)} ${currency}.`;
+  }
+
+  return (
+    <p className="w-full rounded-md bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+      <b className="text-foreground">Plan özeti:</b> {text}
+      {discount > 0 && planType !== PAYMENT_PLAN_TYPES.NO_PAYMENT
+        ? ` Standart faza %${discount} kalıcı indirim uygulanır.`
+        : ''}
+    </p>
+  );
+}
+
 function StorageRateInput({ valuePerByte, onChange }) {
   const editing = useRef(false);
   const dirty = useRef(false);
@@ -1413,9 +1499,24 @@ function StorageRateInput({ valuePerByte, onChange }) {
     setDisplayValue(usdPerByteMonthToUsdPerGiBMonth(perByte));
   };
 
+  const useAwsDefault = () => {
+    dirty.current = false;
+    onChange(DEFAULT_STORAGE_USD_PER_BYTE_MONTH);
+    setDisplayValue(DEFAULT_STORAGE_USD_PER_GIB_MONTH);
+  };
+
   return (
-    <div className="w-52">
-      <label className="mb-1 block text-[11px] text-muted-foreground">Depolama maliyeti</label>
+    <div className="w-64">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <label className="block text-[11px] text-muted-foreground">Depolama gideri</label>
+        <button
+          type="button"
+          onClick={useAwsDefault}
+          className="text-[10px] font-medium text-primary hover:underline"
+        >
+          AWS varsayılanı
+        </button>
+      </div>
       <div className="flex items-stretch gap-2">
         <Input
           type="number"
@@ -1425,14 +1526,17 @@ function StorageRateInput({ valuePerByte, onChange }) {
           onFocus={() => { editing.current = true; dirty.current = false; }}
           onBlur={normalizeOnBlur}
           onChange={(e) => update(e.target.value)}
-          placeholder="0.001"
+          placeholder={DEFAULT_STORAGE_USD_PER_GIB_MONTH}
         />
         <span className="whitespace-nowrap rounded-md border border-border bg-muted px-2 py-2 text-[10px] font-medium text-muted-foreground">
-          USD / GB-ay
+          USD / GiB-ay
         </span>
       </div>
       <p className="mt-1 break-all text-[10px] text-muted-foreground">
-        {normalizeNonNegativeDecimal(valuePerByte, '0')} USD / byte-ay
+        {normalizeNonNegativeDecimal(valuePerByte, DEFAULT_STORAGE_USD_PER_BYTE_MONTH)} USD / byte-ay
+      </p>
+      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+        Varsayılan: AWS S3 Standard Frankfurt, $0.0245/GiB-ay. İstek, retrieval ve internet çıkışı hariçtir.
       </p>
     </div>
   );

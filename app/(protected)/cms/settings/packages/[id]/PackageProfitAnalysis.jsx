@@ -10,7 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { aiCatalogApi } from '@/lib/ai-catalog';
 import { cn } from '@/lib/utils';
-import { allocatedStorageUsd, periodMonths } from './quota-utils.mjs';
+import {
+  allocatedStorageUsd,
+  buildPricingAnalysisPhases,
+  DEFAULT_STORAGE_USD_PER_BYTE_MONTH,
+} from './quota-utils.mjs';
 
 // Fallback: backend'den `creditUsdCost` gelmezse (offline/eski) 1 kredi = $0.01.
 // Asıl değer backend Cost.creditPerUsd'den (credit-config endpoint) prop ile gelir.
@@ -45,7 +49,14 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
   const [tokenModelId, setTokenModelId] = useState('');
   const creditCost = Number(creditUsdCost) > 0 ? Number(creditUsdCost) : DEFAULT_CREDIT_USD_COST;
   const consPct = Math.min(100, Math.max(0, Number(consumption) || 0));
-  const rows = (pricing || []).filter((p) => p.amount !== '' && p.amount != null);
+  const pricingRows = (pricing || []).filter((p) => p.amount !== '' && p.amount != null);
+  const analysisRows = pricingRows.flatMap((row, pricingIndex) =>
+    buildPricingAnalysisPhases(row).map((phase) => ({
+      pricing: row,
+      pricingIndex,
+      phase,
+    })),
+  );
 
   const limitsFor = (interval) =>
     limitsByInterval?.[interval] || limitsByInterval?.month || limitsByInterval?.year;
@@ -97,9 +108,9 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
           </span>
         </div>
 
-        {rows.length === 0 && <p className="text-sm text-muted-foreground">Analiz için fiyat satırı ekleyin.</p>}
+        {pricingRows.length === 0 && <p className="text-sm text-muted-foreground">Analiz için fiyat satırı ekleyin.</p>}
 
-        {rows.length > 0 && (
+        {analysisRows.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -116,32 +127,27 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p, i) => {
+                {analysisRows.map(({ pricing: p, pricingIndex, phase }, i) => {
                   const isLifetime = p.interval === 'lifetime';
-                  const usdRaw =
-                    p.currency === 'USD'
-                      ? Number(p.amount)
-                      : p.localPrices?.USD != null && p.localPrices?.USD !== ''
-                        ? Number(p.localPrices.USD)
-                        : null;
-                  const disc = Math.min(100, Math.max(0, Number(p.discount) || 0));
-                  const rowCredit = creditFor(p.interval);
+                  const disc = phase.discount;
+                  const rowCredit = creditFor(p.interval) * phase.cycleCount;
                   const aiMaxCost = rowCredit * creditCost;
                   const aiExpectedCost = aiMaxCost * (consPct / 100);
                   const limits = limitsFor(p.interval);
-                  const months = periodMonths(p.interval, p.durationTime);
                   const storageCost = allocatedStorageUsd({
                     maxBytes: limits?.storage?.maxBytes,
-                    usdPerByteMonth: p.costRates?.storage?.usdPerByteMonth || '0',
+                    usdPerByteMonth:
+                      p.costRates?.storage?.usdPerByteMonth ||
+                      DEFAULT_STORAGE_USD_PER_BYTE_MONTH,
                     // Lifetime için toplam uydurmak yerine aylık run-rate gösterilir.
-                    months: isLifetime ? 1 : months,
+                    months: isLifetime ? 1 : phase.months,
                   });
                   const storageCredits = storageCost == null ? null : storageCost / creditCost;
                   const totalMaxCost = !isLifetime && storageCost != null ? aiMaxCost + storageCost : null;
                   const expectedCost = !isLifetime && storageCost != null
                     ? aiExpectedCost + storageCost
                     : null;
-                  const net = usdRaw != null && Number.isFinite(usdRaw) ? usdRaw * (1 - disc / 100) : null;
+                  const net = phase.revenueUsd;
                   const profitExp = net != null && expectedCost != null ? net - expectedCost : null;
                   const marginExp = net != null && net > 0 && profitExp != null ? (profitExp / net) * 100 : null;
                   const breakEven = net != null && storageCost != null
@@ -152,10 +158,11 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
                   const loss = profitExp != null && profitExp < 0;
                   const profitCls = loss ? 'text-red-600' : 'text-emerald-600';
                   return (
-                    <tr key={i} className="border-b border-border/60">
+                    <tr key={`${pricingIndex}-${phase.type}-${i}`} className="border-b border-border/60">
                       <td className="px-2 py-2">
                         {INTERVAL_LABEL[p.interval] || p.interval}
-                        {disc > 0 && <span className="ml-1 text-[10px] text-muted-foreground">(-%{disc})</span>}
+                        <span className="block text-[10px] text-muted-foreground">{phase.label}</span>
+                        {disc > 0 && <span className="text-[10px] text-muted-foreground">-%{disc} standart indirim</span>}
                         {isLifetime && (
                           <span className="ml-1 text-[10px] text-amber-600">aylık run-rate</span>
                         )}
@@ -211,7 +218,7 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
           </div>
         )}
 
-        {tokenModel && rows.length > 0 && (
+        {tokenModel && pricingRows.length > 0 && (
           <div className="rounded-lg border border-border bg-muted/30 p-3">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
@@ -234,7 +241,7 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
               </label>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {rows.map((row, index) => {
+              {pricingRows.map((row, index) => {
                 const rowCredits = creditFor(row.interval);
                 const inputTokens = (rowCredits / Number(tokenModel.creditTariff.input)) * 1_000_000;
                 const outputTokens = (rowCredits / Number(tokenModel.creditTariff.output)) * 1_000_000;
@@ -255,10 +262,12 @@ export default function PackageProfitAnalysis({ pricing, limitsByInterval, credi
         )}
 
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          <b>LLM max maliyeti</b> = spendable kredi × kredi USD maliyeti. <b>Depolama maliyeti</b> = ayrılan byte
-          kapasitesi × byte/ay tarifesi × periyot ayı; beklenen tüketim yüzdesinden etkilenmez. Yanındaki kredi değeri
-          yalnız maliyet eşdeğeridir, müşterinin LLM kredisine eklenmez. <b>Beklenen kâr</b> = net fiyat − depolama
-          maliyeti − beklenen LLM maliyeti. Örneğin mevcut $0.01/kredi oranında 20.000 LLM kredisi $200 max maliyettir.
+          <b>LLM max maliyeti</b> = spendable kredi × kredi USD maliyeti. Başlangıç fiyatlı ödeme planları ilk N ay
+          toplamı ve sonraki standart ay olarak ayrı satırlarda hesaplanır. <b>Depolama gideri</b> = ayrılan byte
+          kapasitesi × byte/ay tarifesi × fazın ayı; beklenen tüketim yüzdesinden etkilenmez. Varsayılan kapasite
+          tarifesi AWS S3 Standard Frankfurt&apos;tur; istek/retrieval/egress dahil değildir. Yanındaki kredi değeri yalnız
+          maliyet eşdeğeridir, müşterinin LLM kredisine eklenmez. <b>Beklenen kâr</b> = faz geliri − depolama gideri −
+          beklenen LLM maliyeti.
         </p>
       </CardContent>
     </Card>
