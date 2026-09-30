@@ -69,7 +69,7 @@ const chunksOf = (items, size = 100) => {
 };
 
 const ACTIVE_DELETE_JOB_KEY = 'tinnten.cms.inbox.activeDeleteJob';
-const PAGE_SIZE = 25;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500, 1000];
 
 // Cevapla/İlet için orijinal maili alıntılayan editör içeriği (HTML).
 const buildQuotedBody = (mail) => {
@@ -94,6 +94,7 @@ export default function InboxPage() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [error, setError] = useState('');
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [recipient, setRecipient] = useState('all');
@@ -120,11 +121,11 @@ export default function InboxPage() {
   const fetchPage = async (requestedPage = 1) => {
     setError('');
     const page = Math.max(Number(requestedPage) || 1, 1);
-    const offset = (page - 1) * PAGE_SIZE;
+    const offset = (page - 1) * pageSize;
     try {
       // preferCacheValue=false (varsayılan) → her çağrıda taze veri çeker (Yenile).
       const d = await loadInbox({
-        limit: PAGE_SIZE,
+        limit: pageSize,
         token: offset || undefined,
         recipient,
         read: readFilter,
@@ -149,7 +150,7 @@ export default function InboxPage() {
     const timer = window.setTimeout(() => fetchPage(1), query ? 300 : 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authorized, recipient, readFilter, query, sortKey, sortDir]);
+  }, [authorized, recipient, readFilter, query, sortKey, sortDir, pageSize]);
 
   // Sekme yenilense de kuyruktaki silme işinin durumunu izlemeye devam et.
   useEffect(() => {
@@ -223,7 +224,7 @@ export default function InboxPage() {
   const sorted = items;
 
   const unreadCount = items.filter((m) => !m.read).length;
-  const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+  const totalPages = Math.max(Math.ceil(total / pageSize), 1);
   const firstVisiblePage = Math.max(
     1,
     Math.min(currentPage - 2, Math.max(totalPages - 4, 1)),
@@ -553,11 +554,30 @@ export default function InboxPage() {
                   </TableBody>
                 </Table>
               </div>
-              {totalPages > 1 && (
+              {total > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-3">
-                  <span className="text-xs text-muted-foreground">
-                    {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, total)} / {total}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">
+                      {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, total)} / {total}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">Sayfa başı</span>
+                      <Select
+                        value={String(pageSize)}
+                        onValueChange={(value) => setPageSize(Number(value))}
+                        disabled={isFetching || actionBusy}
+                      >
+                        <SelectTrigger className="h-8 w-24">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAGE_SIZE_OPTIONS.map((size) => (
+                            <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       variant="outline"
