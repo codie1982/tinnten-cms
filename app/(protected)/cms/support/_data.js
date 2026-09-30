@@ -33,6 +33,26 @@ export const callbackStatusMeta = {
   no_answer: { label: 'Cevap Yok', variant: 'destructive' },
 };
 
+export const categoryMeta = {
+  demo: 'Demo talebi',
+  assistant: 'Yapay zekâ asistanı',
+  product: 'Ürün ve katalog',
+  billing: 'Ödeme ve faturalama',
+  workflow: 'Otomasyon ve iş akışı',
+  account: 'Hesap ve erişim',
+  other: 'Diğer',
+};
+
+export const contactPreferenceMeta = {
+  email: { label: 'E-posta', variant: 'info' },
+  phone: { label: 'Telefon', variant: 'warning' },
+};
+
+export const verificationMeta = {
+  verified: { label: 'Doğrulandı', variant: 'success' },
+  unverified: { label: 'Doğrulanmadı', variant: 'muted' },
+};
+
 /** Kapanış aktörü — kullanıcıya "kim kapattı" ayrımı gösterilir. */
 export const closedByMeta = {
   user: 'Müşteri onayladı',
@@ -83,8 +103,12 @@ export const formatDate = (value) => {
  * kuyruğunda görünür.)
  */
 export const requesterLabel = (ticket) => {
-  if (ticket?.isAnonymous) {
-    return ticket?.contact?.email || ticket?.contact?.name || 'Anonim';
-  }
-  return ticket?.contact?.name || ticket?.contact?.email || 'Kullanıcı';
+  if (ticket?.requester?.displayName) return ticket.requester.displayName;
+  if (ticket?.contact?.name) return ticket.contact.name;
+  return ticket?.requester?.type === 'guest' || ticket?.isAnonymous
+    ? 'Misafir kullanıcı'
+    : 'Kullanıcı';
 };
+
+export const requesterId = (ticket) =>
+  ticket?.requester?.userId || ticket?.userId || null;

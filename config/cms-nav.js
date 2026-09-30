@@ -228,7 +228,6 @@ export const CMS_NAV = [
     roles: [CMS_ROLES.SUPPORT],
     children: [
       { title: 'Talepler', path: '/cms/support/tickets', roles: [CMS_ROLES.SUPPORT] },
-      { title: 'Geri Arama Kuyruğu', path: '/cms/support/callbacks', roles: [CMS_ROLES.SUPPORT] },
     ],
   },
 ];

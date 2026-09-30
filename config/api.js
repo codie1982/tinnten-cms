@@ -528,9 +528,8 @@ export const ENDPOINTS = {
     cmsTicketReply: (id) => `/support/cms/tickets/${id}/reply`,
     cmsTicketStatus: (id) => `/support/cms/tickets/${id}/status`,
     cmsTicketAssign: (id) => `/support/cms/tickets/${id}/assign`,
-    cmsCallbacks: '/support/cms/callbacks',
-    cmsCallbackConfirm: (id) => `/support/cms/callbacks/${id}/confirm`,
-    cmsCallbackOutcome: (id) => `/support/cms/callbacks/${id}/outcome`,
+    cmsTicketContactAccess: (id) => `/support/cms/tickets/${id}/contact-access`,
+    cmsTicketCallback: (id) => `/support/cms/tickets/${id}/callback`,
   },
   // Partner Programı ön başvuruları. Backend
   // `requireAnyPermission("cms:editor", "cms:admin")` ile korur — ALL-OF olan

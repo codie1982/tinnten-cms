@@ -6,12 +6,17 @@ import {
   useGetSupportTicketQuery,
   useReplySupportTicketMutation,
   useUpdateSupportTicketStatusMutation,
+  useAccessSupportTicketContactMutation,
+  useUpdateSupportTicketCallbackMutation,
 } from '@/redux/services';
 import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Copy,
+  ExternalLink,
   Lock,
+  PhoneCall,
   Send,
 } from 'lucide-react';
 import { useSession } from 'next-auth/react';
@@ -28,12 +33,17 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState, SplitShell } from '@/components/layout/page-shell';
 import {
   agentStatusOptions,
+  callbackStatusMeta,
+  categoryMeta,
   closedByMeta,
+  contactPreferenceMeta,
   formatDate,
   metaOf,
   priorityMeta,
+  requesterId,
   requesterLabel,
   statusMeta,
+  verificationMeta,
 } from '../../_data';
 
 export default function SupportTicketDetailPage({ params }) {
@@ -54,6 +64,10 @@ export default function SupportTicketDetailPage({ params }) {
     useReplySupportTicketMutation();
   const [updateStatus, { isLoading: updatingStatus }] =
     useUpdateSupportTicketStatusMutation();
+  const [accessContact, { isLoading: accessingContact }] =
+    useAccessSupportTicketContactMutation();
+  const [updateCallback, { isLoading: updatingCallback }] =
+    useUpdateSupportTicketCallbackMutation();
 
   // ⚠️ Varsayılan YOK. Ajan her yanıtta bilinçli seçim yapmak zorunda:
   // sessiz bir varsayılan, iç notun müşteriye gitmesi riskini taşır.
@@ -61,6 +75,9 @@ export default function SupportTicketDetailPage({ params }) {
   const [body, setBody] = useState('');
   const [resolutionMessage, setResolutionMessage] = useState('');
   const [formError, setFormError] = useState('');
+  const [revealedContact, setRevealedContact] = useState(null);
+
+  const canRevealContact = canAccess(session?.roles ?? [], [CMS_ROLES.SUPPORT_PII]);
 
   const isTerminal = ['closed', 'cancelled'].includes(ticket?.status);
   const isInternal = visibility === 'internal';
@@ -133,6 +150,43 @@ export default function SupportTicketDetailPage({ params }) {
     }
   };
 
+  const handleContactAccess = async (action) => {
+    setFormError('');
+    try {
+      const contact = await accessContact({ id: ticketId, action }).unwrap();
+      setRevealedContact(contact);
+      if (action === 'copy') {
+        const text = [contact?.email, contact?.phone].filter(Boolean).join(' · ');
+        if (text) await navigator.clipboard.writeText(text);
+      }
+    } catch (err) {
+      setFormError(err?.data?.message || 'İletişim bilgisine erişilemedi.');
+    }
+  };
+
+  const handleCallback = async (status) => {
+    setFormError('');
+    const payload = { id: ticketId, status };
+    if (status === 'confirmed') {
+      const value = window.prompt('Kesin görüşme zamanı (YYYY-AA-GG SS:DD):');
+      if (!value) return;
+      const startsAt = new Date(value.replace(' ', 'T'));
+      if (Number.isNaN(startsAt.getTime())) {
+        setFormError('Geçersiz tarih/saat biçimi.');
+        return;
+      }
+      payload.startsAt = startsAt.toISOString();
+    }
+    if (['completed', 'no_answer', 'cancelled'].includes(status)) {
+      payload.outcome = window.prompt('Görüşme notu (isteğe bağlı):') || '';
+    }
+    try {
+      await updateCallback(payload).unwrap();
+    } catch (err) {
+      setFormError(err?.data?.message || 'Telefonla iletişim durumu güncellenemedi.');
+    }
+  };
+
   if (isLoading) {
     return (
       <RoleGuard allowedRoles={[CMS_ROLES.SUPPORT]}>
@@ -160,30 +214,98 @@ export default function SupportTicketDetailPage({ params }) {
   const st = metaOf(statusMeta, ticket.status);
   const pr = metaOf(priorityMeta, ticket.priority);
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
+  const ownerId = requesterId(ticket);
+  const contact = revealedContact || ticket.contact || {};
+  const verification = metaOf(verificationMeta, ticket.verification?.status);
+  const preference = metaOf(contactPreferenceMeta, ticket.contactPreference);
+  const callback = ticket.callbackPreference;
 
   const aside = (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Müşteri</CardTitle>
+          <CardTitle className="text-sm">Talep Sahibi</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <div className="flex items-center gap-2">
             <span className="font-medium">{requesterLabel(ticket)}</span>
-            {ticket.isAnonymous && (
+            {!ownerId && (
               <Badge variant="outline" className="text-[10px]">
-                Anonim
+                Misafir kullanıcı
               </Badge>
             )}
           </div>
-          {ticket.contact?.email && (
-            <p className="text-muted-foreground">{ticket.contact.email}</p>
-          )}
-          {ticket.contact?.phone && (
-            <p className="text-muted-foreground">{ticket.contact.phone}</p>
+          <DetailRow label="User ID" value={ownerId || 'Mevcut değil'} mono />
+          <DetailRow label="Hesap durumu" value={ownerId ? 'Hesaplı kullanıcı' : 'Misafir'} />
+          <DetailRow label="Eşleştirme" value={ticket.requester?.matchSource || 'Mevcut değil'} />
+          <DetailRow label="Talep kaynağı" value={ticket.source?.path || ticket.context?.routePattern || 'Mevcut değil'} />
+          {ownerId && (
+            <Button variant="outline" size="sm" className="mt-2 w-full" asChild>
+              <Link href={`/cms/users/${ownerId}`}>
+                <ExternalLink className="size-3.5" /> Kullanıcı profilini aç
+              </Link>
+            </Button>
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">İletişim ve Doğrulama</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant={preference.variant}>{preference.label}</Badge>
+            <Badge variant={verification.variant}>{verification.label}</Badge>
+          </div>
+          <DetailRow label="Yöntem" value={ticket.verification?.method || 'Mevcut değil'} />
+          <DetailRow label="E-posta" value={contact.email || 'Mevcut değil'} mono />
+          <DetailRow label="Telefon" value={contact.phone || 'Mevcut değil'} mono />
+          <DetailRow label="Doğrulama zamanı" value={formatDate(ticket.verification?.verifiedAt)} />
+          {contact.masked && (
+            <p className="text-[11px] text-muted-foreground">Standart destek rolünde iletişim bilgileri maskelenir.</p>
+          )}
+          {canRevealContact && (contact.email || contact.phone) && (
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" variant="outline" disabled={accessingContact} onClick={() => handleContactAccess('view')}>
+                Tam değeri göster
+              </Button>
+              <Button size="sm" variant="outline" disabled={accessingContact} onClick={() => handleContactAccess('copy')}>
+                <Copy className="size-3.5" /> Kopyala
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {ticket.contactPreference === 'phone' && callback && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm"><PhoneCall className="size-4" /> Telefonla İletişim</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <Badge variant={metaOf(callbackStatusMeta, callback.status).variant}>
+              {metaOf(callbackStatusMeta, callback.status).label}
+            </Badge>
+            <DetailRow label="Saat dilimi" value={callback.timezone || 'Mevcut değil'} />
+            <div>
+              <p className="text-xs text-muted-foreground">Tercih edilen aralıklar</p>
+              {callback.preferredWindows?.length ? callback.preferredWindows.map((window, index) => (
+                <p key={`${window.date}-${window.slotKey}-${index}`} className="mt-1 text-xs">{window.date} · {window.slotKey}</p>
+              )) : <p className="mt-1 text-xs">Mevcut değil</p>}
+            </div>
+            <DetailRow label="Kesin saat" value={formatDate(callback.confirmedSlot?.startsAt)} />
+            {callback.outcome && <DetailRow label="Görüşme notu" value={callback.outcome} />}
+            {!['completed', 'cancelled'].includes(callback.status) && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {callback.status === 'requested' && <Button size="sm" variant="outline" disabled={updatingCallback} onClick={() => handleCallback('confirmed')}>Saati onayla</Button>}
+                <Button size="sm" variant="outline" disabled={updatingCallback} onClick={() => handleCallback('completed')}>Tamamlandı</Button>
+                <Button size="sm" variant="ghost" disabled={updatingCallback} onClick={() => handleCallback('no_answer')}>Cevap yok</Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Kullanıcının bulunduğu ekran/kaynak — allowlist ile toplanır, ham
           istemci verisi değildir (backend Joi context şeması). */}
@@ -318,6 +440,52 @@ export default function SupportTicketDetailPage({ params }) {
               </AlertDescription>
             </Alert>
           )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Talep Özeti</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DetailRow label="Sistem başlığı" value={ticket.title || 'Mevcut değil'} />
+                <DetailRow label="Kategori" value={categoryMeta[ticket.category] || ticket.category || 'Mevcut değil'} />
+                <DetailRow label="Durum" value={st.label} />
+                <DetailRow label="Oluşturulma" value={formatDate(ticket.createdAt)} />
+              </div>
+              <Separator />
+              <div>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">Kategori yanıtları</p>
+                {ticket.categoryAnswers && Object.keys(ticket.categoryAnswers).length > 0 ? (
+                  <dl className="grid gap-2 sm:grid-cols-[180px_1fr]">
+                    {Object.entries(ticket.categoryAnswers).map(([key, value]) => (
+                      <div key={key} className="contents">
+                        <dt className="text-xs text-muted-foreground">{key}</dt>
+                        <dd className="text-sm">{String(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Mevcut değil (tarihsel kayıt)</p>
+                )}
+              </div>
+              <Separator />
+              <div>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">Kaynak ve UTM</p>
+                {ticket.source && Object.keys(ticket.source).length > 0 ? (
+                  <dl className="grid gap-2 sm:grid-cols-[180px_1fr]">
+                    {Object.entries(ticket.source).map(([key, value]) => (
+                      <div key={key} className="contents">
+                        <dt className="text-xs text-muted-foreground">{key}</dt>
+                        <dd className="break-all text-xs">{String(value || '—')}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Mevcut değil</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
@@ -504,5 +672,16 @@ export default function SupportTicketDetailPage({ params }) {
         </div>
       </SplitShell>
     </RoleGuard>
+  );
+}
+
+function DetailRow({ label, value, mono = false }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
+      <span className={cn('break-all text-right text-xs text-foreground', mono && 'font-mono')}>
+        {value || 'Mevcut değil'}
+      </span>
+    </div>
   );
 }

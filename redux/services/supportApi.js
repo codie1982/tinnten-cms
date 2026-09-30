@@ -4,8 +4,8 @@ import { ENDPOINTS } from '@/config/api';
 import { baseApi } from './baseApi';
 
 /**
- * Destek masası CMS servisi — talep kuyruğu, detay, yanıt/iç not, durum, atama
- * ve geri arama kuyruğu.
+ * Destek masası CMS servisi — tek talep kuyruğu, detay, yanıt/iç not, durum,
+ * atama ve talebin üzerindeki telefonla iletişim durumu.
  *
  * ⚠️ `transformResponse` ZORUNLU: backend her yanıtı `ApiResponse` ile
  * `{ status, message, data }` içine sarar. Yazılmazsa `data.items` daima
@@ -91,48 +91,29 @@ export const supportApi = baseApi.injectEndpoints({
         { type: 'SupportTicket', id: 'LIST' },
       ],
     }),
-
-    // ── Geri arama kuyruğu ──────────────────────────────────────────────────
-    getSupportCallbacks: build.query({
-      query: (params = {}) => ({ url: ENDPOINTS.support.cmsCallbacks, params }),
-      transformResponse: (res) => (res?.data ?? res)?.callbacks ?? [],
-      providesTags: (result) =>
-        Array.isArray(result)
-          ? [
-              ...result.map((c) => ({
-                type: 'SupportCallback',
-                id: c._id || c.id,
-              })),
-              { type: 'SupportCallback', id: 'LIST' },
-            ]
-          : [{ type: 'SupportCallback', id: 'LIST' }],
+    accessSupportTicketContact: build.mutation({
+      query: ({ id, action = 'view' }) => ({
+        url: ENDPOINTS.support.cmsTicketContactAccess(id),
+        method: 'POST',
+        body: { action },
+      }),
+      transformResponse: (res) => (res?.data ?? res)?.contact ?? res?.data ?? res,
     }),
 
-    confirmSupportCallback: build.mutation({
-      query: ({ id, startsAt, endsAt, note }) => ({
-        url: ENDPOINTS.support.cmsCallbackConfirm(id),
+    updateSupportTicketCallback: build.mutation({
+      query: ({ id, status, startsAt, endsAt, outcome }) => ({
+        url: ENDPOINTS.support.cmsTicketCallback(id),
         method: 'PATCH',
-        body: { startsAt, endsAt, note },
+        body: {
+          status,
+          ...(startsAt ? { startsAt } : {}),
+          ...(endsAt ? { endsAt } : {}),
+          ...(outcome ? { outcome } : {}),
+        },
       }),
       transformResponse: (res) => res?.data ?? res,
       invalidatesTags: (r, e, { id }) => [
-        { type: 'SupportCallback', id },
-        { type: 'SupportCallback', id: 'LIST' },
-      ],
-    }),
-
-    recordSupportCallbackOutcome: build.mutation({
-      query: ({ id, result, outcome }) => ({
-        url: ENDPOINTS.support.cmsCallbackOutcome(id),
-        method: 'PATCH',
-        body: { result, outcome },
-      }),
-      transformResponse: (res) => res?.data ?? res,
-      invalidatesTags: (r, e, { id }) => [
-        { type: 'SupportCallback', id },
-        { type: 'SupportCallback', id: 'LIST' },
-        // Görüşme tamamlandığında backend bağlı talebi `resolved` yapıyor —
-        // talep listesi de tazelenmeli.
+        { type: 'SupportTicket', id },
         { type: 'SupportTicket', id: 'LIST' },
       ],
     }),
@@ -146,7 +127,6 @@ export const {
   useReplySupportTicketMutation,
   useUpdateSupportTicketStatusMutation,
   useAssignSupportTicketMutation,
-  useGetSupportCallbacksQuery,
-  useConfirmSupportCallbackMutation,
-  useRecordSupportCallbackOutcomeMutation,
+  useAccessSupportTicketContactMutation,
+  useUpdateSupportTicketCallbackMutation,
 } = supportApi;

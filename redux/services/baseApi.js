@@ -130,7 +130,6 @@ export const baseApi = createApi({
     'SupportTicket',
     'PartnerApplication',
     'PartnerRelation',
-    'SupportCallback',
     'TutorialVideo',
     'SmsMessage',
   ],
