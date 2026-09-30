@@ -147,7 +147,7 @@ export const fetcherApi = baseApi.injectEndpoints({
 
     /* ── Raporlar & sağlık ── */
     getBlockedDomains: build.query({
-      query: () => ENDPOINTS.fetcher.blockedDomains,
+      query: (params = {}) => ({ url: ENDPOINTS.fetcher.blockedDomains, params }),
       transformResponse: (res) => res?.data ?? res,
       providesTags: [{ type: 'FetcherBlockedDomain', id: 'LIST' }],
     }),

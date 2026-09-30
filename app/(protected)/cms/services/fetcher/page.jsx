@@ -1115,13 +1115,23 @@ function BlockedDomainModal({ entry, initialDomain = '', onSubmit, onClose }) {
 }
 
 function BlockedDomainsSection({ authorized }) {
-  const { data, isFetching, isError, refetch } = useGetBlockedDomainsQuery(undefined, { skip: !authorized });
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [modal, setModal] = useState(null);
   const [createBlockedDomain] = useCreateBlockedDomainMutation();
   const [updateBlockedDomain] = useUpdateBlockedDomainMutation();
-  const all = data?.domains ?? [];
-  const domains = all.filter((entry) => entry.domain?.includes(search.trim().toLowerCase()));
+  const params = { page, limit: PAGE_SIZE };
+  if (search) params.search = search;
+  const { data, isFetching, isError, refetch } = useGetBlockedDomainsQuery(params, { skip: !authorized });
+  const domains = data?.domains ?? [];
+  const total = data?.total ?? 0;
+  const pageCount = data?.pageCount ?? Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = data?.page ?? page;
+  const submitSearch = () => {
+    setSearch(searchInput.trim());
+    setPage(1);
+  };
 
   return (
     <div className="space-y-4">
@@ -1131,8 +1141,16 @@ function BlockedDomainsSection({ authorized }) {
       </Alert>
       <Card>
         <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Kara listede ara…" className="min-w-[220px] flex-1" />
-          <span className="text-xs text-muted-foreground">{domains.length} / {data?.total ?? 0} kayıt</span>
+          <div className="flex min-w-[220px] flex-1 items-center gap-2">
+            <Input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitSearch(); }}
+              placeholder="Kara listede ara…"
+            />
+            <Button variant="outline" size="icon" onClick={submitSearch}><Search className="size-4" /></Button>
+          </div>
+          <span className="text-xs text-muted-foreground">{nfmt(total)} kayıt</span>
           <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}><RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} /></Button>
           <Button size="sm" onClick={() => setModal({})}><Plus className="size-4" /> Domain ekle</Button>
         </CardContent>
@@ -1141,7 +1159,7 @@ function BlockedDomainsSection({ authorized }) {
         <CardContent className="px-0 py-0">
           {isError ? (
             <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>Kara liste alınamadı.</AlertDescription></Alert></div>
-          ) : isFetching && all.length === 0 ? (
+          ) : isFetching && domains.length === 0 ? (
             <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
           ) : domains.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-14 text-center"><Ban className="size-6 text-muted-foreground" /><p className="font-semibold text-foreground">Kayıt yok</p></div>
@@ -1163,6 +1181,15 @@ function BlockedDomainsSection({ authorized }) {
           )}
         </CardContent>
       </Card>
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between gap-3 px-1">
+          <span className="text-sm text-muted-foreground">Sayfa {currentPage} / {pageCount}</span>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={currentPage <= 1 || isFetching} onClick={() => setPage((value) => Math.max(1, value - 1))}>Önceki</Button>
+            <Button variant="outline" size="sm" disabled={currentPage >= pageCount || isFetching} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Sonraki</Button>
+          </div>
+        </div>
+      )}
       {modal && <BlockedDomainModal entry={modal.entry} onClose={() => setModal(null)} onSubmit={(body) => (
         modal.entry
           ? updateBlockedDomain(body).unwrap()
