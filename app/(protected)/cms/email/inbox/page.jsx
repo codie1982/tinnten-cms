@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   Inbox, RefreshCw, Loader2, X, Mail, Reply, Forward, Search,
-  ArrowUpDown, ChevronUp, ChevronDown, CheckCheck, MailOpen,
+  ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CheckCheck, MailOpen,
   Archive, CloudDownload, CloudOff,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
@@ -69,6 +69,7 @@ const chunksOf = (items, size = 100) => {
 };
 
 const ACTIVE_DELETE_JOB_KEY = 'tinnten.cms.inbox.activeDeleteJob';
+const PAGE_SIZE = 25;
 
 // Cevapla/İlet için orijinal maili alıntılayan editör içeriği (HTML).
 const buildQuotedBody = (mail) => {
@@ -91,8 +92,8 @@ export default function InboxPage() {
 
   const [loadInbox, { isFetching }] = useLazyGetInboxQuery();
   const [items, setItems] = useState([]);
-  const [nextToken, setNextToken] = useState(null);
   const [total, setTotal] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [error, setError] = useState('');
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [recipient, setRecipient] = useState('all');
@@ -116,22 +117,24 @@ export default function InboxPage() {
     refetchOnMountOrArgChange: true,
   });
 
-  const fetchPage = async (token) => {
+  const fetchPage = async (requestedPage = 1) => {
     setError('');
+    const page = Math.max(Number(requestedPage) || 1, 1);
+    const offset = (page - 1) * PAGE_SIZE;
     try {
       // preferCacheValue=false (varsayılan) → her çağrıda taze veri çeker (Yenile).
       const d = await loadInbox({
-        limit: 25,
-        token: token || undefined,
+        limit: PAGE_SIZE,
+        token: offset || undefined,
         recipient,
         read: readFilter,
         query: query.trim() || undefined,
         sortKey,
         sortDir,
       }).unwrap();
-      setItems((prev) => (token ? [...prev, ...(d.items || [])] : d.items || []));
-      if (!token) setSelectedKeys([]);
-      setNextToken(d.nextToken || null);
+      setItems(d.items || []);
+      setSelectedKeys([]);
+      setCurrentPage(page);
       setTotal(Number(d.total) || 0);
       if (Array.isArray(d.recipients)) setRecipientOptions(d.recipients);
     } catch (e) {
@@ -143,7 +146,7 @@ export default function InboxPage() {
 
   useEffect(() => {
     if (!authorized) return undefined;
-    const timer = window.setTimeout(() => fetchPage(null), query ? 300 : 0);
+    const timer = window.setTimeout(() => fetchPage(1), query ? 300 : 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorized, recipient, readFilter, query, sortKey, sortDir]);
@@ -179,7 +182,7 @@ export default function InboxPage() {
     setActionBusy(false);
     setSelectedKeys([]);
     setDetailKey(null);
-    fetchPage(null);
+    fetchPage(1);
 
     if (deleteJob.status === 'failed') {
       setNotice('');
@@ -213,14 +216,22 @@ export default function InboxPage() {
   const refresh = () => {
     setActionError('');
     setNotice('');
-    setNextToken(null);
-    fetchPage(null);
+    fetchPage(currentPage);
   };
 
   // Filtreleme, sıralama ve sayfalama backend'de MongoDB üzerinden yapılır.
   const sorted = items;
 
   const unreadCount = items.filter((m) => !m.read).length;
+  const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+  const firstVisiblePage = Math.max(
+    1,
+    Math.min(currentPage - 2, Math.max(totalPages - 4, 1)),
+  );
+  const visiblePages = Array.from(
+    { length: Math.min(5, totalPages) },
+    (_, index) => firstVisiblePage + index,
+  );
 
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -312,7 +323,7 @@ export default function InboxPage() {
     setNotice('');
     try {
       const result = await syncInbox(100).unwrap();
-      await fetchPage(null);
+      await fetchPage(1);
       const pending = Number(result?.pending) || 0;
       setNotice(`${Number(result?.imported) || 0} mail DB'ye aktarıldı.${pending ? ` ${pending} mail sonraki senkronizasyonu bekliyor.` : ''}`);
     } catch (e) {
@@ -413,7 +424,7 @@ export default function InboxPage() {
               </SelectContent>
             </Select>
           </div>
-          <span className="text-xs text-muted-foreground">{items.length} / {total} mail · yüklenenlerde {unreadCount} okunmadı</span>
+          <span className="text-xs text-muted-foreground">{total} mail · Sayfa {currentPage} / {totalPages} · bu sayfada {unreadCount} okunmadı</span>
           {selectedKeys.length > 0 && (
             <div className="flex basis-full flex-wrap items-center gap-2 border-t border-border pt-3">
               <span className="me-auto text-sm font-medium">{selectedKeys.length} mail seçili</span>
@@ -451,7 +462,7 @@ export default function InboxPage() {
         <CardHeader>
           <CardTitle>Gelen Kutusu</CardTitle>
           <CardToolbar>
-            <Badge variant="muted">{items.length}{total ? ` / ${total}` : ''} yüklendi</Badge>
+            <Badge variant="muted">Sayfa {currentPage} / {totalPages} · {items.length} kayıt</Badge>
           </CardToolbar>
         </CardHeader>
         <CardContent className="px-0 py-0">
@@ -542,11 +553,44 @@ export default function InboxPage() {
                   </TableBody>
                 </Table>
               </div>
-              {nextToken && (
-                <div className="flex justify-center border-t border-border p-3">
-                  <Button variant="outline" size="sm" onClick={() => fetchPage(nextToken)} disabled={isFetching}>
-                    {isFetching ? <Loader2 className="size-4 animate-spin" /> : <Inbox className="size-4" />} Daha Fazla Yükle
-                  </Button>
+              {totalPages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-3">
+                  <span className="text-xs text-muted-foreground">
+                    {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, total)} / {total}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="Önceki sayfa"
+                      disabled={currentPage <= 1 || isFetching || actionBusy}
+                      onClick={() => fetchPage(currentPage - 1)}
+                    >
+                      <ChevronLeft className="size-4" /> Önceki
+                    </Button>
+                    {visiblePages.map((page) => (
+                      <Button
+                        key={page}
+                        variant={page === currentPage ? 'primary' : 'outline'}
+                        size="sm"
+                        className="min-w-9"
+                        aria-label={`${page}. sayfa`}
+                        disabled={isFetching || actionBusy}
+                        onClick={() => fetchPage(page)}
+                      >
+                        {page}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="Sonraki sayfa"
+                      disabled={currentPage >= totalPages || isFetching || actionBusy}
+                      onClick={() => fetchPage(currentPage + 1)}
+                    >
+                      Sonraki <ChevronRight className="size-4" />
+                    </Button>
+                  </div>
                 </div>
               )}
             </>
