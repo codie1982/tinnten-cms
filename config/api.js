@@ -489,6 +489,7 @@ export const ENDPOINTS = {
   inbox: {
     cmsList: '/inbox/cms',
     cmsDelete: '/inbox/cms',
+    cmsDeleteJob: (id) => `/inbox/cms/delete-jobs/${id}`,
     cmsSync: '/inbox/cms/sync',
     cmsDetail: '/inbox/cms/detail',
     cmsRead: '/inbox/cms/read',

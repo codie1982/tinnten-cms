@@ -104,6 +104,10 @@ export const emailApi = baseApi.injectEndpoints({
       }),
       transformResponse: (res) => res?.data ?? res,
     }),
+    getInboxDeleteJob: build.query({
+      query: (jobId) => ENDPOINTS.inbox.cmsDeleteJob(jobId),
+      transformResponse: (res) => res?.data ?? res,
+    }),
     syncInbox: build.mutation({
       query: (limit = 100) => ({
         url: ENDPOINTS.inbox.cmsSync,
@@ -226,6 +230,7 @@ export const {
   useGetInboxMailQuery,
   useSetInboxReadMutation,
   useDeleteInboxMutation,
+  useGetInboxDeleteJobQuery,
   useSyncInboxMutation,
   useGetSmsMessagesQuery,
   useGetSmsSenderQuery,

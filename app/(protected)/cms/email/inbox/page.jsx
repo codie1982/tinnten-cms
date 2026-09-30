@@ -26,6 +26,7 @@ import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { COMPOSE_PREFILL_KEY } from '@/lib/mail-compose-handoff';
 import {
   useDeleteInboxMutation,
+  useGetInboxDeleteJobQuery,
   useGetInboxMailQuery,
   useLazyGetInboxQuery,
   useSetInboxReadMutation,
@@ -67,6 +68,8 @@ const chunksOf = (items, size = 100) => {
   return chunks;
 };
 
+const ACTIVE_DELETE_JOB_KEY = 'tinnten.cms.inbox.activeDeleteJob';
+
 // Cevapla/İlet için orijinal maili alıntılayan editör içeriği (HTML).
 const buildQuotedBody = (mail) => {
   const meta = [
@@ -103,6 +106,15 @@ export default function InboxPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
+  const [deleteJobId, setDeleteJobId] = useState(null);
+  const {
+    data: deleteJob,
+    error: deleteJobStatusError,
+  } = useGetInboxDeleteJobQuery(deleteJobId, {
+    skip: !deleteJobId || !authorized,
+    pollingInterval: deleteJobId ? 1500 : 0,
+    refetchOnMountOrArgChange: true,
+  });
 
   const fetchPage = async (token) => {
     setError('');
@@ -135,6 +147,67 @@ export default function InboxPage() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorized, recipient, readFilter, query, sortKey, sortDir]);
+
+  // Sekme yenilense de kuyruktaki silme işinin durumunu izlemeye devam et.
+  useEffect(() => {
+    if (!authorized) return;
+    try {
+      const activeJobId = localStorage.getItem(ACTIVE_DELETE_JOB_KEY);
+      if (activeJobId) {
+        setDeleteJobId(activeJobId);
+        setActionBusy(true);
+      }
+    } catch { /* localStorage kullanılamıyorsa yalnız bu oturumda izle */ }
+  }, [authorized]);
+
+  useEffect(() => {
+    if (!deleteJobId || !deleteJob) return;
+    const requested = Number(deleteJob.requested) || 0;
+    const processed = Number(deleteJob.processed) || 0;
+    const deleted = Number(deleteJob.deleted) || 0;
+    const failedCount = Number(deleteJob.failedCount) || 0;
+    const terminal = ['completed', 'partial', 'failed'].includes(deleteJob.status);
+
+    if (!terminal) {
+      setActionBusy(true);
+      setNotice(`Silme kuyruğu işleniyor: ${processed} / ${requested} mail tamamlandı.`);
+      return;
+    }
+
+    try { localStorage.removeItem(ACTIVE_DELETE_JOB_KEY); } catch { /* yoksay */ }
+    setDeleteJobId(null);
+    setActionBusy(false);
+    setSelectedKeys([]);
+    setDetailKey(null);
+    fetchPage(null);
+
+    if (deleteJob.status === 'failed') {
+      setNotice('');
+      setActionError(deleteJob.error || `Silme işi ${processed} / ${requested} mailden sonra durdu.`);
+    } else if (failedCount > 0) {
+      setNotice('');
+      setActionError(`${deleted} mail silindi, ${failedCount} mail silinemedi.`);
+    } else {
+      setActionError('');
+      setNotice(deleteJob.deleteFromAws
+        ? `${deleted} mail sistemden ve AWS S3'ten kalıcı olarak silindi.`
+        : `${deleted} mail sistemden kaldırıldı; AWS kopyası korundu.`);
+    }
+    // fetchPage her render'da yeniden oluştuğu için yalnız iş durumu değişimlerini izle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteJobId, deleteJob]);
+
+  useEffect(() => {
+    if (!deleteJobId || !deleteJobStatusError) return;
+    if (deleteJobStatusError.status === 404) {
+      try { localStorage.removeItem(ACTIVE_DELETE_JOB_KEY); } catch { /* yoksay */ }
+      setDeleteJobId(null);
+      setActionBusy(false);
+      setActionError('Silme işi kaydı bulunamadı. Listeyi yenileyip tekrar deneyin.');
+      return;
+    }
+    setActionError('Silme kuyruğu durumu geçici olarak alınamadı; işlem sunucuda devam ediyor.');
+  }, [deleteJobId, deleteJobStatusError]);
 
   // Yenile: baştan (page 1) taze çek + sayfalamayı sıfırla.
   const refresh = () => {
@@ -221,37 +294,16 @@ export default function InboxPage() {
     setActionBusy(true);
     setActionError('');
     setNotice('');
-    const deletedKeys = [];
-    const failed = [];
-    let requestError = '';
-
-    for (const batch of chunksOf(keys)) {
-      try {
-        const result = await deleteInbox({ keys: batch, deleteFromAws }).unwrap();
-        deletedKeys.push(...(result?.deletedKeys || []));
-        failed.push(...(result?.failed || []));
-      } catch (e) {
-        requestError = e?.data?.message || e?.normalizedMessage || 'Mail silinemedi.';
-        break;
-      }
+    try {
+      const result = await deleteInbox({ keys, deleteFromAws }).unwrap();
+      if (!result?.jobId) throw new Error('Silme işi kimliği alınamadı.');
+      setDeleteJobId(result.jobId);
+      try { localStorage.setItem(ACTIVE_DELETE_JOB_KEY, result.jobId); } catch { /* yoksay */ }
+      setNotice(`${Number(result.requested) || keys.length} mail silme kuyruğuna alındı: 0 / ${Number(result.requested) || keys.length} tamamlandı.`);
+    } catch (e) {
+      setActionBusy(false);
+      setActionError(e?.data?.message || e?.normalizedMessage || e?.message || 'Silme işi kuyruğa alınamadı.');
     }
-
-    setItems((prev) => prev.filter((m) => !deletedKeys.includes(m.key)));
-    setSelectedKeys((prev) => prev.filter((key) => !deletedKeys.includes(key)));
-    setTotal((prev) => Math.max(0, prev - deletedKeys.length));
-    if (detailKey && deletedKeys.includes(detailKey)) setDetailKey(null);
-
-    if (requestError) {
-      const prefix = deletedKeys.length ? `${deletedKeys.length} mail silindi. ` : '';
-      setActionError(`${prefix}${requestError}`);
-    } else if (failed.length) {
-      setActionError(`${deletedKeys.length} mail silindi, ${failed.length} mail silinemedi.`);
-    } else {
-      setNotice(deleteFromAws
-        ? `${deletedKeys.length} mail sistemden ve AWS S3'ten kalıcı olarak silindi.`
-        : `${deletedKeys.length} mail sistemden kaldırıldı; AWS kopyası korundu.`);
-    }
-    setActionBusy(false);
   };
 
   const syncFromAws = async () => {
@@ -384,7 +436,7 @@ export default function InboxPage() {
 
       {notice && (
         <Alert className="mb-5">
-          <AlertTitle>İşlem tamamlandı</AlertTitle>
+          <AlertTitle>{deleteJobId ? 'İşlem kuyruğa alındı' : 'İşlem tamamlandı'}</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
