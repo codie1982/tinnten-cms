@@ -121,11 +121,12 @@ export default function InboxPage() {
   const fetchPage = async (requestedPage = 1) => {
     setError('');
     const page = Math.max(Number(requestedPage) || 1, 1);
-    const offset = (page - 1) * pageSize;
+    const requestedPageSize = pageSize;
+    const offset = (page - 1) * requestedPageSize;
     try {
       // preferCacheValue=false (varsayılan) → her çağrıda taze veri çeker (Yenile).
       const d = await loadInbox({
-        limit: pageSize,
+        limit: requestedPageSize,
         token: offset || undefined,
         recipient,
         read: readFilter,
@@ -133,10 +134,31 @@ export default function InboxPage() {
         sortKey,
         sortDir,
       }).unwrap();
-      setItems(d.items || []);
+      const responseItems = Array.isArray(d.items) ? d.items : [];
+      const responseTotal = Number(d.total) || 0;
+      const reportedLimit = Number(d.limit);
+      const inferredLimit = page === 1
+        && responseTotal > responseItems.length
+        && responseItems.length > 0
+        && responseItems.length < requestedPageSize
+        ? responseItems.length
+        : requestedPageSize;
+      const effectivePageSize = reportedLimit > 0 ? reportedLimit : inferredLimit;
+
+      // Eski veya yanlış yapılandırılmış bir API istenenden daha az kayıtla
+      // sayfalıyorsa sonraki sayfada kayıt atlamamak ve seçim sayısını doğru
+      // göstermek için arayüzü sunucunun efektif limitine indir.
+      if (effectivePageSize !== requestedPageSize && PAGE_SIZE_OPTIONS.includes(effectivePageSize)) {
+        setSelectedKeys([]);
+        setCurrentPage(1);
+        setPageSize(effectivePageSize);
+        return;
+      }
+
+      setItems(responseItems);
       setSelectedKeys([]);
       setCurrentPage(page);
-      setTotal(Number(d.total) || 0);
+      setTotal(responseTotal);
       if (Array.isArray(d.recipients)) setRecipientOptions(d.recipients);
     } catch (e) {
       setError(e?.data?.message || e?.normalizedMessage || 'Gelen kutusu yüklenemedi.');
