@@ -343,7 +343,11 @@ export default function InboxPage() {
               <SelectTrigger><SelectValue placeholder="Alıcıya göre" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tüm Alıcılar</SelectItem>
-                {recipientOptions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                {recipientOptions.map((item) => (
+                  <SelectItem key={item.email} value={item.email}>
+                    {item.email} ({item.count})
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
