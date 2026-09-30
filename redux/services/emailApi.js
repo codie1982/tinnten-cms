@@ -97,10 +97,18 @@ export const emailApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
     }),
     deleteInbox: build.mutation({
-      query: (keys) => ({
+      query: ({ keys, deleteFromAws }) => ({
         url: ENDPOINTS.inbox.cmsDelete,
         method: 'DELETE',
-        body: { keys },
+        body: { keys, deleteFromAws },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    syncInbox: build.mutation({
+      query: (limit = 100) => ({
+        url: ENDPOINTS.inbox.cmsSync,
+        method: 'POST',
+        body: { limit },
       }),
       transformResponse: (res) => res?.data ?? res,
     }),
@@ -218,6 +226,7 @@ export const {
   useGetInboxMailQuery,
   useSetInboxReadMutation,
   useDeleteInboxMutation,
+  useSyncInboxMutation,
   useGetSmsMessagesQuery,
   useGetSmsSenderQuery,
   useGetSmsRecipientsQuery,

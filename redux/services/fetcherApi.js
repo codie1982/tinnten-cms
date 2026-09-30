@@ -146,6 +146,21 @@ export const fetcherApi = baseApi.injectEndpoints({
     }),
 
     /* ── Raporlar & sağlık ── */
+    getBlockedDomains: build.query({
+      query: () => ENDPOINTS.fetcher.blockedDomains,
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: [{ type: 'FetcherBlockedDomain', id: 'LIST' }],
+    }),
+    createBlockedDomain: build.mutation({
+      query: (body) => ({ url: ENDPOINTS.fetcher.blockedDomains, method: 'POST', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'FetcherBlockedDomain', id: 'LIST' }],
+    }),
+    updateBlockedDomain: build.mutation({
+      query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.blockedDomain(domain), method: 'PATCH', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: [{ type: 'FetcherBlockedDomain', id: 'LIST' }],
+    }),
     getRestrictedDomains: build.query({
       query: () => ENDPOINTS.fetcher.restrictedDomains,
       transformResponse: (res) => res?.data ?? res, // { domains: [{ domain, robots, updatedAt }] }
@@ -299,6 +314,9 @@ export const {
   useUpdateFetcherSubscriptionMutation,
   useReindexFetcherSubscriptionMutation,
   useDeleteFetcherSubscriptionMutation,
+  useGetBlockedDomainsQuery,
+  useCreateBlockedDomainMutation,
+  useUpdateBlockedDomainMutation,
   useGetRestrictedDomainsQuery,
   useGetRabbitmqHealthQuery,
   useAddFetcherDomainMutation,

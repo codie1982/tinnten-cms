@@ -464,6 +464,8 @@ export const ENDPOINTS = {
     // Canlı hız kontrolü (scheduler tuning; Redis override + env varsayılanları)
     schedulerTuning: '/fetcher/scheduler/tuning',
     // Raporlar & sağlık
+    blockedDomains: '/fetcher/blocked-domains',
+    blockedDomain: (d) => `/fetcher/blocked-domains/${encodeURIComponent(d)}`,
     restrictedDomains: '/fetcher/reports/restricted-domains',
     rabbitmqHealth: '/fetcher/health/rabbitmq',
     // Scraping config + reset
@@ -487,6 +489,7 @@ export const ENDPOINTS = {
   inbox: {
     cmsList: '/inbox/cms',
     cmsDelete: '/inbox/cms',
+    cmsSync: '/inbox/cms/sync',
     cmsDetail: '/inbox/cms/detail',
     cmsRead: '/inbox/cms/read',
   },

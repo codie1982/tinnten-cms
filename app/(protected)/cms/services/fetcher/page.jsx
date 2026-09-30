@@ -50,6 +50,9 @@ import {
   useUpdateFetcherSubscriptionMutation,
   useReindexFetcherSubscriptionMutation,
   useDeleteFetcherSubscriptionMutation,
+  useGetBlockedDomainsQuery,
+  useCreateBlockedDomainMutation,
+  useUpdateBlockedDomainMutation,
   useGetRestrictedDomainsQuery,
   useGetRabbitmqHealthQuery,
   useAddFetcherDomainMutation,
@@ -219,12 +222,25 @@ function CompanyOwnerCell({ companyId, context }) {
 const SECTIONS = [
   { key: 'status', label: 'Genel Durum', icon: Activity, desc: 'Sistem & node özeti' },
   { key: 'domains', label: 'Domainler', icon: Globe, desc: 'Domain & scraping kontrolü' },
+  { key: 'blocked-domains', label: 'Kara Liste', icon: Ban, desc: 'Kalıcı domain engelleri' },
   { key: 'subscriptions', label: 'Abonelikler', icon: Rss, desc: 'Firma ↔ domain abonelik yönetimi' },
   { key: 'tuning', label: 'Hız Kontrolü', icon: Gauge, desc: 'Canlı crawl hızı & eşzamanlılık' },
   { key: 'logs', label: 'Crawl Logları', icon: ScrollText, desc: 'Tarama denemesi kayıtları' },
   { key: 'nodes', label: "Node'lar", icon: Server, desc: 'Scraper worker yönetimi' },
   { key: 'reports', label: 'Raporlar', icon: ShieldAlert, desc: 'Kısıtlı domainler & RabbitMQ' },
 ];
+
+const BLOCKED_DOMAIN_CATEGORIES = [
+  ['custom', 'Özel engel'],
+  ['adult', 'Yetişkin içerik'],
+  ['gambling', 'Kumar / bahis'],
+  ['marketplace', 'Pazaryeri'],
+  ['corporation', 'Büyük şirket / platform'],
+  ['foreign', 'Yabancı alan adı'],
+];
+
+const blockedCategoryLabel = (category) =>
+  BLOCKED_DOMAIN_CATEGORIES.find(([value]) => value === category)?.[1] || category || '—';
 
 /* ════════════ Genel Durum ════════════ */
 function StatusSection({ authorized }) {
@@ -1020,6 +1036,142 @@ function ResetModal({ domain, onConfirm, onClose }) {
   );
 }
 
+/* ════════════ Kara liste ════════════ */
+function BlockedDomainModal({ entry, initialDomain = '', onSubmit, onClose }) {
+  const editing = Boolean(entry?.id);
+  const [domain, setDomain] = useState(entry?.domain || initialDomain);
+  const [category, setCategory] = useState(entry?.category || 'custom');
+  const [note, setNote] = useState(entry?.note || '');
+  const [isActive, setIsActive] = useState(entry?.isActive !== false);
+  const [err, setErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!domain.trim()) return;
+    setErr(null); setSaving(true);
+    try {
+      await onSubmit({
+        domain: domain.trim(),
+        category,
+        note: note.trim(),
+        ...(editing ? { isActive } : {}),
+      });
+      onClose();
+    } catch (e) {
+      setErr(upstreamErr(e).error || 'Kara liste kaydı kaydedilemedi.');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm" onClick={onClose}>
+      <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <CardHeader>
+          <CardTitle>{editing ? 'Kara liste kaydını düzenle' : 'Kara listeye al'}</CardTitle>
+          <CardToolbar><Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button></CardToolbar>
+        </CardHeader>
+        <CardContent className="space-y-3 p-5">
+          {!editing && (
+            <Alert>
+              <AlertTitle>Yeni eklemeler engellenir</AlertTitle>
+              <AlertDescription>Bu işlem yeni domain eklemelerini anında reddeder. Mevcut crawl, abonelik ve içerik kayıtları otomatik silinmez; gerekiyorsa Domainler sekmesinden önce durdurup güvenli silme akışını kullanın.</AlertDescription>
+            </Alert>
+          )}
+          {err && <Alert variant="destructive"><AlertDescription>{err}</AlertDescription></Alert>}
+          <div className="space-y-1.5">
+            <label className="text-2sm font-medium">Domain</label>
+            <Input value={domain} disabled={editing} onChange={(e) => setDomain(e.target.value)} placeholder="ornek.com" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-2sm font-medium">Kategori</label>
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {BLOCKED_DOMAIN_CATEGORIES.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-2sm font-medium">Açıklama</label>
+            <textarea value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder="Neden engellendiğini yazın…"
+              className="min-h-24 w-full resize-y rounded-lg border border-border bg-muted/30 p-3 text-sm" />
+            <p className="text-right text-xs text-muted-foreground">{note.length}/500</p>
+          </div>
+          {editing && (
+            <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm">
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+              Aktif engel
+            </label>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>İptal</Button>
+            <Button size="sm" disabled={!domain.trim() || saving} onClick={submit}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Ban className="size-3.5" />} Kaydet
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function BlockedDomainsSection({ authorized }) {
+  const { data, isFetching, isError, refetch } = useGetBlockedDomainsQuery(undefined, { skip: !authorized });
+  const [search, setSearch] = useState('');
+  const [modal, setModal] = useState(null);
+  const [createBlockedDomain] = useCreateBlockedDomainMutation();
+  const [updateBlockedDomain] = useUpdateBlockedDomainMutation();
+  const all = data?.domains ?? [];
+  const domains = all.filter((entry) => entry.domain?.includes(search.trim().toLowerCase()));
+
+  return (
+    <div className="space-y-4">
+      <Alert>
+        <AlertTitle>Kara liste, kısıt raporu değildir</AlertTitle>
+        <AlertDescription>Buradaki kayıtlar yeni domain eklemelerini engelleyen kalıcı politikalardır. Raporlar sekmesindeki kısıtlı domainler ise robots.txt veya erişim sorunları nedeniyle Fetcher tarafından gözlemlenen kayıtlardır.</AlertDescription>
+      </Alert>
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Kara listede ara…" className="min-w-[220px] flex-1" />
+          <span className="text-xs text-muted-foreground">{domains.length} / {data?.total ?? 0} kayıt</span>
+          <Button variant="ghost" size="icon" onClick={refetch} disabled={isFetching}><RefreshCw className={isFetching ? 'size-4 animate-spin' : 'size-4'} /></Button>
+          <Button size="sm" onClick={() => setModal({})}><Plus className="size-4" /> Domain ekle</Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="px-0 py-0">
+          {isError ? (
+            <div className="p-4"><Alert variant="destructive"><AlertTitle>Yüklenemedi</AlertTitle><AlertDescription>Kara liste alınamadı.</AlertDescription></Alert></div>
+          ) : isFetching && all.length === 0 ? (
+            <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
+          ) : domains.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-14 text-center"><Ban className="size-6 text-muted-foreground" /><p className="font-semibold text-foreground">Kayıt yok</p></div>
+          ) : (
+            <div className="overflow-x-auto"><Table>
+              <TableHeader><TableRow><TableHead>Domain</TableHead><TableHead>Durum</TableHead><TableHead>Kategori</TableHead><TableHead>Açıklama</TableHead><TableHead>Kaynak</TableHead><TableHead>Güncelleme</TableHead><TableHead className="text-right">İşlem</TableHead></TableRow></TableHeader>
+              <TableBody>{domains.map((entry) => (
+                <TableRow key={entry.domain}>
+                  <TableCell className="font-medium text-foreground">{entry.domain}</TableCell>
+                  <TableCell>{entry.effectiveAction === 'block' ? <Badge variant="destructive">Engelli</Badge> : entry.effectiveAction === 'allow' ? <Badge variant="warning">İzin istisnası</Badge> : <Badge variant="muted">Pasif</Badge>}</TableCell>
+                  <TableCell><Badge variant="muted">{blockedCategoryLabel(entry.category)}</Badge></TableCell>
+                  <TableCell className="max-w-[360px] whitespace-normal text-sm text-muted-foreground">{entry.note || (entry.builtin ? 'Kodla gelen standart politika.' : '—')}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{entry.source}{entry.builtin ? ' · sabit' : ''}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTr(entry.updatedAt || entry.createdAt)}</TableCell>
+                  <TableCell className="text-right">{entry.id ? <Button variant="ghost" size="icon" className="size-7" title="Düzenle" onClick={() => setModal({ entry })}><Pencil className="size-3.5" /></Button> : <span className="text-xs text-muted-foreground">Sabit</span>}</TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table></div>
+          )}
+        </CardContent>
+      </Card>
+      {modal && <BlockedDomainModal entry={modal.entry} onClose={() => setModal(null)} onSubmit={(body) => (
+        modal.entry
+          ? updateBlockedDomain(body).unwrap()
+          : createBlockedDomain(body).unwrap()
+      )} />}
+    </div>
+  );
+}
+
 /* ════════════ Domainler ════════════ */
 function DomainsSection({ authorized }) {
   const [status, setStatus] = useState('all');
@@ -1060,6 +1212,7 @@ function DomainsSection({ authorized }) {
   const [busy, setBusy] = useState(null); // `${domain}:${action}`
 
   const [addDomain] = useAddFetcherDomainMutation();
+  const [createBlockedDomain] = useCreateBlockedDomainMutation();
   const [updateDomain] = useUpdateFetcherDomainMutation();
   const [deleteDomain] = useDeleteFetcherDomainMutation();
   const [verifyDomain] = useVerifyFetcherDomainMutation();
@@ -1239,6 +1392,9 @@ function DomainsSection({ authorized }) {
                           <Button variant="ghost" size="icon" className="size-7" title="Ham scraping config (JSON)" onClick={() => setModal({ type: 'config', domain: d })}>
                             <SlidersHorizontal className="size-3.5" />
                           </Button>
+                          <Button variant="ghost" size="icon" className="size-7" title="Kara listeye al" onClick={() => setModal({ type: 'block', domain: d })}>
+                            <Ban className="size-3.5 text-destructive" />
+                          </Button>
                           <Button variant="ghost" size="icon" className="size-7" title="Kalıcı sil" onClick={() => setModal({ type: 'delete', domain: d })}>
                             <Trash2 className="size-3.5 text-destructive" />
                           </Button>
@@ -1269,6 +1425,7 @@ function DomainsSection({ authorized }) {
       {modal?.type === 'add' && <DomainFormModal mode="add" onSubmit={(body) => addDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'edit' && <DomainFormModal mode="edit" domain={modal.domain} onSubmit={(body) => updateDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'verify' && <VerifyDomainModal domain={modal.domain} onSubmit={(body) => verifyDomain(body).unwrap()} onClose={() => setModal(null)} />}
+      {modal?.type === 'block' && <BlockedDomainModal initialDomain={modal.domain.domain} onSubmit={(body) => createBlockedDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'delete' && <DeleteDomainModal domain={modal.domain} onConfirm={(args) => deleteDomain(args).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'config' && <ScrapingConfigModal domain={modal.domain} onReset={(d) => setModal({ type: 'reset', domain: d })} onClose={() => setModal(null)} />}
       {modal?.type === 'reset' && <ResetModal domain={modal.domain} onConfirm={(payload) => resetScraping(payload).unwrap()} onClose={() => setModal(null)} />}
@@ -2465,6 +2622,7 @@ function FetcherServicePageInner() {
         <div>
           {section === 'status' && <StatusSection authorized={authorized} />}
           {section === 'domains' && <DomainsSection authorized={authorized} />}
+          {section === 'blocked-domains' && <BlockedDomainsSection authorized={authorized} />}
           {section === 'subscriptions' && <SubscriptionsSection authorized={authorized} />}
           {section === 'tuning' && <TuningSection authorized={authorized} />}
           {section === 'logs' && <LogsSection authorized={authorized} />}
