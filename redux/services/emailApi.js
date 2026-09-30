@@ -89,7 +89,19 @@ export const emailApi = baseApi.injectEndpoints({
       transformResponse: (res) => res?.data ?? res,
     }),
     setInboxRead: build.mutation({
-      query: ({ key, read }) => ({ url: ENDPOINTS.inbox.cmsRead, method: 'PATCH', params: { key, read } }),
+      query: ({ key, keys, read }) => ({
+        url: ENDPOINTS.inbox.cmsRead,
+        method: 'PATCH',
+        body: { key, keys, read },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+    }),
+    deleteInbox: build.mutation({
+      query: (keys) => ({
+        url: ENDPOINTS.inbox.cmsDelete,
+        method: 'DELETE',
+        body: { keys },
+      }),
       transformResponse: (res) => res?.data ?? res,
     }),
 
@@ -205,6 +217,7 @@ export const {
   useLazyGetInboxQuery,
   useGetInboxMailQuery,
   useSetInboxReadMutation,
+  useDeleteInboxMutation,
   useGetSmsMessagesQuery,
   useGetSmsSenderQuery,
   useGetSmsRecipientsQuery,
