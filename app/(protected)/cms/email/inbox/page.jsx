@@ -360,9 +360,9 @@ export default function InboxPage() {
     setActionError('');
     setNotice('');
     try {
-      // Sync endpoint'i tek çağrıda en fazla 100 mail işler. Kalan kayıtları
+      // Sync endpoint'i tek çağrıda en fazla 500 mail işler. Kalan kayıtları
       // kullanıcıdan tekrar tekrar butona basmasını istemeden tüket.
-      const batchLimit = 100;
+      const batchLimit = 500;
       let result = await syncInbox(batchLimit).unwrap();
       let imported = Number(result?.imported) || 0;
       let pending = Number(result?.pending) || 0;
