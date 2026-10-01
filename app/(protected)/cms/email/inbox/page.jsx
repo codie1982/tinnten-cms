@@ -360,10 +360,26 @@ export default function InboxPage() {
     setActionError('');
     setNotice('');
     try {
-      const result = await syncInbox(100).unwrap();
+      // Sync endpoint'i tek çağrıda en fazla 100 mail işler. Kalan kayıtları
+      // kullanıcıdan tekrar tekrar butona basmasını istemeden tüket.
+      const batchLimit = 100;
+      let result = await syncInbox(batchLimit).unwrap();
+      let imported = Number(result?.imported) || 0;
+      let pending = Number(result?.pending) || 0;
+
+      while (pending > 0 && imported > 0) {
+        result = await syncInbox(batchLimit).unwrap();
+        const batchImported = Number(result?.imported) || 0;
+        imported += batchImported;
+        pending = Number(result?.pending) || 0;
+
+        // API ilerleme bildirmiyorsa sonsuz döngüye girme; kullanıcıya kalan
+        // sayıyı gösterip bir sonraki denemeye bırak.
+        if (batchImported === 0) break;
+      }
+
       await fetchPage(1);
-      const pending = Number(result?.pending) || 0;
-      setNotice(`${Number(result?.imported) || 0} mail DB'ye aktarıldı.${pending ? ` ${pending} mail sonraki senkronizasyonu bekliyor.` : ''}`);
+      setNotice(`${imported} mail DB'ye aktarıldı.${pending ? ` ${pending} mail sonraki senkronizasyonu bekliyor.` : ''}`);
     } catch (e) {
       setActionError(e?.data?.message || e?.normalizedMessage || 'AWS senkronizasyonu tamamlanamadı.');
     } finally {
