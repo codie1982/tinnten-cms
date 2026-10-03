@@ -1,0 +1,14 @@
+{
+  "modelType": "Model tipi",
+  "types": {
+    "text": "Metin / sohbet",
+    "decision": "Karar / Jev",
+    "vision": "Görsel anlama",
+    "image_generation": "Resim üretimi",
+    "video_generation": "Video üretimi"
+  },
+  "typesHelp": "Model tipi API yeteneğini, roller ise asistan içindeki kullanım amacını belirtir. Görsel anlama, resim üretimiyle aynı şey değildir.",
+  "mediaPending": "Bu katalogdan asistana resim/video üretim modeli atama henüz etkin değildir. Tip tanımı üretim servisini veya medya tarifesini açmaz.",
+  "decisionHelp": "Jev, Vercel değerlendirme API’sini kullanır; sohbet modeli değildir. Karar rolü ve Tinnten yönetimli bağlantısı ile çalışır.",
+  "unknownType": "Tip bilinmiyor"
+}

@@ -19,3 +19,14 @@ Kontrol: `node scripts/check-ai-catalog.mjs` sözleşmeyi ve yeni JSX/import
 dosyalarını ESLint ile kontrol eder. Bu tarayıcı/e2e testi değildir.
 Canlı testte API ve auth yalnız ayrı test ortamına ayarlanmalıdır; production
 veya varsayılan localhost:5001'in test olduğu varsayılmamalıdır.
+
+Model tipi ayrı metadatadır: text, decision, vision, image_generation ve
+video_generation. Formda role seçenekleri bu tipe göre daralır. Eski kayıtlarda
+tip rollerden çıkarılır; geçmiş snapshotlar değişmez. Jev decision tipi,
+vercel sağlayıcısı, typesafe-ai/jev API kimliği ve tinnten bağlantısı ile
+tanımlanır; vercel ayrıca bir standart BYOK bağlantı türü değildir.
+
+V10 ve V20 asistanlarında decision rolü ayrı seçilebilir. Resim/video katalog
+tiplerinin tanımlı olması asistan atamasını veya üretim servislerini etkinleştirmez;
+henüz katalog video modeli ve medya fiyatlandırma/üretim entegrasyonu yoktur.
+CMS yazma ve yayın kapıları bu değişiklikle açılmaz.
