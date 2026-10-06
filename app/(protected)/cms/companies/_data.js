@@ -21,6 +21,25 @@ export const companyTypeMeta = {
 };
 
 /**
+ * Liste ekranındaki kullanıcı-dostu hesap tipi ekseni.
+ *
+ * Backend eski kayıtlarla uyumluluk için `corporate` ve `limited` değerlerini
+ * ayrı saklamaya devam eder. Yeni onboarding ise bunları tek bir "Ticari"
+ * seçeneğinde toplar; liste de aynı sözleşmeyi gösterir.
+ */
+export const companyTypeGroupMeta = {
+  individual: { label: 'Bireysel', variant: 'muted' },
+  commercial: { label: 'Ticari', variant: 'primary' },
+};
+
+export const resolveCompanyTypeGroup = (companyType) => {
+  if (companyType === 'individual') return 'individual';
+  if (companyType === 'corporate' || companyType === 'limited')
+    return 'commercial';
+  return null;
+};
+
+/**
  * İş modu (businessMode) — backend `constants/businessModes.js` ile BİREBİR
  * aynı olmalı. `service` canonical değil, taşınmamış eski kayıtların storage
  * değeridir; yeni firma bu değeri ALMAZ ama listede görünebilir.
@@ -33,6 +52,20 @@ export const businessModeMeta = {
   appointment: { label: 'Randevu', variant: 'secondary' },
   content: { label: 'Blog / İçerik', variant: 'outline' },
   service: { label: 'Hizmet (eski)', variant: 'muted' },
+};
+
+/** Çoklu mod alanını okur; eski tekil kayıtlarda `businessMode`a geri düşer. */
+export const resolveCompanyBusinessModes = (company) => {
+  const storedModes =
+    Array.isArray(company?.businessModes) && company.businessModes.length > 0
+      ? company.businessModes
+      : company?.businessMode
+        ? [company.businessMode]
+        : [];
+
+  return [
+    ...new Set(storedModes.filter((mode) => typeof mode === 'string' && mode)),
+  ];
 };
 
 /**
@@ -81,10 +114,9 @@ export const businessModeOptions = [
 ];
 
 export const companyTypeOptions = [
-  { value: 'all', label: 'Firma Tipi' },
+  { value: 'all', label: 'Tüm Hesap Tipleri' },
   { value: 'individual', label: 'Bireysel' },
-  { value: 'corporate', label: 'Kurumsal' },
-  { value: 'limited', label: 'Limited' },
+  { value: 'commercial', label: 'Ticari' },
 ];
 
 /** `poc` değerleri string gönderilir — backend `req.query.poc === "true"` karşılaştırır. */

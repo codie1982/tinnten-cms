@@ -23,8 +23,9 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import { useGetCompaniesQuery } from '@/redux/services';
 import {
-  statusMeta, companyTypeMeta, businessModeMeta, pocMeta, localeMeta,
+  statusMeta, companyTypeGroupMeta, businessModeMeta, pocMeta, localeMeta,
   statusOptions, businessModeOptions, companyTypeOptions, pocOptions, localeOptions,
+  resolveCompanyTypeGroup, resolveCompanyBusinessModes,
 } from '../_data';
 
 const PAGE_SIZE = 10;
@@ -61,7 +62,9 @@ export default function CmsCompaniesListPage() {
       query: submittedSearch || undefined,
       status: statusFilter === 'all' ? undefined : statusFilter,
       businessMode: modeFilter === 'all' ? undefined : modeFilter,
-      companyType: typeFilter === 'all' ? undefined : typeFilter,
+      // Yeni UI ekseni iki gruptur: individual | commercial. Backend ticari
+      // grubu eski `corporate` + `limited` storage değerlerine genişletir.
+      companyTypeGroup: typeFilter === 'all' ? undefined : typeFilter,
       // 'true' | 'false' string olarak gider — backend metin karşılaştırır.
       poc: pocFilter === 'all' ? undefined : pocFilter,
       // Dil firmada değil asistanda; backend asistans.locale → firma id'leri çevirir.
@@ -127,19 +130,21 @@ export default function CmsCompaniesListPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="w-40">
-            <Select value={modeFilter} onValueChange={setModeFilter}>
-              <SelectTrigger><SelectValue placeholder="Mod" /></SelectTrigger>
+          <div className="flex min-w-44 flex-col gap-1">
+            <span className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Hesap tipi</span>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger><SelectValue placeholder="Hesap tipi" /></SelectTrigger>
               <SelectContent>
-                {businessModeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                {companyTypeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          <div className="w-40">
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger><SelectValue placeholder="Tip" /></SelectTrigger>
+          <div className="flex min-w-44 flex-col gap-1">
+            <span className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Çalışma modu</span>
+            <Select value={modeFilter} onValueChange={setModeFilter}>
+              <SelectTrigger><SelectValue placeholder="Çalışma modu" /></SelectTrigger>
               <SelectContent>
-                {companyTypeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                {businessModeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -205,9 +210,9 @@ export default function CmsCompaniesListPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Firma</TableHead>
-                      <TableHead>Mod</TableHead>
+                      <TableHead>Hesap Tipi</TableHead>
+                      <TableHead>Çalışma Modu</TableHead>
                       <TableHead>Dil</TableHead>
-                      <TableHead>Tip</TableHead>
                       <TableHead>Durum</TableHead>
                       <TableHead>Oluşturulma</TableHead>
                     </TableRow>
@@ -215,8 +220,9 @@ export default function CmsCompaniesListPage() {
                   <TableBody>
                     {companies.map((c) => {
                       const s = statusMeta[c.status];
-                      const mode = businessModeMeta[c.businessMode];
-                      const type = companyTypeMeta[c.companyType];
+                      const modes = resolveCompanyBusinessModes(c);
+                      const companyTypeGroup = resolveCompanyTypeGroup(c.companyType);
+                      const type = companyTypeGroupMeta[companyTypeGroup];
                       const locales = Array.isArray(c.locales) ? c.locales : [];
                       return (
                         <TableRow key={c.id}>
@@ -238,7 +244,29 @@ export default function CmsCompaniesListPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {mode ? <Badge variant={mode.variant}>{mode.label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
+                            {type ? (
+                              <Badge variant={type.variant}>{type.label}</Badge>
+                            ) : c.companyType ? (
+                              <Badge variant="outline">{c.companyType}</Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {modes.length ? (
+                              <div className="flex flex-wrap gap-1">
+                                {modes.map((modeValue) => {
+                                  const mode = businessModeMeta[modeValue];
+                                  return (
+                                    <Badge key={modeValue} variant={mode?.variant ?? 'outline'}>
+                                      {mode?.label ?? modeValue}
+                                    </Badge>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             {/* Diller asistanlardan gelir — asistanı olmayan firmada boş. */}
@@ -251,9 +279,6 @@ export default function CmsCompaniesListPage() {
                             ) : (
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
-                          </TableCell>
-                          <TableCell>
-                            {type ? <Badge variant={type.variant}>{type.label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
                           </TableCell>
                           <TableCell>
                             <Badge variant={s?.variant}>{s?.label ?? c.status}</Badge>

@@ -10,6 +10,7 @@
     "start": "next start",
     "build:staging": "cp .env.staging .env.local && next build",
     "test:package-quota": "node 'app/(protected)/cms/settings/packages/[id]/quota-utils.test.mjs'",
+    "test:company-list": "node --test 'app/(protected)/cms/companies/company-list-data.test.mjs'",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
