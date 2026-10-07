@@ -1,0 +1,31 @@
+{
+  "version": "business-modes.v2",
+  "canonicalOrder": ["ecommerce", "direct", "quote", "reservation", "appointment", "standard"],
+  "legacy": { "aliases": { "content": "standard" }, "expansions": { "service": ["direct", "quote", "reservation", "appointment"] } },
+  "modes": [
+    { "id": "standard", "labelKey": "standard", "defaultLabel": "Standart", "catalogType": null, "serviceType": null, "capabilities": ["assistant.core", "knowledge", "research.deep"], "assistantTools": ["DefaultTool", "ResearcherTool"] },
+    { "id": "ecommerce", "labelKey": "ecommerce", "defaultLabel": "E-ticaret", "catalogType": "product", "serviceType": null, "capabilities": ["assistant.core", "knowledge", "catalog.product", "commerce.orders", "commerce.shipping"], "assistantTools": ["DefaultTool", "ProductSearchTool", "ProductDetailTool"] },
+    { "id": "direct", "labelKey": "direct", "defaultLabel": "Satış", "catalogType": "services", "serviceType": "direct", "capabilities": ["assistant.core", "knowledge", "catalog.service", "commerce.orders"], "assistantTools": ["DefaultTool", "ServicesSearchTool", "ServicesDetailTool"] },
+    { "id": "quote", "labelKey": "quote", "defaultLabel": "Teklif", "catalogType": "services", "serviceType": "quote", "capabilities": ["assistant.core", "knowledge", "catalog.service", "commerce.offers"], "assistantTools": ["DefaultTool", "ServicesSearchTool", "ServicesDetailTool", "OfferRequestTool"] },
+    { "id": "reservation", "labelKey": "reservation", "defaultLabel": "Rezervasyon", "catalogType": "services", "serviceType": "rental", "capabilities": ["assistant.core", "knowledge", "catalog.service", "calendar.reservation"], "assistantTools": ["DefaultTool", "ServicesSearchTool", "ServicesDetailTool", "BookingSearchTool"] },
+    { "id": "appointment", "labelKey": "appointment", "defaultLabel": "Randevu", "catalogType": "services", "serviceType": "slot", "capabilities": ["assistant.core", "knowledge", "catalog.service", "calendar.appointment"], "assistantTools": ["DefaultTool", "ServicesSearchTool", "ServicesDetailTool", "AppointmentSearchTool"] }
+  ],
+  "onboarding": { "goals": [
+    { "id": "other", "accountTypes": ["personal", "commercial"], "availability": "enabled", "strategy": "fixed", "businessModes": ["standard"] },
+    { "id": "personal_productivity", "accountTypes": ["personal"], "availability": "enabled", "strategy": "fixed", "businessModes": ["standard"] },
+    { "id": "content_creation", "accountTypes": ["personal"], "availability": "enabled", "strategy": "fixed", "businessModes": ["standard"] },
+    { "id": "customer_service", "accountTypes": ["commercial"], "availability": "enabled", "strategy": "nested", "branches": [{ "id": "ecommerce", "businessModes": ["ecommerce"] }, { "id": "service", "children": [{ "id": "direct", "businessModes": ["direct"] }, { "id": "quote", "businessModes": ["quote"] }, { "id": "reservation", "businessModes": ["reservation"] }, { "id": "appointment", "businessModes": ["appointment"] }] }] },
+    { "id": "internal_processes", "accountTypes": ["commercial"], "availability": "enabled", "strategy": "fixed", "businessModes": ["standard"] },
+    { "id": "image_video_creation", "accountTypes": ["personal"], "availability": "planned", "strategy": "planned", "plannedModeKey": "image_video_creation" },
+    { "id": "learning_research", "accountTypes": ["personal"], "availability": "planned", "strategy": "planned", "plannedModeKey": "learning_research" },
+    { "id": "app_creation", "accountTypes": ["personal"], "availability": "planned", "strategy": "planned", "plannedModeKey": "app_creation" },
+    { "id": "child_safe_ai", "accountTypes": ["personal"], "availability": "planned", "strategy": "planned", "plannedModeKey": "child_safe_ai" },
+    { "id": "customer_ai", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "customer_ai" },
+    { "id": "sales_acquisition", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "sales_acquisition" },
+    { "id": "marketing_content", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "marketing_content" },
+    { "id": "analysis_documents", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "analysis_documents" },
+    { "id": "team_knowledge", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "team_knowledge" },
+    { "id": "recruiting_hr", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "recruiting_hr" },
+    { "id": "business_automation", "accountTypes": ["commercial"], "availability": "planned", "strategy": "planned", "plannedModeKey": "business_automation" }
+  ] }
+}

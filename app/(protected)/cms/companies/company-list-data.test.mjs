@@ -22,9 +22,18 @@ test('çoklu çalışma modlarını tekilleştirir', () => {
   );
 });
 
-test('eski kayıtlarda tekil çalışma moduna geri düşer', () => {
+test('eski content kaydını standard olarak okur', () => {
   assert.deepEqual(resolveCompanyBusinessModes({ businessMode: 'content' }), [
-    'content',
+    'standard',
   ]);
   assert.deepEqual(resolveCompanyBusinessModes({}), []);
+});
+
+test('legacy service hizmet ailesine genişler', () => {
+  assert.deepEqual(resolveCompanyBusinessModes({ businessMode: 'service' }), [
+    'direct',
+    'quote',
+    'reservation',
+    'appointment',
+  ]);
 });

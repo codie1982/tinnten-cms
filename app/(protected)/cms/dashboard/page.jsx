@@ -18,7 +18,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { CMS_ROLES } from '@/lib/roles';
-import { useGetDashboardStatsQuery } from '@/redux/services';
+import { useGetBusinessModesQuery, useGetDashboardStatsQuery } from '@/redux/services';
+import {
+  resolveBusinessModeMeta,
+  resolveCompanyBusinessModes,
+} from '../companies/_data';
 
 /* ─── yardımcılar ─── */
 function fmtNumber(n) {
@@ -63,6 +67,10 @@ export default function DashboardPage() {
   const { data: stats, isLoading, isFetching, error } = useGetDashboardStatsQuery(undefined, {
     skip: status !== 'authenticated',
   });
+  const { data: businessModeContract } = useGetBusinessModesQuery(undefined, {
+    skip: status !== 'authenticated',
+  });
+  const businessModeMeta = resolveBusinessModeMeta(businessModeContract);
 
   // Session yüklenirken de skeleton göster
   const showSkeleton = status === 'loading' || isLoading;
@@ -184,8 +192,12 @@ export default function DashboardPage() {
                     <Avatar name={c.name} size="sm" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
-                      {c.businessMode && (
-                        <span className="text-xs text-muted-foreground">{c.businessMode === 'service' ? 'Hizmet' : 'E-ticaret'}</span>
+                      {resolveCompanyBusinessModes(c).length > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          {resolveCompanyBusinessModes(c)
+                            .map((mode) => businessModeMeta[mode]?.label || mode)
+                            .join(', ')}
+                        </span>
                       )}
                     </div>
                     <span className="whitespace-nowrap text-xs text-muted-foreground">{timeAgo(c.createdAt)}</span>

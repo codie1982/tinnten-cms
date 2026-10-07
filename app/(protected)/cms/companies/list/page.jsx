@@ -21,10 +21,11 @@ import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
-import { useGetCompaniesQuery } from '@/redux/services';
+import { useGetBusinessModesQuery, useGetCompaniesQuery } from '@/redux/services';
 import {
-  statusMeta, companyTypeGroupMeta, businessModeMeta, pocMeta, localeMeta,
-  statusOptions, businessModeOptions, companyTypeOptions, pocOptions, localeOptions,
+  statusMeta, companyTypeGroupMeta, pocMeta, localeMeta,
+  statusOptions, companyTypeOptions, pocOptions, localeOptions,
+  resolveBusinessModeMeta, resolveBusinessModeOptions,
   resolveCompanyTypeGroup, resolveCompanyBusinessModes,
 } from '../_data';
 
@@ -49,6 +50,11 @@ export default function CmsCompaniesListPage() {
   const [pocFilter, setPocFilter] = useState('all');
   const [localeFilter, setLocaleFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const { data: businessModeContract } = useGetBusinessModesQuery(undefined, {
+    skip: !authorized,
+  });
+  const businessModeMeta = resolveBusinessModeMeta(businessModeContract);
+  const businessModeOptions = resolveBusinessModeOptions(businessModeContract);
 
   // Filtre/arama değişince ilk sayfaya dön
   useEffect(() => {

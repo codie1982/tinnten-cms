@@ -6,6 +6,10 @@ import { ENDPOINTS } from '@/config/api';
 /** Firmalar & firma onayları (KYC) API servisi. */
 export const companiesApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
+    getBusinessModes: build.query({
+      query: () => ENDPOINTS.companies.businessModeContract,
+      transformResponse: (res) => res?.data ?? res,
+    }),
     getCompanies: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.companies.list, params }), // { status, type, membership, query, limit, skip }
       transformResponse: (res) => res?.data ?? res,
@@ -116,6 +120,7 @@ export const companiesApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetBusinessModesQuery,
   useGetCompaniesQuery,
   useGetCompanyQuery,
   useUpdateCompanyBusinessModesMutation,

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, use, useState, useEffect } from 'react';
+import { Suspense, use, useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils';
 import { CMS_ROLES, canAccess } from '@/lib/roles';
 import {
   useGetCompanyQuery,
+  useGetBusinessModesQuery,
   useUpdateCompanyBusinessModesMutation,
   useUpdateCompanyLimitsMutation,
   useUpdateCompanyUsageMutation,
@@ -61,7 +62,12 @@ import {
   useGetPendingCompanyPartnerRelationsQuery,
 } from '@/redux/services';
 import { mutationMessage } from '../../products/_form/productFormModel';
-import { statusMeta, companyTypeMeta, businessModeMeta } from '../_data';
+import {
+  statusMeta,
+  companyTypeMeta,
+  resolveBusinessModeMeta,
+  resolveCompanyBusinessModes,
+} from '../_data';
 import {
   typeMeta as productTypeMeta,
   statusMeta as productStatusMeta,
@@ -99,17 +105,13 @@ function countOf(c, key) {
   return Array.isArray(v) ? v.length : 0;
 }
 
-const ASSIGNABLE_BUSINESS_MODES = Object.entries(businessModeMeta)
-  .filter(([value]) => value !== 'service')
-  .map(([value, meta]) => ({ value, ...meta }));
-
 const BUSINESS_MODE_IMPACTS = {
   ecommerce: 'Ürün kataloğu, ürün içe aktarma ve Analytics',
   direct: 'Hizmet kataloğu ve doğrudan satış',
   quote: 'Hizmet kataloğu, talep ve teklif akışı',
   reservation: 'Hizmet kataloğu, rezervasyon ve takvim',
   appointment: 'Hizmet kataloğu, randevu ve takvim',
-  content: 'Kütüphane ve Derin Araştırma; satış alanları kapalı',
+  standard: 'Kütüphane ve Derin Araştırma; satış alanları kapalı',
 };
 
 /* ─── paket seçici için yardımcılar (paket ekleme paneli) ─── */
@@ -185,6 +187,19 @@ function CmsCompanyDetailView({ id }) {
   };
 
   const { data: company, isLoading, error } = useGetCompanyQuery(id, { skip: !authorized });
+  const { data: businessModeContract } = useGetBusinessModesQuery(undefined, {
+    skip: !authorized,
+  });
+  const businessModeMeta = useMemo(
+    () => resolveBusinessModeMeta(businessModeContract),
+    [businessModeContract],
+  );
+  const assignableBusinessModes = useMemo(
+    () => Object.entries(businessModeMeta)
+      .filter(([value]) => value !== 'service' && value !== 'content')
+      .map(([value, meta]) => ({ value, ...meta })),
+    [businessModeMeta],
+  );
   const [updateBusinessModes, { isLoading: savingBusinessModes }] =
     useUpdateCompanyBusinessModesMutation();
   const [businessModeSelection, setBusinessModeSelection] = useState([]);
@@ -199,17 +214,12 @@ function CmsCompanyDetailView({ id }) {
 
   useEffect(() => {
     if (!company) return;
-    const source =
-      Array.isArray(company.businessModes) && company.businessModes.length > 0
-        ? company.businessModes
-        : company.businessMode
-          ? [company.businessMode]
-          : [];
-    const normalized = ASSIGNABLE_BUSINESS_MODES
+    const source = resolveCompanyBusinessModes(company);
+    const normalized = assignableBusinessModes
       .map((option) => option.value)
       .filter((value) => source.includes(value));
     setBusinessModeSelection(normalized);
-  }, [company]);
+  }, [assignableBusinessModes, company]);
 
   // Ürünler / Hizmetler sekmesi — yalnız aktifken (lazy) çekilir; firma ucu değişmez.
   const [prodSort, setProdSort] = useState('createdAt:desc');
@@ -558,13 +568,8 @@ function CmsCompanyDetailView({ id }) {
   }
 
   const s = statusMeta[company.status];
-  const storedBusinessModeSource =
-    Array.isArray(company.businessModes) && company.businessModes.length > 0
-      ? company.businessModes.filter((value) => value !== 'service')
-      : company.businessMode && company.businessMode !== 'service'
-        ? [company.businessMode]
-        : [];
-  const storedBusinessModes = ASSIGNABLE_BUSINESS_MODES
+  const storedBusinessModeSource = resolveCompanyBusinessModes(company);
+  const storedBusinessModes = assignableBusinessModes
     .map((option) => option.value)
     .filter((value) => storedBusinessModeSource.includes(value));
   const businessModesDirty =
@@ -653,7 +658,7 @@ function CmsCompanyDetailView({ id }) {
       const selected = current.includes(value)
         ? current.filter((modeValue) => modeValue !== value)
         : [...current, value];
-      const order = ASSIGNABLE_BUSINESS_MODES.map((option) => option.value);
+      const order = assignableBusinessModes.map((option) => option.value);
       return order.filter((modeValue) => selected.includes(modeValue));
     });
   };
@@ -832,7 +837,7 @@ function CmsCompanyDetailView({ id }) {
                 )}
 
                 <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {ASSIGNABLE_BUSINESS_MODES.map((option) => {
+                  {assignableBusinessModes.map((option) => {
                     const selected = businessModeSelection.includes(option.value);
                     return (
                       <button

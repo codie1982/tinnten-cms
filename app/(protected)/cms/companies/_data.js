@@ -1,3 +1,10 @@
+import {
+  businessModeMetaForPayload,
+  businessModeMetaFromContract,
+  businessModeOptionsForPayload,
+  normalizeBusinessModes,
+} from '../../../../lib/business-modes.js';
+
 /**
  * Firmalar bölümü — paylaşılan sabit veriler (meta + filtre seçenekleri).
  * list/page.jsx ve [id]/page.jsx bu dosyadan import eder.
@@ -45,27 +52,20 @@ export const resolveCompanyTypeGroup = (companyType) => {
  * değeridir; yeni firma bu değeri ALMAZ ama listede görünebilir.
  */
 export const businessModeMeta = {
-  ecommerce: { label: 'E-ticaret', variant: 'primary' },
-  direct: { label: 'Düz satış', variant: 'secondary' },
-  quote: { label: 'Teklif', variant: 'secondary' },
-  reservation: { label: 'Rezervasyon', variant: 'secondary' },
-  appointment: { label: 'Randevu', variant: 'secondary' },
-  content: { label: 'Blog / İçerik', variant: 'outline' },
+  ...businessModeMetaFromContract,
+  content: { ...businessModeMetaFromContract.standard, label: 'Standart (eski kayıt)' },
   service: { label: 'Hizmet (eski)', variant: 'muted' },
 };
 
+export const resolveBusinessModeMeta = (payload) => ({
+  ...businessModeMetaForPayload(payload),
+  content: { ...businessModeMetaFromContract.standard, label: 'Standart (eski kayıt)' },
+  service: { label: 'Hizmet (eski)', variant: 'muted' },
+});
+
 /** Çoklu mod alanını okur; eski tekil kayıtlarda `businessMode`a geri düşer. */
 export const resolveCompanyBusinessModes = (company) => {
-  const storedModes =
-    Array.isArray(company?.businessModes) && company.businessModes.length > 0
-      ? company.businessModes
-      : company?.businessMode
-        ? [company.businessMode]
-        : [];
-
-  return [
-    ...new Set(storedModes.filter((mode) => typeof mode === 'string' && mode)),
-  ];
+  return normalizeBusinessModes(company?.businessModes, company?.businessMode);
 };
 
 /**
@@ -104,13 +104,12 @@ export const statusOptions = [
 
 export const businessModeOptions = [
   { value: 'all', label: 'Tüm Modlar' },
-  { value: 'ecommerce', label: 'E-ticaret' },
-  { value: 'direct', label: 'Düz satış' },
-  { value: 'quote', label: 'Teklif' },
-  { value: 'reservation', label: 'Rezervasyon' },
-  { value: 'appointment', label: 'Randevu' },
-  { value: 'content', label: 'Blog / İçerik' },
-  { value: 'service', label: 'Hizmet (eski)' },
+  ...businessModeOptionsForPayload(null),
+];
+
+export const resolveBusinessModeOptions = (payload) => [
+  { value: 'all', label: 'Tüm Modlar' },
+  ...businessModeOptionsForPayload(payload),
 ];
 
 export const companyTypeOptions = [

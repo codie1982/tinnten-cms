@@ -26,6 +26,7 @@ import {
 } from '@/redux/services';
 import { formatPrice, periodMeta, pricetypeMeta } from '../../_data';
 import { mutationMessage, parseOptionalNumber } from '../../_form/productFormModel';
+import { businessModeHasCapability, normalizeBusinessModes } from '@/lib/business-modes';
 
 /**
  * basePrice (fiyat planları) editörü.
@@ -38,7 +39,7 @@ import { mutationMessage, parseOptionalNumber } from '../../_form/productFormMod
  * - Yazma sonrası backend `priceAmount`/`currency` alanlarını da resync eder,
  *   bu yüzden ürünün birim fiyatı plandan türetilmiş sayılır.
  *
- * SERVICE-ONLY KISIT: `recurring` yalnız firmanın businessMode==="service"
+ * SERVICE-ONLY KISIT: `recurring` yalnız hizmet katalogu taşıyan modlarda
  * olduğu durumda kabul ediliyor; değilse buildBasePriceDocs 400 DÖNMEZ, sessizce
  * "fixed"e düşürür (:2464). Kullanıcıya bunu önceden söylüyoruz.
  */
@@ -72,7 +73,12 @@ const toRow = (bp, index) => ({
 export default function PricingSection({ product, onNotice }) {
   const basePrices = Array.isArray(product?.basePrice) ? product.basePrice : [];
   const productId = product?._id || product?.id;
-  const businessMode = product?.companyid?.businessMode;
+  const company = product?.companyid;
+  const businessModes = normalizeBusinessModes(company?.businessModes, company?.businessMode);
+  const businessMode = businessModes.join(', ');
+  const supportsRecurring = businessModes.some((mode) =>
+    businessModeHasCapability(mode, 'catalog.service'),
+  );
 
   const [rows, setRows] = useState(() => basePrices.map(toRow));
   const [editing, setEditing] = useState(false);
@@ -102,7 +108,7 @@ export default function PricingSection({ product, onNotice }) {
   // Kayıtta pricetype dizinin şeklinden türetilecek → kullanıcıya şimdiden göster.
   const willBeRecurring =
     rows.length > 1 || rows.some((row) => Boolean(row.period));
-  const recurringBlocked = willBeRecurring && businessMode !== 'service';
+  const recurringBlocked = willBeRecurring && !supportsRecurring;
 
   const handleSave = async () => {
     const payload = [];
