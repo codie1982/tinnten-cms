@@ -59,6 +59,7 @@ import {
   useUpdateFetcherDomainMutation,
   useDeleteFetcherDomainMutation,
   useVerifyFetcherDomainMutation,
+  useAssignFetcherDomainOwnershipMutation,
   useCreateFetcherDomainUrlMutation,
   useDeleteFetcherDomainUrlMutation,
   useGetFetcherUrlContentQuery,
@@ -616,7 +617,6 @@ function DomainFormModal({ mode, domain, onSubmit, onClose }) {
     } else {
       if (!form.domain.trim()) { setErr({ error: 'Domain zorunlu.' }); return; }
       payload.domain = form.domain.trim();
-      if (form.companyId.trim()) payload.companyId = form.companyId.trim();
       if (form.site_type) payload.site_type = form.site_type;
       payload.autoStartScraping = form.autoStart === 'true';
       const sm = form.sitemap.split(/\s+/).map((x) => x.trim()).filter(Boolean);
@@ -657,20 +657,26 @@ function DomainFormModal({ mode, domain, onSubmit, onClose }) {
           <>
           {err && <Alert variant="destructive"><AlertDescription>{err.error || 'İşlem başarısız.'}</AlertDescription></Alert>}
           {!isEdit && (
-            <div className="space-y-1.5">
-              <label className="text-2sm font-medium">Domain *</label>
-              <Input value={form.domain} onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))} placeholder="example.com" />
-            </div>
+            <>
+              <Alert>
+                <AlertDescription>Bu işlem yalnız sistem tarama domaini ekler; firmaya sahiplik vermez. Sahiplik için listedeki “Firmaya ata ve doğrula” işlemini kullanın.</AlertDescription>
+              </Alert>
+              <div className="space-y-1.5">
+                <label className="text-2sm font-medium">Domain *</label>
+                <Input value={form.domain} onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))} placeholder="example.com" />
+              </div>
+            </>
           )}
-          <div className="space-y-1.5">
-            <label className="text-2sm font-medium">Firma {isEdit ? '' : '(opsiyonel)'}</label>
+          {isEdit && <div className="space-y-1.5">
+            <label className="text-2sm font-medium">Tarama yapılandırma firması</label>
             <CompanySelect
               value={form.companyId}
-              initialLabel={isEdit ? (domain?.companyContext?.company?.name || '') : ''}
+              initialLabel={domain?.companyContext?.company?.name || ''}
               onChange={(id) => setForm((f) => ({ ...f, companyId: id }))}
               placeholder="Firma ara ve seç"
             />
-          </div>
+            <p className="text-xs text-muted-foreground">Bu alan domain sahipliği değildir.</p>
+          </div>}
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
               <label className="text-2sm font-medium">Site tipi</label>
@@ -740,7 +746,7 @@ function VerifyDomainModal({ domain, onSubmit, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm" onClick={onClose}>
       <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <CardHeader>
-          <CardTitle className="truncate">Doğrulama · {domain.domain}</CardTitle>
+          <CardTitle className="truncate">Tarama onayı · {domain.domain}</CardTitle>
           <CardToolbar><Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button></CardToolbar>
         </CardHeader>
         <CardContent className="space-y-3 p-5">
@@ -770,6 +776,54 @@ function VerifyDomainModal({ domain, onSubmit, onClose }) {
             <Button variant="outline" size="sm" onClick={onClose}>İptal</Button>
             <Button size="sm" disabled={saving} onClick={submit}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />} Uygula
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function AssignOwnershipModal({ domain, onSubmit, onClose }) {
+  const [companyId, setCompanyId] = useState('');
+  const [err, setErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!companyId) { setErr({ error: 'Firma seçimi zorunludur.' }); return; }
+    setErr(null); setSaving(true);
+    try {
+      await onSubmit({ domain: domain.domain, companyId });
+      onClose();
+    } catch (e) { setErr(upstreamErr(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-sm" onClick={onClose}>
+      <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <CardHeader>
+          <CardTitle className="truncate">Firmaya ata ve doğrula · {domain.domain}</CardTitle>
+          <CardToolbar><Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button></CardToolbar>
+        </CardHeader>
+        <CardContent className="space-y-4 p-5">
+          <Alert>
+            <AlertTitle>Güvenilir operatör işlemi</AlertTitle>
+            <AlertDescription>
+              Seçilen firma bu domainin doğrulanmış sahibi olur ve firma aboneliği oluşturulur.
+              DNS TXT kaydı aranmaz. Başka firmaya ait bir domain yeniden atanamaz.
+            </AlertDescription>
+          </Alert>
+          {err && <Alert variant="destructive"><AlertDescription>{err.message || err.error || 'Sahiplik atanamadı.'}</AlertDescription></Alert>}
+          <div className="space-y-1.5">
+            <label className="text-2sm font-medium">Firma *</label>
+            <CompanySelect value={companyId} onChange={setCompanyId} placeholder="Firma ara ve seç" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>İptal</Button>
+            <Button size="sm" disabled={saving || !companyId} onClick={submit}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Building2 className="size-3.5" />}
+              Firmaya ata ve doğrula
             </Button>
           </div>
         </CardContent>
@@ -1243,8 +1297,9 @@ function DomainsSection({ authorized }) {
   const [updateDomain] = useUpdateFetcherDomainMutation();
   const [deleteDomain] = useDeleteFetcherDomainMutation();
   const [verifyDomain] = useVerifyFetcherDomainMutation();
+  const [assignOwnership] = useAssignFetcherDomainOwnershipMutation();
   const [resetScraping] = useResetDomainScrapingMutation();
-  const [modal, setModal] = useState(null); // { type: 'add'|'edit'|'verify'|'delete'|'config'|'reset', domain? }
+  const [modal, setModal] = useState(null); // { type: 'add'|'edit'|'verify'|'ownership'|'delete'|'config'|'reset', domain? }
 
   const act = async (fn, domain, action) => {
     setBusy(`${domain}:${action}`);
@@ -1351,7 +1406,8 @@ function DomainsSection({ authorized }) {
                     <TableHead className="text-right">Şema</TableHead>
                     <TableHead className="text-right">Sayfa</TableHead>
                     <TableHead>Son Tarama</TableHead>
-                    <TableHead>Doğrulama</TableHead>
+                    <TableHead>Sahiplik</TableHead>
+                    <TableHead>Tarama onayı</TableHead>
                     <TableHead className="text-right">İşlemler</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1392,6 +1448,15 @@ function DomainsSection({ authorized }) {
                         {relativeTr(d.stats?.last_crawl_at)}
                       </TableCell>
                       <TableCell>
+                        {d.ownership?.status === 'verified'
+                          ? <div className="space-y-1"><Badge variant="success">{d.ownership?.method === 'cms' ? 'CMS doğruladı' : 'DNS doğrulandı'}</Badge><CompanyOwnerCell companyId={d.ownership?.companyId} /></div>
+                          : d.ownership?.status === 'grace'
+                            ? <Badge variant="warning">Tolerans süresinde</Badge>
+                            : d.ownership?.status === 'locked'
+                              ? <Badge variant="destructive">Kilitli</Badge>
+                              : <Badge variant="muted">Sahipsiz</Badge>}
+                      </TableCell>
+                      <TableCell>
                         {d.verification?.isVerified
                           ? <Badge variant="success">Doğrulandı</Badge>
                           : <Badge variant="muted">{d.verification?.status || 'Beklemede'}</Badge>}
@@ -1413,7 +1478,10 @@ function DomainsSection({ authorized }) {
                           <Button variant="ghost" size="icon" className="size-7" title="Düzenle & şemalar" onClick={() => setModal({ type: 'edit', domain: d })}>
                             <Pencil className="size-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="size-7" title="Doğrula" onClick={() => setModal({ type: 'verify', domain: d })}>
+                          <Button variant="ghost" size="icon" className="size-7" title="Firmaya ata ve doğrula" onClick={() => setModal({ type: 'ownership', domain: d })}>
+                            <Building2 className="size-3.5 text-primary" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="size-7" title="Tarama onayını düzenle" onClick={() => setModal({ type: 'verify', domain: d })}>
                             <ShieldCheck className="size-3.5 text-primary" />
                           </Button>
                           <Button variant="ghost" size="icon" className="size-7" title="Ham scraping config (JSON)" onClick={() => setModal({ type: 'config', domain: d })}>
@@ -1452,6 +1520,7 @@ function DomainsSection({ authorized }) {
       {modal?.type === 'add' && <DomainFormModal mode="add" onSubmit={(body) => addDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'edit' && <DomainFormModal mode="edit" domain={modal.domain} onSubmit={(body) => updateDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'verify' && <VerifyDomainModal domain={modal.domain} onSubmit={(body) => verifyDomain(body).unwrap()} onClose={() => setModal(null)} />}
+      {modal?.type === 'ownership' && <AssignOwnershipModal domain={modal.domain} onSubmit={(body) => assignOwnership(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'block' && <BlockedDomainModal initialDomain={modal.domain.domain} onSubmit={(body) => createBlockedDomain(body).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'delete' && <DeleteDomainModal domain={modal.domain} onConfirm={(args) => deleteDomain(args).unwrap()} onClose={() => setModal(null)} />}
       {modal?.type === 'config' && <ScrapingConfigModal domain={modal.domain} onReset={(d) => setModal({ type: 'reset', domain: d })} onClose={() => setModal(null)} />}

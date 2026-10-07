@@ -442,6 +442,8 @@ export const ENDPOINTS = {
       `/fetcher/domains/${encodeURIComponent(d)}/urls/${encodeURIComponent(id)}/content`,
     domainVerification: (d) =>
       `/fetcher/domains/${encodeURIComponent(d)}/verification`,
+    domainOwnership: (d) =>
+      `/fetcher/domains/${encodeURIComponent(d)}/ownership`,
     scrapingStart: (d) =>
       `/fetcher/domains/${encodeURIComponent(d)}/scraping/start`,
     scrapingStop: (d) =>

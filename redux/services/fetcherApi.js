@@ -214,6 +214,19 @@ export const fetcherApi = baseApi.injectEndpoints({
       query: ({ domain, ...body }) => ({ url: ENDPOINTS.fetcher.domainVerification(domain), method: 'PATCH', body }), // { isVerified, verifiedBy?, note? }
       invalidatesTags: (r, e, { domain }) => [{ type: 'FetcherDomain', id: domain }, { type: 'FetcherDomain', id: 'LIST' }],
     }),
+    assignFetcherDomainOwnership: build.mutation({
+      query: ({ domain, companyId }) => ({
+        url: ENDPOINTS.fetcher.domainOwnership(domain),
+        method: 'PUT',
+        body: { companyId },
+      }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (r, e, { domain }) => [
+        { type: 'FetcherDomain', id: domain },
+        { type: 'FetcherDomain', id: 'LIST' },
+        { type: 'FetcherSubscription', id: 'LIST' },
+      ],
+    }),
 
     /* ── Domain URL CRUD + içerik (admin) ── */
     createFetcherDomainUrl: build.mutation({
@@ -323,6 +336,7 @@ export const {
   useUpdateFetcherDomainMutation,
   useDeleteFetcherDomainMutation,
   useVerifyFetcherDomainMutation,
+  useAssignFetcherDomainOwnershipMutation,
   useCreateFetcherDomainUrlMutation,
   useUpdateFetcherDomainUrlMutation,
   useDeleteFetcherDomainUrlMutation,
