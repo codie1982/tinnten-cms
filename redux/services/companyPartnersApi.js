@@ -5,6 +5,21 @@ import { baseApi } from './baseApi';
 
 export const companyPartnersApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
+    getCmsPartnerListing: build.query({
+      query: (id) => `company/partners/cms/companies/${id}/self-service`,
+      transformResponse: (res) => res?.data ?? res,
+      providesTags: (result, error, id) => [{ type: 'Company', id }],
+    }),
+    saveCmsPartnerListing: build.mutation({
+      query: ({ id, ...body }) => ({ url: `company/partners/cms/companies/${id}/self-service`, method: 'PATCH', body }),
+      transformResponse: (res) => res?.data ?? res,
+      invalidatesTags: (result, error, { id }) => [{ type: 'Company', id }],
+    }),
+    getCmsPartnerAuthorizations: build.query({
+      query: ({ id, detail = false, afterId, eventsAfterId }) => ({ url: `company/partners/cms/${id}/authorizations`, params: { detail, afterId, eventsAfterId } }),
+      transformResponse: (res) => res?.data ?? res,
+      keepUnusedDataFor: 0,
+    }),
     getCmsEligiblePartners: build.query({
       query: (params) => ({
         url: ENDPOINTS.companyPartners.cmsEligible,
@@ -118,6 +133,9 @@ export const companyPartnersApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetCmsPartnerListingQuery,
+  useSaveCmsPartnerListingMutation,
+  useGetCmsPartnerAuthorizationsQuery,
   useGetCmsEligiblePartnersQuery,
   useAssignCmsCompanyPartnerMutation,
   useUpdateCmsCompanyPartnerEligibilityMutation,

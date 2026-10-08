@@ -12,6 +12,8 @@ import {
   Handshake, UserPlus,
 } from 'lucide-react';
 import { RoleGuard } from '@/components/auth/role-guard';
+import PartnerSelfServiceSettings from '@/components/partners/PartnerSelfServiceSettings';
+import PartnerAuthorizationHistory from '@/components/partners/PartnerAuthorizationHistory';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/layout/page-shell';
 import {
@@ -1267,6 +1269,7 @@ function CmsCompanyDetailView({ id }) {
                   </Button>
                 </div>
 
+                <PartnerSelfServiceSettings companyId={id} />
                 {partnerNotice && (
                   <Alert variant={partnerNotice.type === 'error' ? 'destructive' : 'info'}>
                     <AlertDescription>{partnerNotice.text}</AlertDescription>
@@ -1465,6 +1468,7 @@ function CmsCompanyDetailView({ id }) {
                             </TableCell>
                             <TableCell>
                               <Badge variant={relation.status === 'active' ? 'success' : 'muted'}>{relation.status}</Badge>
+                              <div className="mt-2"><PartnerAuthorizationHistory relationId={relation.id || relation._id} /></div>
                             </TableCell>
                           </TableRow>
                           );
