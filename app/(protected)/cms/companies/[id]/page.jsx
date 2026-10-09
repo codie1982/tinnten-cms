@@ -50,6 +50,7 @@ import {
   useResetCompanyUsageMutation,
   useSetCompanyAdminActiveMutation,
   useSetCompanyPocMutation,
+  useSetCompanyTypeMutation,
   useTransferCompanyOwnerMutation,
   useAssignCompanyPackageMutation,
   useGetUsersQuery,
@@ -67,6 +68,8 @@ import { mutationMessage } from '../../products/_form/productFormModel';
 import {
   statusMeta,
   companyTypeMeta,
+  companyTypeGroupMeta,
+  resolveCompanyTypeGroup,
   resolveBusinessModeMeta,
   resolveCompanyBusinessModes,
 } from '../_data';
@@ -100,11 +103,6 @@ function formatTrDate(input) {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function countOf(c, key) {
-  const v = c?.[key];
-  return Array.isArray(v) ? v.length : 0;
 }
 
 const BUSINESS_MODE_IMPACTS = {
@@ -211,6 +209,17 @@ function CmsCompanyDetailView({ id }) {
   const [resetUsage, { isLoading: resettingUsage }] = useResetCompanyUsageMutation();
   const [setAdminActive, { isLoading: savingAdminActive }] = useSetCompanyAdminActiveMutation();
   const [setPoc, { isLoading: savingPoc }] = useSetCompanyPocMutation();
+  const [setCompanyType, { isLoading: savingCompanyType }] = useSetCompanyTypeMutation();
+  const [companyTypeSelection, setCompanyTypeSelection] = useState('');
+  const [companyTypeNotice, setCompanyTypeNotice] = useState(null);
+
+  useEffect(() => {
+    setCompanyTypeSelection(resolveCompanyTypeGroup(company?.companyType) || '');
+  }, [id, company?.companyType]);
+
+  useEffect(() => {
+    setCompanyTypeNotice(null);
+  }, [id]);
   const [transferOwner, { isLoading: transferring }] = useTransferCompanyOwnerMutation();
   const [assignPackage, { isLoading: assigningPackage }] = useAssignCompanyPackageMutation();
 
@@ -576,7 +585,9 @@ function CmsCompanyDetailView({ id }) {
     .filter((value) => storedBusinessModeSource.includes(value));
   const businessModesDirty =
     JSON.stringify(businessModeSelection) !== JSON.stringify(storedBusinessModes);
-  const type = companyTypeMeta[company.companyType];
+  const storedCompanyTypeGroup = resolveCompanyTypeGroup(company.companyType);
+  const companyTypeDirty = companyTypeSelection !== storedCompanyTypeGroup;
+  const type = companyTypeGroupMeta[storedCompanyTypeGroup] || companyTypeMeta[company.companyType];
   const addresses = company.address ?? [];
   const phones = company.phone ?? [];
   const socials = company.social ?? [];
@@ -651,6 +662,21 @@ function CmsCompanyDetailView({ id }) {
       });
     } catch (e) {
       setPocNotice({ type: 'error', text: e?.data?.message || 'POC işareti güncellenemedi.' });
+    }
+  };
+
+  const handleSaveCompanyType = async () => {
+    if (!companyTypeSelection || !companyTypeDirty || savingCompanyType) return;
+    setCompanyTypeNotice(null);
+    try {
+      const result = await setCompanyType({ id, companyTypeGroup: companyTypeSelection }).unwrap();
+      setCompanyTypeSelection(result.companyTypeGroup);
+      setCompanyTypeNotice({ type: 'success', text: 'Firma tipi güncellendi.' });
+    } catch (e) {
+      setCompanyTypeNotice({
+        type: 'error',
+        text: e?.data?.message || e?.normalizedMessage || 'Firma tipi güncellenemedi.',
+      });
     }
   };
 
@@ -801,6 +827,54 @@ function CmsCompanyDetailView({ id }) {
               )}
             </CardContent>
           </Card>
+
+          {section === 'genel' && (
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>Firma Tipi</CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Firmanın bireysel veya ticari kullanımını belirler.
+                    Ticari firmalarda firma sahibi için iki adımlı giriş zorunludur.
+                  </p>
+                </div>
+                <CardToolbar>
+                  <Button
+                    size="sm"
+                    aria-label="Firma tipini kaydet"
+                    onClick={handleSaveCompanyType}
+                    disabled={savingCompanyType || !companyTypeDirty || !companyTypeSelection}
+                  >
+                    {savingCompanyType ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                    Kaydet
+                  </Button>
+                </CardToolbar>
+              </CardHeader>
+              <CardContent className="space-y-3 p-4">
+                {companyTypeNotice && (
+                  <Alert variant={companyTypeNotice.type === 'error' ? 'destructive' : 'info'} role="status">
+                    <AlertDescription>{companyTypeNotice.text}</AlertDescription>
+                  </Alert>
+                )}
+                <Select
+                  value={companyTypeSelection}
+                  disabled={savingCompanyType}
+                  onValueChange={(value) => {
+                    setCompanyTypeSelection(value);
+                    setCompanyTypeNotice(null);
+                  }}
+                >
+                  <SelectTrigger className="w-full sm:w-64" aria-label="Firma tipi">
+                    <SelectValue placeholder="Firma tipi seçin" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="individual">Bireysel</SelectItem>
+                    <SelectItem value="commercial">Ticari</SelectItem>
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
+          )}
 
           {section === 'genel' && (
             <Card>

@@ -218,6 +218,7 @@ export const ENDPOINTS = {
     businessModeContract: '/company/business-modes',
     detail: (id) => `/company/cms/${id}`,
     businessModes: (id) => `/company/cms/${id}/business-modes`,
+    companyType: (id) => `/company/cms/${id}/company-type`,
     limits: (id) => `/company/cms/${id}/limits`,
     usage: (id) => `/company/cms/${id}/usage`,
     usageReset: (id) => `/company/cms/${id}/usage/reset`,
