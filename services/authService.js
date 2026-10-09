@@ -26,6 +26,25 @@ export const cmsLoginService = async (accessToken) => {
   return res.data;
 };
 
+export const verifyLoginSmsMfaService = async ({ challengeId, code }) => {
+  const res = await http.post('auth/login/mfa/verify', {
+    challengeId,
+    code,
+  });
+  return res.data;
+};
+
+export const resendLoginSmsMfaService = async ({
+  challengeId,
+  locale = 'tr',
+}) => {
+  const res = await http.post('auth/login/mfa/resend', {
+    challengeId,
+    locale,
+  });
+  return res.data;
+};
+
 export const validateTokenService = async (accessToken) => {
   const res = await http.get('auth/validate', {
     headers: { Authorization: `Bearer ${accessToken}` },
