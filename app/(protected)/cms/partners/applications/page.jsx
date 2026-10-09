@@ -20,6 +20,8 @@ import {
 import {
   applicationStatusMeta,
   partnerTypeMeta,
+  partnershipModelMeta,
+  serviceAreaMeta,
   statusFilterOptions,
   partnerTypeFilterOptions,
   statusActionOptions,
@@ -172,7 +174,7 @@ export default function PartnerApplicationsPage() {
               </Alert>
             </div>
           ) : isLoading ? (
-            <SkeletonRows rows={5} cols={7} />
+            <SkeletonRows rows={5} cols={8} />
           ) : applications.length === 0 ? (
             <EmptyState
               title="Başvuru yok"
@@ -190,7 +192,9 @@ export default function PartnerApplicationsPage() {
                     <TableHead>Başvuran</TableHead>
                     <TableHead>Tip</TableHead>
                     <TableHead>Şirket / Kanal</TableHead>
-                    <TableHead>Müşteri hesapları</TableHead>
+                    <TableHead>Partnerlik modeli</TableHead>
+                    <TableHead>Hizmet alanları</TableHead>
+                    <TableHead>Deneyim / Plan</TableHead>
                     <TableHead>Tarih</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead className="text-right">İşlem</TableHead>
@@ -228,11 +232,26 @@ export default function PartnerApplicationsPage() {
                         </TableCell>
 
                         <TableCell>
-                          {app.managesClientAccounts ? (
-                            <Badge variant="primary">Evet</Badge>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )}
+                          <div className="flex max-w-56 flex-wrap gap-1">
+                            {(app.partnershipModels?.length ? app.partnershipModels : app.managesClientAccounts ? ['service'] : ['revenue_share']).map((model) => {
+                              const modelInfo = metaOf(partnershipModelMeta, model);
+                              return <Badge key={model} variant={modelInfo.variant}>{modelInfo.label}</Badge>;
+                            })}
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          <div className="flex max-w-56 flex-wrap gap-1">
+                            {(app.serviceAreas || []).map((area) => <Badge key={area} variant="muted">{serviceAreaMeta[area] || area}</Badge>)}
+                            {!app.serviceAreas?.length ? <span className="text-sm text-muted-foreground">—</span> : null}
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          <div className="max-w-72 space-y-1 text-xs text-muted-foreground">
+                            <p title={app.experience}>{app.experience ? `Deneyim: ${app.experience.slice(0, 120)}${app.experience.length > 120 ? '…' : ''}` : 'Deneyim: —'}</p>
+                            <p title={app.plan}>{app.plan ? `Plan: ${app.plan.slice(0, 120)}${app.plan.length > 120 ? '…' : ''}` : 'Plan: —'}</p>
+                          </div>
                         </TableCell>
 
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
@@ -267,12 +286,6 @@ export default function PartnerApplicationsPage() {
         </CardContent>
       </Card>
 
-      {applications.length > 0 ? (
-        <p className="mt-4 text-xs text-muted-foreground">
-          Başvuranın yazdığı tanıtım planı bu listede gösterilmiyor; detay
-          görünümü henüz eklenmedi.
-        </p>
-      ) : null}
     </RoleGuard>
   );
 }

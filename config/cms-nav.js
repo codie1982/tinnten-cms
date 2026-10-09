@@ -140,6 +140,12 @@ export const CMS_NAV = [
     roles: [CMS_ROLES.ADMIN],
   },
   {
+    title: 'Partner Hizmetleri',
+    icon: Package,
+    path: '/cms/partners/services',
+    roles: [CMS_ROLES.ADMIN],
+  },
+  {
     title: 'Ürünler & Hizmetler',
     icon: Package,
     path: '/cms/products',

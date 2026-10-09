@@ -298,6 +298,9 @@ export const ENDPOINTS = {
     cmsDecision: (id) => `/company/partners/cms/${id}/decision`,
     cmsCapabilities: (id) => `/company/partners/cms/${id}/capabilities`,
     cmsRemove: (id) => `/company/partners/cms/${id}`,
+    cmsServicePackages: '/company/partner-service-packages/cms',
+    cmsServicePackageArchive: (id) => `/company/partner-service-packages/cms/${id}/archive`,
+    cmsServiceAgreements: '/company/partner-service-agreements/cms',
   },
   email: {
     // Eski mock uçlar (kullanılmıyor ama referansta kalsın)

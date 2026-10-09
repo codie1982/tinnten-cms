@@ -21,6 +21,21 @@ export const partnerTypeMeta = {
   integrator: { label: 'Entegratör', variant: 'muted' },
 };
 
+export const partnershipModelMeta = {
+  service: { label: 'Ücretli hesap yönetimi', variant: 'primary' },
+  revenue_share: { label: 'Gelir ortaklığı', variant: 'success' },
+  hybrid: { label: 'Hibrit', variant: 'secondary' },
+};
+
+export const serviceAreaMeta = {
+  catalog: 'Katalog',
+  knowledge_base: 'Bilgi tabanı',
+  ai_assistants: 'AI asistanları',
+  mcp: 'MCP servisleri',
+  public_pages: 'Public sayfalar',
+  operations: 'Operasyonlar',
+};
+
 export const statusFilterOptions = Object.keys(applicationStatusMeta);
 export const partnerTypeFilterOptions = Object.keys(partnerTypeMeta);
 

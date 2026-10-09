@@ -82,6 +82,8 @@ export const baseApi = createApi({
     'Workflow',
     'Company',
     'CompanyApproval',
+    'PartnerServicePackage',
+    'PartnerServiceAgreement',
     'User',
     'EmailCampaign',
     'EmailList',
