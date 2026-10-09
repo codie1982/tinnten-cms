@@ -16,6 +16,14 @@ export const partnerServicesApi = baseApi.injectEndpoints({
       query: (id) => ({ url: ENDPOINTS.companyPartners.cmsServicePackageArchive(id), method: 'POST' }),
       invalidatesTags: (result, error, id) => [{ type: 'PartnerServicePackage', id }, { type: 'PartnerServicePackage', id: 'LIST' }],
     }),
+    approveCmsPartnerServicePackage: build.mutation({
+      query: (id) => ({ url: ENDPOINTS.companyPartners.cmsServicePackageApprove(id), method: 'POST' }),
+      invalidatesTags: (result, error, id) => [{ type: 'PartnerServicePackage', id }, { type: 'PartnerServicePackage', id: 'LIST' }],
+    }),
+    rejectCmsPartnerServicePackage: build.mutation({
+      query: ({ id, reason }) => ({ url: ENDPOINTS.companyPartners.cmsServicePackageReject(id), method: 'POST', body: { reason } }),
+      invalidatesTags: (result, error, { id }) => [{ type: 'PartnerServicePackage', id }, { type: 'PartnerServicePackage', id: 'LIST' }],
+    }),
     getCmsPartnerServiceAgreements: build.query({
       query: (params = {}) => ({ url: ENDPOINTS.companyPartners.cmsServiceAgreements, params }),
       transformResponse: (response) => response?.data ?? response,
@@ -26,6 +34,8 @@ export const partnerServicesApi = baseApi.injectEndpoints({
 
 export const {
   useGetCmsPartnerServicePackagesQuery,
+  useApproveCmsPartnerServicePackageMutation,
+  useRejectCmsPartnerServicePackageMutation,
   useArchiveCmsPartnerServicePackageMutation,
   useGetCmsPartnerServiceAgreementsQuery,
 } = partnerServicesApi;

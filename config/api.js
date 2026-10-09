@@ -300,6 +300,8 @@ export const ENDPOINTS = {
     cmsCapabilities: (id) => `/company/partners/cms/${id}/capabilities`,
     cmsRemove: (id) => `/company/partners/cms/${id}`,
     cmsServicePackages: '/company/partner-service-packages/cms',
+    cmsServicePackageApprove: (id) => `/company/partner-service-packages/cms/${id}/approve`,
+    cmsServicePackageReject: (id) => `/company/partner-service-packages/cms/${id}/reject`,
     cmsServicePackageArchive: (id) => `/company/partner-service-packages/cms/${id}/archive`,
     cmsServiceAgreements: '/company/partner-service-agreements/cms',
   },
