@@ -142,7 +142,7 @@ function RevenueChoice({
   );
 }
 
-export default function CompanyPartnerRelationsPage() {
+export default function CompanyPartnerRelationsPage({ embedded = false }) {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.ADMIN]);
   const [actionError, setActionError] = useState('');
@@ -344,11 +344,13 @@ export default function CompanyPartnerRelationsPage() {
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
-      <PageHeader
-        section="Partnerler"
-        title="Firma Partner Onayları"
-        description="Firma–partner ilişkilerini onaylayın ve gelir ortaklığını yalnızca CMS üzerinden yönetin."
-      />
+      {!embedded ? (
+        <PageHeader
+          section="Partnerler"
+          title="Firma Partner Onayları"
+          description="Firma–partner ilişkilerini onaylayın ve gelir ortaklığını yalnızca CMS üzerinden yönetin."
+        />
+      ) : null}
 
       {actionError ? (
         <Alert variant="destructive" className="mb-5">

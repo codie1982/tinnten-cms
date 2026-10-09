@@ -125,25 +125,12 @@ export const CMS_NAV = [
     ],
   },
   {
-    // Public /partner sayfasındaki ön başvuru formundan gelen kayıtlar.
-    // Rol EDITOR: backend `requireAnyPermission("cms:editor", "cms:admin")`
-    // ile koruyor; menüde ADMIN yazsaydı editör API'ye erişip menüyü göremezdi.
-    title: 'Partnerlik Başvuruları',
+    // Editörler başvuruları; adminler aynı çalışma alanındaki ilişki ve hizmet
+    // sekmelerini de görür. Alt sekmeler kendi RoleGuard sınırlarını korur.
+    title: 'Partner Yönetimi',
     icon: Handshake,
-    path: '/cms/partners/applications',
+    path: '/cms/partners',
     roles: [CMS_ROLES.EDITOR],
-  },
-  {
-    title: 'Firma Partner Onayları',
-    icon: Handshake,
-    path: '/cms/partners/relations',
-    roles: [CMS_ROLES.ADMIN],
-  },
-  {
-    title: 'Partner Hizmetleri',
-    icon: Package,
-    path: '/cms/partners/services',
-    roles: [CMS_ROLES.ADMIN],
   },
   {
     title: 'Ürünler & Hizmetler',

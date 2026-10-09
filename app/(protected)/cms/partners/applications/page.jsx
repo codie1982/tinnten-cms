@@ -58,7 +58,7 @@ function ChannelCell({ value }) {
   );
 }
 
-export default function PartnerApplicationsPage() {
+export default function PartnerApplicationsPage({ embedded = false }) {
   const { data: session } = useSession();
   const authorized = canAccess(session?.roles ?? [], [CMS_ROLES.EDITOR]);
 
@@ -101,11 +101,13 @@ export default function PartnerApplicationsPage() {
 
   return (
     <RoleGuard allowedRoles={[CMS_ROLES.EDITOR]}>
-      <PageHeader
-        section="Partnerler"
-        title="Partnerlik Başvuruları"
-        description="Public /partner sayfasındaki ön başvuru formundan gelen kayıtlar."
-      />
+      {!embedded ? (
+        <PageHeader
+          section="Partnerler"
+          title="Partnerlik Başvuruları"
+          description="Public /partner sayfasındaki ön başvuru formundan gelen kayıtlar."
+        />
+      ) : null}
 
       <Card className="mb-5">
         <CardContent className="flex flex-wrap items-center gap-3 p-4">

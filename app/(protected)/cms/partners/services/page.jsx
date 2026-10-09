@@ -27,7 +27,7 @@ const money = (pricing) => pricing?.type === 'free'
   ? 'Ücretsiz'
   : new Intl.NumberFormat('tr-TR', { style: 'currency', currency: pricing?.currency || 'TRY' }).format((pricing?.amountMinor || 0) / 100);
 
-export default function PartnerServicesPage() {
+export default function PartnerServicesPage({ embedded = false }) {
   const [packageStatus, setPackageStatus] = useState('');
   const [agreementStatus, setAgreementStatus] = useState('');
   const { data: packageData, isLoading: packagesLoading, error: packageError } = useGetCmsPartnerServicePackagesQuery(packageStatus ? { status: packageStatus } : {});
@@ -42,7 +42,7 @@ export default function PartnerServicesPage() {
   };
 
   return <RoleGuard allowedRoles={[CMS_ROLES.ADMIN]}>
-    <PageHeader section="Partnerler" title="Partner Hizmetleri" description="Yayımlanan paketleri ve anlaşmalarda sabitlenen ticari/yetki snapshot'larını inceleyin." />
+    {!embedded ? <PageHeader section="Partnerler" title="Partner Hizmetleri" description="Yayımlanan paketleri ve anlaşmalarda sabitlenen ticari/yetki snapshot'larını inceleyin." /> : null}
 
     <Card className="mb-5">
       <CardHeader><CardTitle className="flex items-center gap-2"><Package className="size-5" /> Hizmet Paketleri</CardTitle><CardToolbar><select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={packageStatus} onChange={(event) => setPackageStatus(event.target.value)}><option value="">Tüm durumlar</option><option value="draft">Taslak</option><option value="published">Yayında</option><option value="archived">Arşiv</option></select></CardToolbar></CardHeader>
