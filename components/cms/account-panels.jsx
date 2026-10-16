@@ -24,6 +24,10 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { EmptyState } from '@/components/layout/page-shell';
 import { cn } from '@/lib/utils';
+import {
+  buildMetricPatch, canEditUsage, getLimitEditor, getMetricChanges,
+  metricErrorMessage, parseMetricValue, seedMetricDraft, usagePercentage,
+} from './account-panel-data.mjs';
 
 /* ─── helpers ─── */
 export function fmtDate(input) {
@@ -31,25 +35,6 @@ export function fmtDate(input) {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function keyToNested(key, value) {
-  const parts = key.split('.');
-  const root = {};
-  let cur = root;
-  parts.forEach((p, i) => {
-    if (i === parts.length - 1) cur[p] = value;
-    else { cur[p] = {}; cur = cur[p]; }
-  });
-  return root;
-}
-
-function mergeNested(target, source) {
-  for (const [k, v] of Object.entries(source)) {
-    if (v && typeof v === 'object' && !Array.isArray(v)) target[k] = mergeNested(target[k] || {}, v);
-    else target[k] = v;
-  }
-  return target;
 }
 
 const CATEGORY_BADGE = {
@@ -128,40 +113,37 @@ export function PackagesTable({ packages = [] }) {
 }
 
 /* ─── Limitler paneli (düzenlenebilir, kontrol/update) ─── */
-export function LimitsPanel({ metrics = [], packageName, onSave, saving }) {
-  const sig = metrics.map((m) => `${m.key}:${m.limit}`).join('|');
+export function LimitsPanel({ metrics: accountMetrics = [], packages = [], packageName, onSave, saving }) {
+  const editor = getLimitEditor(accountMetrics, packages);
+  const metrics = editor.metrics;
+  const sig = JSON.stringify([editor.packageId, metrics.map((m) => [m.key, m.limit])]);
   const [draft, setDraft] = useState({});
   const [reviewing, setReviewing] = useState(false);
   const [notice, setNotice] = useState(null);
 
   useEffect(() => {
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.limit;
-    setDraft(seed);
+    setDraft(seedMetricDraft(metrics, 'limit'));
     setReviewing(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 
-  const dirty = metrics.filter((m) => Number(draft[m.key] ?? m.limit) !== Number(m.limit));
+  const dirty = getMetricChanges(metrics, draft, 'limit');
+  const invalid = dirty.filter((m) => Number.isNaN(parseMetricValue(draft[m.key], m.key, 'limit')));
 
   const reset = () => {
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.limit;
-    setDraft(seed); setReviewing(false); setNotice(null);
+    setDraft(seedMetricDraft(metrics, 'limit')); setReviewing(false); setNotice(null);
   };
 
   const save = async () => {
-    const payload = {};
-    for (const m of metrics) {
-      const v = Number(draft[m.key]);
-      if (Number.isFinite(v) && v >= 0) mergeNested(payload, keyToNested(m.key, v));
-    }
+    if (!editor.editable || saving) return;
     try {
+      const payload = buildMetricPatch(metrics, draft, 'limit');
+      if (!Object.keys(payload).length) return;
       await onSave(payload);
       setNotice({ type: 'success', text: 'Limitler güncellendi.' });
       setReviewing(false);
     } catch (e) {
-      setNotice({ type: 'error', text: e?.data?.message || 'Limitler güncellenemedi.' });
+      setNotice({ type: 'error', text: metricErrorMessage(e, 'Limitler güncellenemedi.') });
     }
   };
 
@@ -170,7 +152,7 @@ export function LimitsPanel({ metrics = [], packageName, onSave, saving }) {
       <CardHeader>
         <CardTitle>Limitler</CardTitle>
         <CardToolbar>
-          {packageName ? <Badge variant="primary">{packageName}</Badge> : <Badge variant="muted">Paket yok</Badge>}
+          {editor.packageName || packageName ? <Badge variant="primary">{editor.packageName || packageName}</Badge> : <Badge variant="muted">Paket yok</Badge>}
         </CardToolbar>
       </CardHeader>
       <CardContent className="space-y-4 p-4">
@@ -185,27 +167,37 @@ export function LimitsPanel({ metrics = [], packageName, onSave, saving }) {
             )}
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <AlertTriangle className="size-3.5" />
-              Değer <span className="font-mono">0</span> = sınırsız. Değişiklikler aktif pakete özel uygulanır.
+              Boş alan = sınırsız, <span className="font-mono">0</span> = sıfır kota. Yalnızca değiştirilen limitler bu pakete uygulanır.
             </p>
+            {!editor.editable && (
+              <Alert variant="destructive"><AlertDescription>Düzenlenecek aktif paketin süresi dolmuş veya paket pasif. Hesap &amp; Paketler bölümünden geçerli bir paket atayın.</AlertDescription></Alert>
+            )}
+            {invalid.length > 0 && (
+              <Alert variant="destructive"><AlertDescription>{invalid.map((m) => m.label).join(', ')}: geçerli, negatif olmayan bir değer girin. Adet ve kredi limitleri tam sayı olmalıdır.</AlertDescription></Alert>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2">
               {metrics.map((m) => {
-                const val = draft[m.key] ?? m.limit;
-                const changed = Number(val) !== Number(m.limit);
+                const val = draft[m.key] ?? m.limit ?? '';
+                const changed = dirty.some((item) => item.key === m.key);
                 return (
                   <div key={m.key} className={cn('rounded-lg border p-3', changed ? 'border-primary/50 bg-primary/5' : 'border-border')}>
-                    <label className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                    <label htmlFor={`limit-${m.key}`} className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
                       <span className="font-medium text-foreground">{m.label}</span>
                       <span className="font-mono">kullanım: {m.used}</span>
                     </label>
                     <input
-                      type="number" min={0} value={val} disabled={saving}
+                      id={`limit-${m.key}`} type="number" min={0} step={m.step} value={val} disabled={saving || !editor.editable}
+                      placeholder="Sınırsız" aria-invalid={invalid.some((item) => item.key === m.key)}
                       onChange={(e) => {
                         setNotice(null); setReviewing(false);
-                        setDraft((d) => ({ ...d, [m.key]: e.target.value === '' ? '' : Number(e.target.value) }));
+                        setDraft((d) => ({ ...d, [m.key]: e.target.value }));
                       }}
                       className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
                     />
+                    {m.accountLimit !== m.limit && (
+                      <p className="mt-1 text-xs text-muted-foreground">Hesap toplam limiti: {m.accountLimit == null ? '∞' : m.accountLimit} · Diğer aktif paketler de toplama dahildir.</p>
+                    )}
                   </div>
                 );
               })}
@@ -220,12 +212,12 @@ export function LimitsPanel({ metrics = [], packageName, onSave, saving }) {
                       <span className="min-w-[140px] text-muted-foreground">{m.label}</span>
                       <span className="font-mono text-muted-foreground">{m.unlimited ? '∞' : m.limit}</span>
                       <ArrowRight className="size-3.5 text-primary" />
-                      <span className="font-mono font-semibold text-primary">{Number(draft[m.key]) === 0 ? '∞' : Number(draft[m.key])}</span>
+                      <span className="font-mono font-semibold text-primary">{parseMetricValue(draft[m.key], m.key, 'limit') === null ? '∞' : draft[m.key]}</span>
                     </li>
                   ))}
                 </ul>
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" onClick={save} disabled={saving}>
+                  <Button size="sm" onClick={save} disabled={saving || invalid.length > 0 || !editor.editable}>
                     {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                     Güncelle
                   </Button>
@@ -243,7 +235,7 @@ export function LimitsPanel({ metrics = [], packageName, onSave, saving }) {
                   <Button size="sm" variant="ghost" onClick={reset} disabled={dirty.length === 0 || saving}>
                     <RotateCcw className="size-4" />Sıfırla
                   </Button>
-                  <Button size="sm" onClick={() => setReviewing(true)} disabled={dirty.length === 0 || saving}>
+                  <Button size="sm" onClick={() => setReviewing(true)} disabled={dirty.length === 0 || invalid.length > 0 || saving || !editor.editable}>
                     <SlidersHorizontal className="size-4" />Değişiklikleri Kontrol Et
                   </Button>
                 </div>
@@ -258,6 +250,7 @@ export function LimitsPanel({ metrics = [], packageName, onSave, saving }) {
 
 /* ─── Kullanım paneli (progress + sıfırla + miktar ayarla) ─── */
 export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsage, savingUsage, resetting }) {
+  const editableMetrics = metrics.filter((m) => canEditUsage(m.key));
   const sig = metrics.map((m) => `${m.key}:${m.used}`).join('|');
   const [draft, setDraft] = useState({});
   const [editing, setEditing] = useState(false);
@@ -266,32 +259,27 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
   const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.used;
-    setDraft(seed); setEditing(false); setReviewing(false); setConfirmReset(false);
+    setDraft(seedMetricDraft(editableMetrics, 'used')); setEditing(false); setReviewing(false); setConfirmReset(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 
-  const dirty = metrics.filter((m) => Number(draft[m.key] ?? m.used) !== Number(m.used));
+  const dirty = getMetricChanges(editableMetrics, draft, 'used');
+  const invalid = dirty.filter((m) => Number.isNaN(parseMetricValue(draft[m.key], m.key, 'used')));
 
   const cancelEdit = () => {
-    const seed = {};
-    for (const m of metrics) seed[m.key] = m.used;
-    setDraft(seed); setEditing(false); setReviewing(false); setNotice(null);
+    setDraft(seedMetricDraft(editableMetrics, 'used')); setEditing(false); setReviewing(false); setNotice(null);
   };
 
   const save = async () => {
-    const payload = {};
-    for (const m of metrics) {
-      const v = Number(draft[m.key]);
-      if (Number.isFinite(v) && v >= 0) mergeNested(payload, keyToNested(m.key, v));
-    }
+    if (savingUsage || resetting) return;
     try {
+      const payload = buildMetricPatch(editableMetrics, draft, 'used');
+      if (!Object.keys(payload).length) return;
       await onSaveUsage(payload);
       setNotice({ type: 'success', text: 'Kullanım güncellendi.' });
       setEditing(false); setReviewing(false);
     } catch (e) {
-      setNotice({ type: 'error', text: e?.data?.message || 'Kullanım güncellenemedi.' });
+      setNotice({ type: 'error', text: metricErrorMessage(e, 'Kullanım güncellenemedi.') });
     }
   };
 
@@ -301,7 +289,7 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
       setNotice({ type: 'success', text: 'Kullanım sıfırlandı.' });
       setConfirmReset(false);
     } catch (e) {
-      setNotice({ type: 'error', text: e?.data?.message || 'Kullanım sıfırlanamadı.' });
+      setNotice({ type: 'error', text: metricErrorMessage(e, 'Kullanım sıfırlanamadı.') });
     }
   };
 
@@ -333,7 +321,7 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
                   <Button size="sm" variant="ghost" onClick={() => { setNotice(null); setConfirmReset(true); }} disabled={resetting || savingUsage}>
                     <RotateCcw className="size-4" />Kullanımı Sıfırla
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => { setNotice(null); setEditing(true); }} disabled={resetting || savingUsage}>
+                  <Button size="sm" variant="outline" onClick={() => { setNotice(null); setEditing(true); }} disabled={resetting || savingUsage || editableMetrics.length === 0}>
                     <SlidersHorizontal className="size-4" />Miktarı Ayarla
                   </Button>
                 </div>
@@ -344,7 +332,7 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
                 <p className="flex items-center gap-1.5 text-sm text-foreground">
                   <AlertTriangle className="size-4 text-destructive" />
-                  Tüm kullanım sayaçları <span className="font-semibold">0</span>'a sıfırlanacak. Emin misiniz?
+                  Sıfırlanabilir kullanım sayaçları ve kredi tüketimi <span className="font-semibold">0</span>'a sıfırlanacak. Canlı asistan, Space ve firma sayıları değişmez. Emin misiniz?
                 </p>
                 <div className="flex gap-2">
                   <Button size="sm" variant="destructive" onClick={doReset} disabled={resetting}>
@@ -361,24 +349,31 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
                   <AlertTriangle className="size-3.5" />
                   Kullanım sayaçlarını manuel ayarlıyorsunuz. Bu, kota davranışını etkiler.
                 </p>
+                <p className="text-xs text-muted-foreground">Kredi tüketimi maliyetlerden; asistan, Space ve firma kullanımları canlı kayıtlardan hesaplanır ve burada elle değiştirilemez.</p>
+                {invalid.length > 0 && (
+                  <Alert variant="destructive"><AlertDescription>{invalid.map((m) => m.label).join(', ')}: boş bırakmadan geçerli, negatif olmayan bir değer girin. Adet sayaçları tam sayı olmalıdır.</AlertDescription></Alert>
+                )}
                 <div className="grid gap-3 sm:grid-cols-2">
                   {metrics.map((m) => {
                     const val = draft[m.key] ?? m.used;
-                    const changed = Number(val) !== Number(m.used);
+                    const editable = canEditUsage(m.key);
+                    const changed = editable && dirty.some((item) => item.key === m.key);
                     return (
                       <div key={m.key} className={cn('rounded-lg border p-3', changed ? 'border-primary/50 bg-primary/5' : 'border-border')}>
-                        <label className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                        <label htmlFor={`usage-${m.key}`} className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
                           <span className="font-medium text-foreground">{m.label}</span>
                           <span className="font-mono">limit: {m.unlimited ? '∞' : m.limit}</span>
                         </label>
                         <input
-                          type="number" min={0} value={val} disabled={savingUsage}
+                          id={`usage-${m.key}`} type="number" min={0} value={val} disabled={savingUsage || !editable}
+                          aria-invalid={invalid.some((item) => item.key === m.key)}
                           onChange={(e) => {
                             setNotice(null); setReviewing(false);
-                            setDraft((d) => ({ ...d, [m.key]: e.target.value === '' ? '' : Number(e.target.value) }));
+                            setDraft((d) => ({ ...d, [m.key]: e.target.value }));
                           }}
                           className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
                         />
+                        {!editable && <p className="mt-1 text-xs text-muted-foreground">Otomatik hesaplanır</p>}
                       </div>
                     );
                   })}
@@ -398,7 +393,7 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
                       ))}
                     </ul>
                     <div className="mt-3 flex gap-2">
-                      <Button size="sm" onClick={save} disabled={savingUsage}>
+                      <Button size="sm" onClick={save} disabled={savingUsage || invalid.length > 0}>
                         {savingUsage ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}Güncelle
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => setReviewing(false)} disabled={savingUsage}>Vazgeç</Button>
@@ -413,7 +408,7 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
                     </span>
                     <div className="flex gap-2">
                       <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={savingUsage}>İptal</Button>
-                      <Button size="sm" onClick={() => setReviewing(true)} disabled={dirty.length === 0 || savingUsage}>
+                      <Button size="sm" onClick={() => setReviewing(true)} disabled={dirty.length === 0 || invalid.length > 0 || savingUsage}>
                         <SlidersHorizontal className="size-4" />Değişiklikleri Kontrol Et
                       </Button>
                     </div>
@@ -423,7 +418,7 @@ export function UsagePanel({ metrics = [], packageName, onSaveUsage, onResetUsag
             ) : (
               <div className="space-y-3">
                 {metrics.map((m, i) => {
-                  const pct = m.unlimited || m.limit === 0 ? 0 : Math.min(Math.round((m.used / m.limit) * 100), 100);
+                  const pct = usagePercentage(m);
                   const over = !m.unlimited && m.used > m.limit;
                   return (
                     <div key={i} className="space-y-1">

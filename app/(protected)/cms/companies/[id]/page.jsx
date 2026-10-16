@@ -2114,6 +2114,7 @@ function CmsCompanyDetailView({ id }) {
           {section === 'limitler' && (
             <LimitsPanel
               metrics={metrics}
+              packages={packages}
               packageName={limitUsage?.packageName}
               onSave={(limits) => updateLimits({ id, limits }).unwrap()}
               saving={savingLimits}

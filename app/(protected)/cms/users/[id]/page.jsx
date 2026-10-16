@@ -23,7 +23,7 @@ import {
   User,
   Contact,
   Wallet,
-  Package,
+  Loader2,
   MessagesSquare,
   ChevronLeft,
   ChevronRight,
@@ -465,6 +465,7 @@ function GeneralSection({
 
 /* ─── Profil ─── */
 function ProfileSection({ profile }) {
+  const [ptab, setPtab] = useState('adresler');
   if (!profile) {
     return (
       <SimpleEmptyCard
@@ -474,8 +475,6 @@ function ProfileSection({ profile }) {
       />
     );
   }
-  const [ptab, setPtab] = useState('adresler');
-
   return (
     <>
       <Card>
@@ -705,6 +704,7 @@ function AccountSections({ userId, view, authorized }) {
     return (
       <LimitsPanel
         metrics={metrics}
+        packages={account.packages ?? []}
         packageName={packageName}
         onSave={(limits) => updateLimits({ id: userId, limits }).unwrap()}
         saving={savingLimits}
